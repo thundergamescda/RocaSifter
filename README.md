@@ -4,16 +4,16 @@ A local receiving workspace for Roca Sifter exports, Square inventory, trade-in 
 
 **[Operator manual — PDF](docs/Roca_Station_Operator_Manual.pdf)** · **[One-page desk reference — PDF](docs/Roca_Station_Desk_Reference.pdf)**
 
-The 23-page operator manual includes screenshots, all four workflows, admin setup, label printing, troubleshooting, and a fillable store profile.
+The 15-page operator manual starts with a one-page daily guide, then covers extra workflows, admin setup, printing, troubleshooting and a fillable store profile.
 
-![Roca Station trade-in workspace](docs/screenshots/workspace.png)
+![Roca Station card review](docs/manual-assets/workspace.png)
 
 ## Start on Windows
 
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.4**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.1.0**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
@@ -45,26 +45,34 @@ python roca_to_square.py
 
 The app serves only the local computer at `127.0.0.1`. A responsive layout supports smaller browser windows, but this release does not expose a network server for other devices.
 
-## Four workflows, one receipt
+## The everyday job in three steps
 
-| Workflow | What it does | Inventory behavior |
+**Process cards** is the default home screen. Extra settings stay out of the way until needed.
+
+1. **Import:** choose a Roca CSV. There is no inventory decision before you see the cards.
+2. **Check cards:** review the physical cards, correct any details, mark the included cards checked, then choose **Continue**.
+3. **Finish:** choose **Add to Square & create labels** or **Create labels only**. The Square action asks for final approval before adding copies. Open the labels to print, then choose **Next batch** for a fresh import.
+
+**Batch history** reopens saved work and generated files. Reprints do not add copies. **Batch options** holds notes, Save now, deletion and moving the current stack into another workflow. Printer layout and DPI are saved in Admin; session overrides are under **More options** at Finish.
+
+## Extra workflows when you need them
+
+| Where | Job | Inventory behavior |
 | --- | --- | --- |
-| **Bulk scan / sift** | Imports all bins, applies a value threshold, and identifies what deserves further processing | Never receives stock. Move the same receipt to the next workflow. |
-| **Walk-in trade-ins** | Reviews card details and calculates adjustable cash/store-credit offers; records the agreed buy and a printable acceptance record | Acceptance is recorded before receiving or retail labeling. Payment/credit issuance happens outside this app. |
-| **Price & label** | Reviews final prices and produces side-fold QR, standard, or top-fold labels | Choose **Add new copies** to receive stock, or **Do not add inventory** for labels without adding copies. |
-| **Online preparation** | Prepares a listing review CSV and a storage ticket for an online bin or a display case | **Receive & prepare** receives new stock first. **Prepare only** creates files without changing stock. Nothing is published online. |
+| **Customer trade-in** | Review cards, agree on cash/store credit and record the buy, then choose stock and labels | Acceptance is recorded before receiving or retail labeling. Payment/credit issuance happens outside this app. |
+| **More tools → Find value in bulk** | Apply a value threshold, select cards and continue the same batch in Process cards | Filtering and moving never add stock. |
+| **More tools → Online preparation** | Prepare a listing review CSV and a storage ticket for an online bin or display case | Choose whether to add stock at Finish. A storage location is required before receiving. Nothing is published online. |
+| **More tools → Orders & activity** | Record manual order-pull tasks and look up batch events | Staff confirm physical removal. Pull tasks do not change stock; marketplace synchronization is not connected. |
 
-Switching navigation tabs opens that workflow’s fresh import screen. **New batch** saves pending receipt edits and returns to a blank import screen with fresh review/search controls. Saved receipts remain available from **Open a saved receipt**; incoming folder notifications do not open them automatically. Use **Move receipt to…** to continue the same physical receipt in another workflow. Moving it does not receive it again. A received receipt is safe to reopen and reprint.
-
-**Activity & orders** records receipt history and manual online-order pull tasks. A task includes an order reference, card details, quantity, and physical storage location. Staff explicitly confirm removal from the display or bin. Task confirmation does not change stock; live marketplace sale synchronization is not connected.
+Navigation opens a fresh import screen, saving pending edits first. **Batch options → Continue this batch in** moves the same physical stack to another workflow. A received batch remains safe to reopen and reprint.
 
 ## A separate inventory choice for each batch
 
-Each new trade-in, price/label or online batch asks whether to **Add new copies to Square** or **Do not add inventory**. The choice is saved on that receipt; it never becomes a default for the next batch. **Decide later** leaves receiving disabled until you choose in the inventory panel. A bulk sift never receives stock; moving an undecided bulk receipt into a receiving workflow asks for its choice. Folder pickup creates an undecided draft and asks when you open it. Labels only and preparation only remain available as explicit actions that do not add stock.
+Each new batch reaches Finish with no inventory choice selected. Choosing **Create labels only** adds no stock; choosing **Add to Square & create labels** requires a final quantity confirmation. The choice is saved on that batch and never becomes the next batch’s default. Folder pickup creates unchecked drafts. Bulk sift asks for inventory only after continuing into a receiving workflow. The receiving backend and saved request journal continue to protect retries and reprints.
 
 ## Delete and restore receipts
 
-Open a receipt and choose **Delete**, then confirm. It disappears from the active list and the current workflow returns to the import screen. Deletion does not remove stock from Square, undo a buy, or delete generated documents. The saved record, source fingerprint and Square request journal are retained so deletion cannot bypass duplicate-receiving protection.
+Open a batch and choose **Batch options → Delete batch**, then confirm. It disappears from the active list and the current workflow returns to the import screen. Deletion does not remove stock from Square, undo a buy, or delete generated documents. The saved record, source fingerprint and Square request journal are retained so deletion cannot bypass duplicate-receiving protection.
 
 Reimporting the same CSV, or opening that receipt from **Activity & orders**, offers to restore it with its original inventory status. A received receipt remains received. Unresolved or in-progress receiving must be resolved before deletion. Existing databases are upgraded in place; preserve `station_data` when updating.
 
@@ -73,7 +81,7 @@ Reimporting the same CSV, or opening that receipt from **Activity & orders**, of
 - Open a card’s editor to correct name, set, collector number, language, condition, finish/treatment, quantity, price, or storage location.
 - Finish is a free-text field with optional suggestions, not a fixed list. Future/custom treatments are supported.
 - Changing identity or treatment clears the review confirmation and a legacy SKU override in the editor. Confirm the price for the corrected variant; no live market-price lookup is connected.
-- **Split one copy** separates one card from a quantity so it can receive a different condition or treatment. The total incoming quantity is preserved by the UI.
+- **Separate one copy** separates one card from a quantity so it can receive a different condition or treatment. The total incoming quantity is preserved by the UI.
 - Confirm each card, or explicitly confirm that all included cards have been physically reviewed.
 - Search and review filters operate across the entire receipt. The table renders 40 rows per page; an 11,000-row import was exercised in the browser.
 - After accepting a buy or receiving stock, card identity/quantity/price are locked. Notes and storage assignments can still be updated. Handle post-receiving stock corrections in Square and record a separate correction workflow rather than rewriting a committed receipt.
@@ -144,7 +152,7 @@ python -m playwright install chromium
 python browser_smoke.py
 ```
 
-The browser test uses an isolated temporary database, fictional receipt data, and no live merchant credentials. It exercises trade-in editing, arbitrary finish text, review/acceptance, labels, tab transfer, display-case preparation, downloads, admin setup/save/lock, pull tasks, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
+The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, fresh batches, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
 The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, background instance identity, reopening, graceful shutdown during receiving, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish native Windows launcher/DPAPI behavior, physical printing, or a live merchant integration on your store machine.
 

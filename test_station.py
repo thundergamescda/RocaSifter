@@ -46,6 +46,12 @@ class StationTests(unittest.TestCase):
             return Response({'id_mappings':mappings})
         return Response({})
 
+    def test_new_station_starts_with_processing_but_preserves_saved_workflow(self):
+        self.assertEqual(self.service.preferences()['watchMode'],'labels')
+        self.service.save_preferences({'watchMode':'bulk'})
+        restarted=StationService(core)
+        self.assertEqual(restarted.preferences()['watchMode'],'bulk')
+
     def test_import_all_bins_and_exact_file_deduplication(self):
         first=self.service.import_csv(CSV,'first.csv')['receipt']
         second=self.service.import_csv(CSV,'renamed.csv')

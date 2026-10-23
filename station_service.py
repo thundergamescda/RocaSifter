@@ -55,7 +55,7 @@ class StationService:
                 'minPrice': old.get('minPrice', .70), 'cashPercent': 35, 'creditPercent': 50,
                 'squareEnvironment': old.get('squareEnvironment', 'production'),
                 'squareLocationId': old.get('squareLocationId', ''),
-                'watchFolder': '', 'watchMode': 'bulk'})
+                'watchFolder': '', 'watchMode': 'labels'})
         self.migrate_legacy_token()
         # A restart during a commit keeps the same receipt and journal for safe retry.
         for receipt in self.store.summaries():
