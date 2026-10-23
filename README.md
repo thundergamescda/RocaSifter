@@ -13,7 +13,7 @@ The 23-page operator manual includes screenshots, all four workflows, admin setu
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.2**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.3**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
@@ -41,12 +41,22 @@ The app serves only the local computer at `127.0.0.1`. A responsive layout suppo
 | --- | --- | --- |
 | **Bulk scan / sift** | Imports all bins, applies a value threshold, and identifies what deserves further processing | Never receives stock. Move the same receipt to the next workflow. |
 | **Walk-in trade-ins** | Reviews card details and calculates adjustable cash/store-credit offers; records the agreed buy and a printable acceptance record | Acceptance is recorded before receiving or retail labeling. Payment/credit issuance happens outside this app. |
-| **Price & label** | Reviews final prices and produces side-fold QR, standard, or top-fold labels | Choose **New incoming copies** to receive stock, or **Already in inventory** for labels without adding copies. |
+| **Price & label** | Reviews final prices and produces side-fold QR, standard, or top-fold labels | Choose **Add new copies** to receive stock, or **Do not add inventory** for labels without adding copies. |
 | **Online preparation** | Prepares a listing review CSV and a storage ticket for an online bin or a display case | **Receive & prepare** receives new stock first. **Prepare only** creates files without changing stock. Nothing is published online. |
 
-Switching navigation tabs opens that workflow. Use **Move receipt to…** to continue the same physical receipt in another workflow. Moving it does not receive it again. A received receipt is safe to reopen and reprint.
+Switching navigation tabs opens that workflow’s fresh import screen. **New batch** saves pending receipt edits and returns to a blank import screen with fresh review/search controls. Saved receipts remain available from **Open a saved receipt**; incoming folder notifications do not open them automatically. Use **Move receipt to…** to continue the same physical receipt in another workflow. Moving it does not receive it again. A received receipt is safe to reopen and reprint.
 
 **Activity & orders** records receipt history and manual online-order pull tasks. A task includes an order reference, card details, quantity, and physical storage location. Staff explicitly confirm removal from the display or bin. Task confirmation does not change stock; live marketplace sale synchronization is not connected.
+
+## A separate inventory choice for each batch
+
+Each new trade-in, price/label or online batch asks whether to **Add new copies to Square** or **Do not add inventory**. The choice is saved on that receipt; it never becomes a default for the next batch. **Decide later** leaves receiving disabled until you choose in the inventory panel. A bulk sift never receives stock; moving an undecided bulk receipt into a receiving workflow asks for its choice. Folder pickup creates an undecided draft and asks when you open it. Labels only and preparation only remain available as explicit actions that do not add stock.
+
+## Delete and restore receipts
+
+Open a receipt and choose **Delete**, then confirm. It disappears from the active list and the current workflow returns to the import screen. Deletion does not remove stock from Square, undo a buy, or delete generated documents. The saved record, source fingerprint and Square request journal are retained so deletion cannot bypass duplicate-receiving protection.
+
+Reimporting the same CSV, or opening that receipt from **Activity & orders**, offers to restore it with its original inventory status. A received receipt remains received. Unresolved or in-progress receiving must be resolved before deletion. Existing databases are upgraded in place; preserve `station_data` when updating.
 
 ## Reviewing cards
 

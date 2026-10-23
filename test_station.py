@@ -27,6 +27,8 @@ class StationTests(unittest.TestCase):
         self.outputs.stop();self.settings.stop();self.temp.cleanup()
     def receipt(self,mode='labels',reviewed=True):
         r=self.service.import_csv(CSV,'cards.csv',mode)['receipt']
+        r['inventory_intent']='new'
+        r=self.service.save_receipt(r['id'],r)
         if reviewed:
             for c in r['cards']:c['reviewed']=True
             r=self.service.save_receipt(r['id'],r)
@@ -51,6 +53,93 @@ class StationTests(unittest.TestCase):
         self.assertTrue(second['duplicate']);self.assertEqual(second['receipt']['id'],first['id'])
         new=self.service.import_csv(CSV,'new-delivery.csv',new_delivery=True)
         self.assertNotEqual(new['receipt']['id'],first['id'])
+
+    def test_inventory_choice_is_explicit_and_separate_for_each_batch(self):
+        first=self.service.import_csv(CSV,'first.csv','labels')['receipt']
+        self.assertIsNone(first['inventory_intent'])
+        with patch.object(core,'upload_to_square') as upload:
+            with self.assertRaisesRegex(StationError,'Choose whether'):
+                self.service.receive(first['id'])
+            upload.assert_not_called()
+        first['inventory_intent']='existing'
+        self.service.save_receipt(first['id'],first)
+        second=self.service.import_csv(CSV,'next-delivery.csv','labels',new_delivery=True)['receipt']
+        self.assertIsNone(second['inventory_intent'])
+        self.assertEqual(self.service.store.receipt(first['id'])['inventory_intent'],'existing')
+
+    def test_delete_and_restore_draft_preserves_source_and_blocks_hidden_writes(self):
+        receipt=self.receipt()
+        with patch.object(core,'upload_to_square') as upload:
+            deleted=self.service.delete_receipt(receipt['id'],receipt['revision'])
+            self.assertTrue(deleted['deleted_at'])
+            self.assertEqual(self.service.store.summaries(),[])
+            for action in (lambda:self.service.save_receipt(receipt['id'],receipt),
+                           lambda:self.service.labels(receipt['id']),
+                           lambda:self.service.receive(receipt['id']),
+                           lambda:self.service.prepare_online(receipt['id']),
+                           lambda:self.service.accept_buy(receipt['id'],'cash')):
+                with self.assertRaisesRegex(StationError,'deleted'):
+                    action()
+            duplicate=self.service.import_csv(CSV,'renamed.csv')
+            self.assertTrue(duplicate['duplicate'])
+            self.assertEqual(duplicate['receipt']['id'],receipt['id'])
+            self.assertTrue(duplicate['receipt']['deleted_at'])
+            restored=self.service.restore_receipt(receipt['id'])
+            self.assertFalse(restored.get('deleted_at'))
+            self.assertEqual(restored['cards'],receipt['cards'])
+            self.assertEqual(len(self.service.store.summaries()),1)
+            upload.assert_not_called()
+
+    def test_deleting_received_stock_keeps_journal_and_cannot_receive_it_again(self):
+        self.connect();receipt=self.receipt()
+        with patch.object(core.requests,'get',return_value=Response({'locations':[{'id':'store','status':'ACTIVE'}]})),patch.object(core.requests,'post',side_effect=self.post):
+            received=self.service.receive(receipt['id'])
+        self.assertEqual(received['inventory_status'],'received')
+        with self.service.store.db() as db:
+            original=[tuple(row) for row in db.execute('SELECT * FROM operations WHERE receipt_id=?',(receipt['id'],))]
+        self.assertTrue(original)
+        with patch.object(core,'upload_to_square') as upload:
+            self.service.delete_receipt(receipt['id'],received['revision'])
+            restarted=StationService(core)
+            self.assertTrue(restarted.import_csv(CSV,'same.csv')['duplicate'])
+            restored=restarted.restore_receipt(receipt['id'])
+            self.assertEqual(restored['inventory_status'],'received')
+            self.assertEqual(restarted.receive(receipt['id'])['inventory_status'],'received')
+            with restarted.store.db() as db:
+                self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM operations WHERE receipt_id=?',(receipt['id'],))],original)
+            upload.assert_not_called()
+
+    def test_delete_rejects_stale_revision_and_unresolved_receiving(self):
+        receipt=self.receipt()
+        with self.assertRaisesRegex(StationError,'another window'):
+            self.service.delete_receipt(receipt['id'],receipt['revision']-1)
+        for status in ('committing','needs_attention'):
+            receipt['inventory_status']=status
+            self.service.store.save_receipt(receipt)
+            with self.assertRaisesRegex(StationError,'Resolve'):
+                self.service.delete_receipt(receipt['id'],receipt['revision'])
+        self.assertEqual(len(self.service.store.summaries()),1)
+
+    def test_delete_and_restore_accepted_buy_keeps_purchase_and_output(self):
+        receipt=self.service.accept_buy(self.receipt('trade')['id'],'cash')
+        self.service.delete_receipt(receipt['id'],receipt['revision'])
+        restored=self.service.restore_receipt(receipt['id'])
+        self.assertEqual(restored['purchase'],receipt['purchase'])
+        self.assertEqual(restored['files'],receipt['files'])
+        self.assertTrue(restored['requires_purchase'])
+
+    def test_old_database_receipts_survive_deleted_column_migration(self):
+        import sqlite3
+        from station_store import Store
+        root=self.root/'legacy';root.mkdir()
+        with sqlite3.connect(root/'station.sqlite3') as db:
+            db.execute('CREATE TABLE receipts (id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL)')
+            db.execute('INSERT INTO receipts VALUES (?,?,?,?)',('legacy','source','2026-01-01',json.dumps({'id':'legacy','cards':[]})))
+        store=Store(root)
+        self.assertEqual(store.summaries()[0]['id'],'legacy')
+        self.assertEqual(store.find_source('source'),'legacy')
+        store.save_receipt(store.receipt('legacy'))
+        self.assertEqual(len(Store(root).summaries()),1)
 
     def test_review_required_and_labels_never_receive(self):
         r=self.receipt(reviewed=False)
@@ -256,5 +345,19 @@ class AdminHTTPTests(unittest.TestCase):
         result=self.client.post(self.base+'/api/auth/setup',json={'password':'Password-test-only-246!'},headers={'Origin':'https://unrelated.example'})
         self.assertEqual(result.status_code,403)
         self.assertEqual(self.client.post(self.base+'/api/import',data='{}').status_code,415)
+
+    def test_delete_and_restore_receipt_endpoints(self):
+        receipt=self.post('/api/import',{'csv':CSV,'fileName':'sample.csv','mode':'labels'}).json()['receipt']
+        path='/api/receipts/'+receipt['id']
+        self.assertEqual(self.post(path+'/delete',{}).status_code,400)
+        foreign=self.client.post(self.base+path+'/delete',json={'revision':receipt['revision']},headers={'Origin':'https://unrelated.example'})
+        self.assertEqual(foreign.status_code,403)
+        self.assertEqual(self.post(path+'/delete',{'revision':receipt['revision']}).status_code,200)
+        self.assertEqual(self.client.get(self.base+'/api/receipts').json()['receipts'],[])
+        self.assertEqual(self.post(path+'/receive',{}).status_code,400)
+        restored=self.post(path+'/restore',{}).json()['receipt']
+        self.assertEqual(restored['id'],receipt['id'])
+        self.assertIsNone(restored['inventory_intent'])
+        self.assertEqual(len(self.client.get(self.base+'/api/receipts').json()['receipts']),1)
 
 if __name__=='__main__':unittest.main()

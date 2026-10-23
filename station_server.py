@@ -184,6 +184,10 @@ def make_handler(core):
                     receipt=service.labels(receipt_id,data.get('layout'),data.get('dpi'))
                 elif action=='prepare':
                     receipt=service.prepare_online(receipt_id)
+                elif action=='delete':
+                    receipt=service.delete_receipt(receipt_id,data.get('revision'))
+                elif action=='restore':
+                    receipt=service.restore_receipt(receipt_id)
                 else:
                     raise StationError('Unknown receipt action.')
                 return self.send_json({'receipt':receipt})

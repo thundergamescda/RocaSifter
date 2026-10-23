@@ -50,7 +50,7 @@ class Store:
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS receipts (
-                id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL);
+                id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL, deleted_at TEXT);
             CREATE INDEX IF NOT EXISTS receipts_source ON receipts(source_hash);
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, at TEXT, kind TEXT, detail TEXT);
@@ -59,6 +59,8 @@ class Store:
                 PRIMARY KEY(receipt_id,key));
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, updated TEXT, body TEXT);
             ''')
+            if 'deleted_at' not in {row['name'] for row in db.execute('PRAGMA table_info(receipts)')}:
+                db.execute('ALTER TABLE receipts ADD COLUMN deleted_at TEXT')
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -95,8 +97,8 @@ class Store:
         receipt['updated'] = now()
         receipt['revision'] = receipt.get('revision', 0) + 1
         with self.db() as db:
-            db.execute('INSERT OR REPLACE INTO receipts VALUES (?,?,?,?)',
-                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], json.dumps(receipt)))
+            db.execute('INSERT OR REPLACE INTO receipts (id,source_hash,updated,body,deleted_at) VALUES (?,?,?,?,?)',
+                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], json.dumps(receipt), receipt.get('deleted_at')))
             if event:
                 db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
                     (receipt['id'], now(), event[0], event[1]))
@@ -109,7 +111,7 @@ class Store:
 
     def summaries(self):
         with self.db() as db:
-            rows = db.execute('SELECT body FROM receipts ORDER BY updated DESC LIMIT 150').fetchall()
+            rows = db.execute('SELECT body FROM receipts WHERE deleted_at IS NULL ORDER BY updated DESC LIMIT 150').fetchall()
         summaries = []
         for row in rows:
             receipt = json.loads(row[0])

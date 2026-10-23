@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.0.2'
+VERSION='2.0.3'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -155,8 +155,8 @@ m.para('For Roca Station '+VERSION+' on a local Windows workstation. Screenshots
 # 03 — Daily start.
 m.new(3,'Daily quick start','Start your day.','The short version: open, import, review, choose an action, then check the result.')
 m.step(1,'Open the station.','Double-click <b>Start Roca.vbs</b> (or <b>Start Roca.cmd</b>). Roca runs in the background without a command window. Check Chrome shows version <b>'+VERSION+'</b>.')
-m.step(2,'Choose the job before importing.','Select <b>Bulk scan / sift</b>, <b>Walk-in trade-ins</b>, <b>Price & label</b>, or <b>Online preparation</b>.')
-m.step(3,'Export from Roca.','Click Export in Roca. Save to the watched export folder, or click <b>Import CSV</b> in the app and choose the file.')
+m.step(2,'Choose the job before importing.','Select a workflow tab. Each tab opens a fresh import screen; reopen saved work from the receipt menu.')
+m.step(3,'Export from Roca.','Click Export in Roca. Save to the watched export folder, or click <b>New batch</b> → <b>Choose a Roca export</b>.')
 m.step(4,'Review the included cards.','Correct identity, set, condition, finish, quantity and price. Confirm only cards you have actually checked.')
 m.step(5,'Choose the action you intend.','Receive new copies, print labels only, record an accepted buy, or prepare listing files. Read the action’s confirmation before continuing.')
 m.step(6,'Check and finish the physical work.','Check the receipt status and file links. Print at 100%, attach labels to sleeves, and put the cards in their recorded locations.')
@@ -186,12 +186,12 @@ m.table(['Action','Changes Square stock?'],[
 ('Labels only / Create QR labels','<b>No.</b> Creates files for printing.'),
 ('Receive & create labels / Receive & prepare batch','<b>Yes.</b> Adds the included incoming copies after approval.'),
 ('Prepare only / Prepare listing batch','<b>No</b> when used for already-owned or already-received stock. Creates listing files only.')],[268,W-268],size=10)
-m.para('Navigation changes the view. <b>Move receipt to…</b> continues the same receipt in another workflow.',size=10.5)
+m.para('<b>New batch</b> and workflow tabs return to a fresh import screen. Saved receipts stay in the menu. <b>Move receipt to…</b> continues the same receipt in another workflow.',size=10.5)
 # 06 — Intake.
 m.new(6,'Import & export pickup','Bring in a Roca export.','Every import begins as a draft. It never accepts a buy or receives stock automatically.')
 m.step(1,'Export the scan in Roca.','Choose a CSV export. Keep each physical stack together and use a recognizable file name.')
-m.step(2,'Use manual import or folder pickup.','For manual intake, choose a workflow, click <b>Import CSV</b> or <b>Choose a Roca export</b>, and select the file. You can also drag the CSV into the app.')
-m.step(3,'If folder pickup is configured, wait for the draft.','Export into the folder chosen by your admin. Look for the new-receipt notification or the saved receipt menu. The station must be running.')
+m.step(2,'Use manual import or folder pickup.','Click <b>New batch</b> → <b>Choose a Roca export</b>, or drop a CSV. Choose <b>Add new copies</b> or <b>Do not add inventory</b> for this batch. Bulk sift asks when moved to a receiving workflow.')
+m.step(3,'If folder pickup is configured, wait for the draft.','Export into the folder chosen by your admin. Open the draft from the saved receipt menu; it will not replace your current view. Choose its inventory option when prompted.')
 m.step(4,'Match the receipt to the physical stack.','Check its title, source filename, included copies and receipt ID before reviewing or labeling.')
 m.callout('“This export is already saved.”','Open the existing receipt. Choose <b>This is a new delivery</b> only when the file represents genuinely additional physical copies—not a reprint, retry or renamed export.','care')
 m.h2('Corrected and cumulative exports need a check.')
@@ -248,10 +248,10 @@ m.step(5,'Receive and label the purchased cards.','Use <b>Receive & create label
 m.callout('Acceptance locks the reviewed card details.','Finish the physical review before recording the buy. If the customer declines, leave the offer unaccepted; nothing has been paid or received.','care')
 # 11 — Known stack.
 m.new(11,'Workflow 03','Price & label','Choose whether these are additional copies or cards already in stock.')
-m.table(['New incoming copies','Already in inventory'],[
+m.table(['Add new copies','Do not add inventory'],[
 ('Use when these physical copies have not yet been added to Square.','Use for existing stock that needs labels or a new label run.'),
 ('<b>Receive & create labels</b> adds included copies to Square, then creates label files after confirmation.','<b>Create QR labels</b> or <b>Labels only</b> creates files without adding stock.')],[W/2,W/2],size=10.7)
-m.step(1,'Open the right receipt.','Move an existing receipt here, or import a genuinely new stack. Choose the correct inventory intent.')
+m.step(1,'Open the right receipt.','Move an existing receipt here, or import a genuinely new stack. Choose separately for each batch; <b>Decide later</b> leaves receiving disabled.')
 m.step(2,'Review final prices and variants.','Check quantity, condition and finish. Mark every included card reviewed.')
 m.step(3,'Choose the label layout and DPI.','Use <b>Side fold · QR right</b> for the left-info/right-code design. Select the actual 203 or 300 DPI of your Zebra.')
 m.step(4,'Create the files and check the result.','For receiving, read the confirmation and wait for <b>RECEIVED</b>. Then open the label PDF from the file links below the actions.')
@@ -282,7 +282,7 @@ m.new(14,'Workflow 04','Online preparation','Prepare the listing information wit
 m.image('online-storage.png','Choose a sales channel, physical storage type and default location.',max_h=142)
 m.step(1,'Review the cards and choose their storage.','Select TCGplayer or eBay. Choose <b>Dedicated online bin</b> or <b>Display case / shop floor</b>. Enter a specific location, such as “Case 2, shelf B.”')
 m.step(2,'Use row-specific locations when needed.','A location in a card’s editor overrides the receipt’s default location for that row.')
-m.step(3,'Choose whether to receive incoming copies.','For new stock, <b>Receive & prepare batch</b> receives it in Square first. For existing stock, choose <b>Already in inventory</b>.')
+m.step(3,'Choose whether to receive incoming copies.','For new stock, <b>Receive & prepare batch</b> receives it in Square first. For existing stock, choose <b>Do not add inventory</b>.')
 m.step(4,'Create the preparation files.','Use <b>Prepare listing batch</b> or <b>Prepare only</b>. Download the review CSV and open the storage ticket. Retail labels are a separate action.')
 m.callout('Preparation is not publication.','The CSV is a generic review sheet, not a guaranteed TCGplayer/eBay import format. Publish through your approved seller workflow. This app does not list, delist or synchronize marketplace quantities automatically.','care')
 # 15 — Activity and pulls.
@@ -311,6 +311,7 @@ c.setFont('Body',22);c.drawCentredString(M+164,m.y-34,'+');c.drawCentredString(M
 m.para('This example assumes no intervening sales. The app adds incoming copies; it does not reset the existing quantity to two.')
 m.h2('If receiving is interrupted')
 m.para('Open the <b>same receipt</b>, read its error and use <b>Retry saved receiving</b> when offered. The app reuses the saved requests. Restore the original Square environment and location before retrying.')
+m.para('<b>Delete:</b> removes a receipt from the list, keeping stock and receiving history. Reimport its CSV or open its Activity entry to restore. Resolve receiving errors first.',size=10.3,leading=14,space=6)
 m.callout('Do not create another receipt to bypass an error.','A partial or uncertain operation may already have changed Square. If the error persists or the request is old, stop and ask an admin to check Square before further action.','care')
 # 17 — Admin setup.
 m.new(17,'Administrator setup','First-time setup & Admin','An admin sets the connection once. Operators then use it without seeing the token.',role='ADMIN')
@@ -376,11 +377,11 @@ m.new(22,'Print this page','One-page desk reference','Keep this page near the st
 m.table(['I want to…','Use…'],[
 ('Find value in an unsorted stack','<b>Bulk scan / sift</b> → threshold → review → move the same receipt.'),
 ('Make a customer an offer','<b>Walk-in trade-ins</b> → review → agree → record accepted cash/credit offer.'),
-('Add newly arrived copies and print','<b>Price & label</b> → <b>New incoming copies</b> → <b>Receive & create labels</b>.'),
-('Print for stock we already own','<b>Already in inventory</b> → <b>Create QR labels</b>, or use <b>Labels only</b>.'),
+('Add newly arrived copies and print','<b>Price & label</b> → <b>Add new copies</b> → <b>Receive & create labels</b>.'),
+('Print for stock we already own','<b>Do not add inventory</b> → <b>Create QR labels</b>, or use <b>Labels only</b>.'),
 ('Prepare online stock information','<b>Online preparation</b> → channel + storage → preparation files. Publish separately.'),
 ('Pull an online order from a case','<b>Activity & orders</b> → <b>Record online order</b> → remove cards → <b>Confirm pulled</b>.'),
-('Continue a stack in another tab','<b>Move receipt to…</b>. Keep the same receipt ID.'),
+('Start a fresh stack / continue a stack','<b>New batch</b> for a fresh import. <b>Move receipt to…</b> to keep the same receipt.'),
 ('Retry an interrupted stock receipt','Open the same receipt → read error → <b>Retry saved receiving</b> when offered.')],[200,W-200],size=10.2)
 m.h2('Before the final click')
 for text in ['Physical copies match the included quantity.','Name, set, number, condition and exact finish are checked.','The intended price is confirmed for this variant.','The action matches the job: receive, label only, or prepare only.','Cards will be stored in their recorded location.']:

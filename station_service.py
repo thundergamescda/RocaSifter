@@ -153,13 +153,40 @@ class StationService:
             receipt = {'id': 'R-' + time.strftime('%Y%m%d') + '-' + uuid.uuid4().hex[:6].upper(),
                 'source_hash': digest, 'source_name': Path(filename).name[:200],
                 'title': Path(filename).stem[:100] or 'New receipt', 'created': now(), 'mode': mode,
-                'cards': cards, 'inventory_status': 'not_received', 'inventory_intent': 'new',
+                'cards': cards, 'inventory_status': 'not_received', 'inventory_intent': None,
                 'purchase': None, 'requires_purchase': mode == 'trade', 'customer_reference': '', 'notes': '', 'channel': 'tcgplayer',
                 'storage_strategy': 'bin', 'storage_location': '', 'prepared': False,
                 'cash_percent': self.preferences()['cashPercent'],
                 'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
             self.store.save_receipt(receipt, ('imported', f'{len(cards)} card rows imported into {mode}.'))
             return {'receipt': receipt, 'duplicate': False}
+
+    def active_receipt(self, receipt_id):
+        receipt = self.store.receipt(receipt_id)
+        if receipt.get('deleted_at'):
+            raise StationError('This receipt was deleted. Restore it before using it.')
+        return receipt
+
+    def delete_receipt(self, receipt_id, revision):
+        with self.lock:
+            receipt = self.store.receipt(receipt_id)
+            if receipt.get('deleted_at'):
+                return receipt
+            if receipt['revision'] != revision:
+                raise StationError('This receipt changed in another window. Reload it before deleting.')
+            if receipt['inventory_status'] in ('committing', 'needs_attention'):
+                raise StationError('Resolve the saved receiving operation before deleting this receipt.')
+            receipt['deleted_at'] = now()
+            self.store.save_receipt(receipt, ('deleted', 'Receipt removed from the active list. Square stock and receiving history kept.'))
+            return receipt
+
+    def restore_receipt(self, receipt_id):
+        with self.lock:
+            receipt = self.store.receipt(receipt_id)
+            if receipt.get('deleted_at'):
+                receipt.pop('deleted_at')
+                self.store.save_receipt(receipt, ('restored', 'Receipt restored with its original inventory status. No stock changed.'))
+            return receipt
 
     def validate_card(self, card):
         result = dict(card)
@@ -184,7 +211,7 @@ class StationService:
 
     def save_receipt(self, receipt_id, data):
         with self.lock:
-            old = self.store.receipt(receipt_id)
+            old = self.active_receipt(receipt_id)
             if data.get('revision') != old['revision']:
                 raise StationError('This receipt changed in another window. Reload it before saving.')
             if old['inventory_status'] in ('committing', 'needs_attention'):
@@ -200,7 +227,7 @@ class StationService:
             for key in ('title', 'notes', 'customer_reference', 'storage_location'):
                 if key in data:
                     old[key] = str(data[key]).strip()[:2000]
-            for key, allowed in [('inventory_intent', ('new', 'existing')), ('channel', ('tcgplayer', 'ebay')),
+            for key, allowed in [('inventory_intent', (None, 'new', 'existing')), ('channel', ('tcgplayer', 'ebay')),
                                  ('storage_strategy', ('bin', 'display'))]:
                 if key in data:
                     if data[key] not in allowed:
@@ -246,7 +273,7 @@ class StationService:
 
     def accept_buy(self, receipt_id, offer_type):
         with self.lock:
-            receipt = self.store.receipt(receipt_id)
+            receipt = self.active_receipt(receipt_id)
             if receipt['purchase']:
                 return receipt
             if receipt['mode'] != 'trade' or offer_type not in ('cash', 'credit'):
@@ -318,13 +345,15 @@ class StationService:
     def receive(self, receipt_id):
         # Single receiving lane prevents parallel receipt commits, including repeated clicks.
         with self.lock:
-            receipt = self.store.receipt(receipt_id)
+            receipt = self.active_receipt(receipt_id)
             if receipt['inventory_status'] == 'received':
                 return receipt
             if receipt['mode'] == 'bulk':
                 raise StationError('Bulk sift does not receive inventory. Move this receipt to a receiving workflow.')
             if receipt['inventory_intent'] == 'existing':
-                raise StationError('This receipt is already-owned stock. Generate labels or a listing batch without receiving it again.')
+                raise StationError('This receipt is set to not add inventory (already-owned stock or labels only). Change the inventory choice before receiving new copies.')
+            if receipt['inventory_intent'] != 'new':
+                raise StationError('Choose whether this batch should add inventory before receiving it.')
             cards = self.approved_cards(receipt)
             config = self.preferences()
             token = self.vault.read()
@@ -359,7 +388,7 @@ class StationService:
 
     def labels(self, receipt_id, layout=None, dpi=None):
         with self.lock:
-            receipt = self.store.receipt(receipt_id)
+            receipt = self.active_receipt(receipt_id)
             cards = self.approved_cards(receipt)
             if receipt['mode'] == 'bulk':
                 raise StationError('Move this receipt to Price & label before printing retail labels.')
@@ -376,7 +405,7 @@ class StationService:
 
     def prepare_online(self, receipt_id):
         with self.lock:
-            receipt = self.store.receipt(receipt_id)
+            receipt = self.active_receipt(receipt_id)
             cards = self.approved_cards(receipt)
             if receipt['mode'] != 'online':
                 raise StationError('Open Online preparation to create a listing batch.')
