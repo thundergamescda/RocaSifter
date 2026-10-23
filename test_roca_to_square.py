@@ -32,8 +32,9 @@ class Tests(unittest.TestCase):
         with patch.object(app.requests, 'get', return_value=Response({'locations':[{'id':'store', 'status':'ACTIVE'}]})), patch.object(app.requests, 'post', side_effect=post):
             result = app.upload_to_square([CARD], 'fake', environment='sandbox')
         self.assertEqual(result, {'uploaded_count':1, 'inventory_count':3, 'errors':[]})
-        count = calls[-1][1]['changes'][0]['physical_count']
-        self.assertEqual((count['catalog_object_id'], count['location_id'], count['quantity'], count['state']), ('real-variation','store','3','IN_STOCK'))
+        count = calls[-1][1]['changes'][0]['adjustment']
+        self.assertEqual((count['catalog_object_id'], count['location_id'], count['quantity'], count['to_state']), ('real-variation','store','3','IN_STOCK'))
+        self.assertEqual(count['from_state'], 'NONE')
 
     def test_multiple_stores_require_selection(self):
         with patch.object(app.requests, 'get', return_value=Response({'locations':[{'id':'a','status':'ACTIVE'},{'id':'b','status':'ACTIVE'}]})), patch.object(app.requests, 'post') as post:
@@ -41,11 +42,26 @@ class Tests(unittest.TestCase):
         self.assertTrue(result['errors'])
         post.assert_not_called()
 
-    def test_existing_sku_prevents_duplicate_upload(self):
-        with patch.object(app.requests, 'get', return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})), patch.object(app.requests, 'post', return_value=Response({'objects':[{'id':'existing'}]})) as post:
+    def test_existing_sku_adds_stock_without_catalog_creation_or_reset(self):
+        calls = []
+        def post(url, **kwargs):
+            calls.append((url,kwargs['json']))
+            if url.endswith('/search'):
+                return Response({'objects':[{'id':'existing','type':'ITEM_VARIATION',
+                    'item_variation_data':{'sku':app.barcode_value(CARD),'track_inventory':True}}]})
+            self.assertNotIn('batch-upsert', url)
+            return Response({})
+        with patch.object(app.requests, 'get', return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})), patch.object(app.requests, 'post', side_effect=post):
             result = app.upload_to_square([CARD], 'fake')
-        self.assertIn('already exists', result['errors'][0])
-        self.assertEqual(post.call_count, 1)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['inventory_count'],3)
+        change = calls[-1][1]['changes'][0]
+        self.assertEqual(change['type'],'ADJUSTMENT')
+        self.assertEqual(change['adjustment']['catalog_object_id'],'existing')
+        self.assertEqual(change['adjustment']['quantity'],'3')
+        # Add three incoming copies, not an absolute count of three (which would erase sales).
+        self.assertEqual(change['adjustment']['from_state'],'NONE')
+        self.assertEqual(change['adjustment']['to_state'],'IN_STOCK')
 
     def test_stock_failure_is_reported_separately_from_catalog_success(self):
         def post(url, **kwargs):
@@ -127,7 +143,7 @@ class DesktopTests(unittest.TestCase):
                 page = client.get(base+'/')
                 self.assertEqual(page.status_code, 200)
                 self.assertIn('Create labels only', page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.1.2')
+                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.2.0')
                 config = {'labelLayout':'fold', 'printerDpi':203}
                 parsed = client.post(base+'/api/import', json={'settings':config,'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n'}).json()
                 self.assertEqual(len(parsed['barcodes'][0]), 12)
@@ -136,7 +152,7 @@ class DesktopTests(unittest.TestCase):
                     self.assertEqual(result.status_code, 200, result.text)
                     upload.assert_not_called()
                 data = result.json()
-                self.assertEqual(data['version'], '1.1.2')
+                self.assertEqual(data['version'], '1.2.0')
                 self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+data['pdfUrl']).content)).pages),2)
                 zpl = client.get(base+data['zplUrl']).text
                 self.assertIn('^FD>;'+parsed['barcodes'][0], zpl)
@@ -203,5 +219,77 @@ class LocationTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
+
+class DuplicateTests(unittest.TestCase):
+    def test_csv_sku_is_stable_and_duplicates_keep_label_quantities(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'cards.csv'
+            header='Card Name,Card #,Condition,Printing,Set,Language,Price,Bin,Qty\n'
+            p.write_text(header+'Black Lotus,233,NM,Normal,LEA,English,12,1,2\nOther,1,NM,Normal,LEA,English,1,1,1\nBlack Lotus,233,Near Mint,Normal,LEA,English,12,1,1\n')
+            cards=app.parse_roca_csv(str(p))
+            self.assertEqual(cards[0]['sku'],cards[2]['sku'])
+            self.assertEqual([cards[0]['qty'],cards[2]['qty']],[2,1])
+            p.write_text(header+'Other,1,NM,Normal,LEA,English,1,1,1\nBlack Lotus,233,NM,Normal,LEA,English,12,1,1\n')
+            self.assertEqual(app.parse_roca_csv(str(p))[1]['sku'],cards[0]['sku'])
+
+    def test_condition_finish_set_and_language_are_separate(self):
+        base=['Card','123','NM','Normal',1,'English','LEA']
+        original=app.generate_sku(*base)
+        for index,value in [(2,'LP'),(3,'Foil'),(5,'Japanese'),(6,'LEB')]:
+            variant=list(base);variant[index]=value
+            self.assertNotEqual(app.generate_sku(*variant),original)
+        self.assertEqual(app.generate_sku('Card','123','NM','Non-Foil',999,'English','LEA'),original)
+
+    def test_duplicate_rows_are_aggregated_into_one_stock_adjustment(self):
+        calls=[]
+        def post(url,**kwargs):
+            calls.append((url,kwargs['json']))
+            if url.endswith('/search'):
+                return Response({'objects':[{'id':'existing','item_variation_data':{'track_inventory':True}}]})
+            return Response({})
+        with patch.object(app.requests,'get',return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})),patch.object(app.requests,'post',side_effect=post):
+            result=app.upload_to_square([CARD,dict(CARD,qty=2)],'fake')
+        self.assertEqual(result['inventory_count'],5)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(calls[-1][1]['changes'][0]['adjustment']['quantity'],'5')
+        self.assertEqual(CARD['qty'],3)
+
+    def test_duplicate_square_skus_are_ambiguous(self):
+        with patch.object(app.requests,'get',return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})),patch.object(app.requests,'post',return_value=Response({'objects':[{'id':'a'},{'id':'b'}]})) as post:
+            result=app.upload_to_square([CARD],'fake')
+        self.assertIn('Multiple Square variations',result['errors'][0])
+        self.assertEqual(post.call_count,1)
+
+    def test_existing_untracked_variation_is_enabled_without_changing_price(self):
+        calls=[]
+        def post(url,**kwargs):
+            calls.append((url,kwargs['json']))
+            if url.endswith('/search'):
+                return Response({'objects':[{'id':'v','version':42,'type':'ITEM_VARIATION',
+                  'item_variation_data':{'track_inventory':False,'sku':app.barcode_value(CARD),
+                  'price_money':{'amount':12550,'currency':'USD'}}}]})
+            return Response({})
+        with patch.object(app.requests,'get',return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})),patch.object(app.requests,'post',side_effect=post):
+            result=app.upload_to_square([CARD],'fake')
+        self.assertEqual(result['errors'],[])
+        obj=calls[1][1]['batches'][0]['objects'][0]
+        self.assertEqual(obj['version'],42)
+        self.assertTrue(obj['item_variation_data']['track_inventory'])
+        self.assertEqual(obj['item_variation_data']['price_money']['amount'],12550)
+        self.assertEqual(calls[-1][1]['changes'][0]['adjustment']['catalog_object_id'],'v')
+
+    def test_existing_price_mismatch_prevents_stock_and_wrong_price_labels(self):
+        existing={'id':'v','item_variation_data':{'track_inventory':True,'price_money':{'amount':1,'currency':'USD'}}}
+        with patch.object(app.requests,'get',return_value=Response({'locations':[{'id':'a','status':'ACTIVE'}]})),patch.object(app.requests,'post',return_value=Response({'objects':[existing]})) as post:
+            result=app.upload_to_square([CARD],'fake')
+        self.assertIn('different price',result['errors'][0])
+        self.assertEqual(post.call_count,1)
+
+    def test_explicit_square_sku_supports_previously_imported_cards(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'old.csv'
+            p.write_text('Card Name,Card #,Price,Bin,Qty,Square SKU\nBlack Lotus,233,125.50,1,2,123456789012\n')
+            cards=app.parse_roca_csv(str(p))
+            self.assertEqual(app.barcode_value(cards[0]),'123456789012')
 
 if __name__ == '__main__': unittest.main()

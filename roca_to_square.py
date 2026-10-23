@@ -52,7 +52,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2.0"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -84,33 +84,20 @@ def clean_string_for_sku(text: str, max_length: int = 8) -> str:
     return cleaned[:max_length]
 
 
-def generate_sku(card_name: str, card_num: str, condition: str, printing: str, seq: int) -> str:
-    words = [w for w in re.split(r'[\s\W]+', card_name) if w]
-    if len(words) >= 2:
-        name_slug = "".join(w[0].upper() for w in words[:3])
-    else:
-        name_slug = clean_string_for_sku(card_name, max_length=4)
-
-    num_slug = clean_string_for_sku(card_num, max_length=4) or "000"
-
-    cond_lower = condition.lower()
-    if "near" in cond_lower or "nm" in cond_lower:
-        cond_code = "NM"
-    elif "light" in cond_lower or "lp" in cond_lower:
-        cond_code = "LP"
-    elif "mod" in cond_lower or "mp" in cond_lower:
-        cond_code = "MP"
-    elif "heavy" in cond_lower or "hp" in cond_lower:
-        cond_code = "HP"
-    elif "damage" in cond_lower or "dmg" in cond_lower:
-        cond_code = "DMG"
-    else:
-        cond_code = "SP"
-
-    print_lower = printing.lower()
-    finish_code = "F" if "foil" in print_lower else "N"
-
-    return f"{name_slug}-{num_slug}-{cond_code}-{finish_code}-{seq:03d}"
+def generate_sku(card_name: str, card_num: str, condition: str, printing: str, seq: int,
+                 language: str = "English", card_set: str = "") -> str:
+    """Card identity is independent of row order, quantity and price."""
+    normalize = lambda value: " ".join(str(value).casefold().split())
+    condition_aliases = {"nm": "near mint", "lp": "lightly played", "mp": "moderately played",
+                         "hp": "heavily played", "dmg": "damaged"}
+    condition = normalize(condition)
+    condition = condition_aliases.get(condition, condition)
+    printing = normalize(printing)
+    printing = {"non-foil": "normal", "nonfoil": "normal", "non foil": "normal"}.get(printing, printing)
+    identity = [normalize(card_name), normalize(card_num), condition, printing,
+                normalize(language), normalize(card_set)]
+    digest = hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode()).hexdigest()
+    return f"{int(digest, 16) % 10**12:012d}"
 
 
 # ==============================================================================
@@ -142,6 +129,7 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
             printing = get_col(row, "Printing") or "Normal"
             language = get_col(row, "Language") or "English"
             rarity = get_col(row, "Rarity")
+            card_set = get_col(row, "Set Code", "Set", "Set Name", "Expansion")
             raw_price_str = get_col(row, "Listing Price", "Price", "Market Price")
             bin_val = get_col(row, "Bin")
             qty_str = get_col(row, "Qty", "Quantity") or "1"
@@ -161,7 +149,7 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
 
             if is_target_bin or (raw_price >= min_price and not bin_val):
                 rounded_price = round_to_nearest_quarter(raw_price)
-                sku = generate_sku(card_name, card_num, condition, printing, seq_counter)
+                sku = get_col(row, "SKU", "Square SKU") or generate_sku(card_name, card_num, condition, printing, seq_counter, language, card_set)
 
                 item = {
                     "card_name": card_name,
@@ -170,6 +158,7 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
                     "printing": printing,
                     "language": language,
                     "rarity": rarity,
+                    "card_set": card_set,
                     "raw_price": raw_price,
                     "final_price": rounded_price,
                     "sku": sku,
@@ -416,13 +405,25 @@ def upload_to_square(
     try:
         locations = square_locations(access_token, environment)
         location_id = resolve_square_location(locations, location_id, environment)
-        values = set()
+        # Combine repeated rows into one variation and the sum of incoming copies.
+        grouped = {}
         for card in cards:
             label_fields(card)
             value = barcode_value(card)
-            if value in values:
-                raise ValueError("Duplicate barcode in this import. Give each card row a unique SKU.")
-            values.add(value)
+            if value in grouped:
+                previous = grouped[value]
+                identity = lambda c: generate_sku(c.get("card_name", c.get("cardName", "")),
+                    c.get("card_num", c.get("cardNum", "")), c.get("condition", "Near Mint"),
+                    c.get("printing", "Normal"), 0, c.get("language", "English"), c.get("card_set", ""))
+                if identity(previous) != identity(card):
+                    raise ValueError(f"SKU {value} is assigned to different card details. Resolve it before uploading.")
+                if label_fields(previous)[1] != label_fields(card)[1]:
+                    raise ValueError(f"Duplicate SKU {value} has different prices in this CSV. Choose one price first.")
+                previous["qty"] += int(card.get("qty", 1))
+            else:
+                grouped[value] = dict(card, qty=int(card.get("qty", 1)))
+        existing_variations = {}
+        for value in grouped:
             existing = requests.post(f"{base_url}/v2/catalog/search", headers=headers,
                 json={"object_types": ["ITEM_VARIATION"], "query": {
                     "exact_query": {"attribute_name": "sku", "attribute_value": value}}}, timeout=30)
@@ -430,9 +431,20 @@ def upload_to_square(
             found = existing.json()
             if found.get("errors"):
                 raise ValueError(json.dumps(found["errors"]))
-            if found.get("objects"):
-                raise ValueError(f"SKU {value} already exists. Import stopped to avoid duplicate items "
-                                 "or resetting stock after sales. Reconcile this card in Square first.")
+            matches = [obj for obj in found.get("objects", []) if not obj.get("is_deleted")]
+            if len(matches) > 1 or found.get("cursor"):
+                raise ValueError(f"Multiple Square variations have SKU {value}. Resolve the duplicate SKUs in Square first.")
+            if matches:
+                variation_data = matches[0].get("item_variation_data", {})
+                money = variation_data.get("price_money", {})
+                incoming_price = label_fields(grouped[value])[1]
+                if "amount" in money and (money.get("currency") != "USD" or
+                        money["amount"] != int(Decimal(incoming_price[1:]) * 100)):
+                    raise ValueError(f"SKU {value} has a different price or currency in Square. "
+                                     "Match the CSV price to Square (or update Square) before adding copies, "
+                                     "so the printed label and checkout price agree.")
+                existing_variations[value] = matches[0]
+        cards = list(grouped.values())
     except Exception as exc:
         return {"uploaded_count": 0, "inventory_count": 0, "errors": [str(exc)]}
 
@@ -454,6 +466,16 @@ def upload_to_square(
             c_lang = item.get("language") or "English"
             c_price = float(item.get("final_price") or item.get("finalPrice") or 0.0)
             c_sku = barcode_value(item)
+
+            if c_sku in existing_variations:
+                variation = existing_variations[c_sku]
+                pending_inventory.append((variation["id"], int(item.get("qty", 1))))
+                # Preserve the existing price, SKU, version and other catalog fields.
+                if not variation.get("item_variation_data", {}).get("track_inventory", False):
+                    variation = dict(variation)
+                    variation["item_variation_data"] = dict(variation.get("item_variation_data", {}), track_inventory=True)
+                    objects_payload.append(variation)
+                continue
 
             item_id = f"#item_{uuid.uuid4().hex[:12]}"
             var_id = f"#var_{uuid.uuid4().hex[:12]}"
@@ -494,39 +516,38 @@ def upload_to_square(
         }
 
         try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-            if response.status_code == 200:
+            mappings = {}
+            if objects_payload:
+                response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+                response.raise_for_status()
                 resp_json = response.json()
                 if resp_json.get("errors"):
                     raise ValueError(json.dumps(resp_json["errors"]))
-                created_count = len(chunk)
-                total_uploaded += created_count
                 mappings = {m["client_object_id"]: m["object_id"]
                             for m in resp_json.get("id_mappings", [])}
-                changes = []
-                for temporary_id, qty in pending_inventory:
-                    if temporary_id not in mappings:
-                        raise ValueError("Square did not return the variation ID; inventory was not confirmed.")
-                    changes.append({"type": "PHYSICAL_COUNT", "physical_count": {
-                        "catalog_object_id": mappings[temporary_id],
-                        "location_id": location_id, "state": "IN_STOCK",
-                        "quantity": str(qty),
-                        "occurred_at": datetime.now(timezone.utc).isoformat()}})
-                stock_response = requests.post(f"{base_url}/v2/inventory/changes/batch-create",
-                    headers=headers, json={"idempotency_key": str(uuid.uuid4()),
-                                         "changes": changes}, timeout=30)
-                stock_response.raise_for_status()
-                stock_result = stock_response.json()
-                if stock_result.get("errors"):
-                    raise ValueError(json.dumps(stock_result["errors"]))
-                inventory_count += sum(qty for _, qty in pending_inventory)
-                log_fn(f"[✓] Synced {created_count} items and their starting stock at {location_id}.")
-            else:
-                err_msg = f"HTTP {response.status_code}: {response.text}"
-                log_fn(f"[!] Square error: {err_msg}")
-                errors.append(err_msg)
+            # Both new and existing variations receive additive stock adjustments.
+            created_count = len(chunk)
+            total_uploaded += created_count
+            changes = []
+            for temporary_id, qty in pending_inventory:
+                if temporary_id.startswith("#") and temporary_id not in mappings:
+                    raise ValueError("Square did not return the variation ID; inventory was not confirmed.")
+                changes.append({"type": "ADJUSTMENT", "adjustment": {
+                    "catalog_object_id": mappings.get(temporary_id, temporary_id),
+                    "location_id": location_id, "from_state": "NONE", "to_state": "IN_STOCK",
+                    "quantity": str(qty),
+                    "occurred_at": datetime.now(timezone.utc).isoformat()}})
+            stock_response = requests.post(f"{base_url}/v2/inventory/changes/batch-create",
+                headers=headers, json={"idempotency_key": str(uuid.uuid4()),
+                                     "changes": changes}, timeout=30)
+            stock_response.raise_for_status()
+            stock_result = stock_response.json()
+            if stock_result.get("errors"):
+                raise ValueError(json.dumps(stock_result["errors"]))
+            inventory_count += sum(qty for _, qty in pending_inventory)
+            log_fn(f"[✓] Synced {created_count} items; added incoming copies to stock at {location_id}.")
         except Exception as e:
-            err_msg = f"Network error: {str(e)}"
+            err_msg = f"Square sync error: {str(e)}. If the request timed out, check Square stock before resubmitting this import."
             log_fn(f"[!] {err_msg}")
             errors.append(err_msg)
 
