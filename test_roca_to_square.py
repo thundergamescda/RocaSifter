@@ -127,7 +127,7 @@ class DesktopTests(unittest.TestCase):
                 page = client.get(base+'/')
                 self.assertEqual(page.status_code, 200)
                 self.assertIn('Create labels only', page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.1.0')
+                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.1.1')
                 config = {'labelLayout':'fold', 'printerDpi':203}
                 parsed = client.post(base+'/api/import', json={'settings':config,'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n'}).json()
                 self.assertEqual(len(parsed['barcodes'][0]), 12)
@@ -136,7 +136,7 @@ class DesktopTests(unittest.TestCase):
                     self.assertEqual(result.status_code, 200, result.text)
                     upload.assert_not_called()
                 data = result.json()
-                self.assertEqual(data['version'], '1.1.0')
+                self.assertEqual(data['version'], '1.1.1')
                 self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+data['pdfUrl']).content)).pages),2)
                 zpl = client.get(base+data['zplUrl']).text
                 self.assertIn('^FD>;'+parsed['barcodes'][0], zpl)
@@ -150,5 +150,58 @@ class DesktopTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join()
+
+class LocationTests(unittest.TestCase):
+    def test_wrong_location_reports_actual_options_and_prevents_writes(self):
+        with patch.object(app.requests, 'get', return_value=Response({'locations':[
+            {'id':'correct-id','name':'Card Store','status':'ACTIVE'}]})), patch.object(app.requests, 'post') as post:
+            result = app.upload_to_square([CARD], 'fake', location_id='old-id')
+        self.assertIn('correct-id', result['errors'][0])
+        self.assertIn('Card Store', result['errors'][0])
+        self.assertIn('Production', result['errors'][0])
+        self.assertEqual(result['uploaded_count'],0)
+        post.assert_not_called()
+
+    def test_whitespace_in_location_is_ignored(self):
+        self.assertEqual(app.resolve_square_location([{'id':'store','status':'ACTIVE'}], ' store ', 'production'), 'store')
+
+    def test_no_active_locations_has_specific_diagnosis(self):
+        with self.assertRaisesRegex(ValueError,'no active locations'):
+            app.resolve_square_location([{'id':'closed','status':'INACTIVE'}], '', 'production')
+
+    def test_auth_and_permission_failures_are_distinct(self):
+        for code, expected in [(401,'selected environment'),(403,'MERCHANT_PROFILE_READ')]:
+            response = Response({})
+            response.status_code = code
+            with patch.object(app.requests,'get',return_value=response):
+                with self.assertRaisesRegex(ValueError,expected):
+                    app.square_locations('fake','production')
+
+    def test_sandbox_request_uses_sandbox_host(self):
+        with patch.object(app.requests,'get',return_value=Response({'locations':[]})) as get:
+            app.square_locations('fake','sandbox')
+        self.assertEqual(get.call_args.args[0],'https://connect.squareupsandbox.com/v2/locations')
+
+    def test_location_api_reads_without_writing_or_echoing_token(self):
+        import threading
+        import requests
+        server = app.HTTPServer(('127.0.0.1',0), app.RocaStationHandler)
+        thread = threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        client = requests.Session()
+        client.trust_env = False
+        try:
+            with patch.object(app,'square_locations',return_value=[{'id':'a','name':'Shop','status':'ACTIVE','currency':'USD'}]) as lookup, patch.object(app,'upload_to_square') as upload:
+                result = client.post(f'http://127.0.0.1:{server.server_port}/api/square/locations',json={'settings':{'squareToken':'FAKE_TEST_TOKEN','squareEnvironment':'production'}})
+                self.assertEqual(result.status_code,200)
+                self.assertEqual(result.json()['locations'][0]['name'],'Shop')
+                self.assertNotIn('FAKE_TEST_TOKEN', result.text)
+                lookup.assert_called_once_with('FAKE_TEST_TOKEN','production')
+                upload.assert_not_called()
+        finally:
+            client.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
 if __name__ == '__main__': unittest.main()

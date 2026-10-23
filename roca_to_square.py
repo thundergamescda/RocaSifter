@@ -50,7 +50,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -287,6 +287,60 @@ def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="standard"):
 # 4. SQUARE CATALOG API INTEGRATION
 # ==============================================================================
 
+def square_locations(access_token, environment):
+    """Read-only connection check; never create catalog items to diagnose access."""
+    if requests is None:
+        raise ValueError("Install requests using Install dependencies.cmd.")
+    token = str(access_token).strip()
+    if not token:
+        raise ValueError("Enter your Square access token, then click Load Square locations.")
+    environment = str(environment).strip().lower()
+    if environment not in ("production", "sandbox"):
+        raise ValueError("Select Production or Sandbox.")
+    base_url = ("https://connect.squareupsandbox.com" if environment == "sandbox"
+                else "https://connect.squareup.com")
+    try:
+        response = requests.get(f"{base_url}/v2/locations", headers={
+            "Authorization": f"Bearer {token}", "Square-Version": "2024-09-19"}, timeout=30)
+    except requests.RequestException:
+        raise ValueError("Could not reach Square. Check your connection and try Load Square locations again.") from None
+    if response.status_code == 401:
+        raise ValueError(f"Square rejected this token in {environment.title()} (HTTP 401). "
+                         "Use a token for the selected environment; replace an expired or revoked token.")
+    if response.status_code == 403:
+        raise ValueError("Square denied location access (HTTP 403). Check this merchant's token "
+                         "and MERCHANT_PROFILE_READ permission.")
+    if not 200 <= response.status_code < 300:
+        raise ValueError(f"Square location lookup failed (HTTP {response.status_code}). No items were uploaded.")
+    data = response.json()
+    if data.get("errors"):
+        codes = ", ".join(str(e.get("code", "UNKNOWN")) for e in data["errors"])
+        raise ValueError(f"Square location lookup failed: {codes}.")
+    return [{"id": loc["id"], "name": loc.get("name") or loc["id"],
+             "status": loc.get("status", "UNKNOWN"), "currency": loc.get("currency", "")}
+            for loc in data.get("locations", [])]
+
+
+def resolve_square_location(locations, location_id, environment):
+    location_id = str(location_id or "").strip()
+    active = [loc for loc in locations if loc.get("status") == "ACTIVE"]
+    available = "; ".join(f"{loc['name'] if 'name' in loc else loc['id']} ({loc['id']})" for loc in active)
+    if not active:
+        raise ValueError(f"Square accepted the connection to {environment.title()}, but returned no active locations. "
+                         "Check the merchant account and activate the receiving location in Square Dashboard.")
+    if location_id and location_id not in {loc["id"] for loc in active}:
+        raise ValueError(f"Saved location '{location_id}' is not an active location returned by this token "
+                         f"in {environment.title()}. Available: {available}. "
+                         "Click Load Square locations and select your receiving store. "
+                         "No catalog items or inventory were uploaded.")
+    if not location_id:
+        if len(active) != 1:
+            raise ValueError(f"Choose the receiving location before uploading. Available: {available}. "
+                             "Use Load Square locations in the app or --square-location in the CLI.")
+        return active[0]["id"]
+    return location_id
+
+
 def upload_to_square(
     cards: List[Dict[str, Any]],
     access_token: str,
@@ -308,17 +362,8 @@ def upload_to_square(
 
     # Resolve the receiving store before creating anything. Never guess among stores.
     try:
-        locations_response = requests.get(f"{base_url}/v2/locations", headers=headers, timeout=30)
-        locations_response.raise_for_status()
-        locations = [loc for loc in locations_response.json().get("locations", [])
-                     if loc.get("status") == "ACTIVE"]
-        if location_id:
-            if location_id not in {loc["id"] for loc in locations}:
-                raise ValueError("Selected Square location is not active or accessible.")
-        elif len(locations) == 1:
-            location_id = locations[0]["id"]
-        else:
-            raise ValueError("Set squareLocationId / --square-location to your receiving store's ID.")
+        locations = square_locations(access_token, environment)
+        location_id = resolve_square_location(locations, location_id, environment)
         values = set()
         for card in cards:
             label_fields(card)
@@ -557,6 +602,10 @@ class RocaStationHandler(BaseHTTPRequestHandler):
                 return
             cfg = load_settings()
             cfg.update(body.get("settings", {}))
+            if self.path == "/api/square/locations":
+                locations = square_locations(cfg.get("squareToken", ""), cfg.get("squareEnvironment", "production"))
+                self.send_json({"environment": cfg.get("squareEnvironment", "production"), "locations": locations})
+                return
             if self.path == "/api/import":
                 # Parse in Python so the GUI and CLI share filters and SKU generation.
                 with tempfile.TemporaryDirectory() as directory:
