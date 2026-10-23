@@ -52,7 +52,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -196,7 +196,7 @@ def label_fields(item):
 
 
 def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.0,
-                              layout="standard", dpi=203):
+                              layout="side", dpi=203):
     if canvas is None or code128 is None:
         raise RuntimeError("PDF labels require reportlab: pip install reportlab")
     if layout not in ("standard", "fold", "side") or dpi not in (203, 300):
@@ -267,7 +267,7 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
     print(f"[✓] Generated PDF thermal labels: {output_pdf_path}")
 
 
-def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="standard"):
+def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="side"):
     if dpi not in (203, 300) or layout not in ("standard", "fold", "side"):
         raise ValueError("Use standard/fold/side layout and 203/300 DPI.")
     pw, ll = dpi * 2, dpi
@@ -567,7 +567,7 @@ def load_settings() -> Dict[str, Any]:
         "autoPdf": True,
         "squareLocationId": "",
         "squareEnvironment": "production",
-        "labelLayout": "standard",
+        "labelLayout": "side",
         "printerDpi": 203
     }
     if os.path.exists(SETTINGS_FILE):
@@ -576,6 +576,11 @@ def load_settings() -> Dict[str, Any]:
                 default_cfg.update(json.load(f))
         except Exception:
             pass
+    # One-time migration: old installations retained the previous linear layout.
+    # After it is saved once, subsequent explicit layout choices are respected.
+    if not default_cfg.get("sideFoldDefaultApplied", False):
+        default_cfg["labelLayout"] = "side"
+        default_cfg["sideFoldDefaultApplied"] = True
     return default_cfg
 
 
@@ -706,7 +711,7 @@ class RocaStationHandler(BaseHTTPRequestHandler):
             prefix = "roca_" + datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
             pdf_name, zpl_name = prefix + ".pdf", prefix + ".zpl"
             pdf_path, zpl_path = os.path.join(OUTPUT_DIR, pdf_name), os.path.join(OUTPUT_DIR, zpl_name)
-            layout, dpi = cfg.get("labelLayout", "standard"), int(cfg.get("printerDpi", 203))
+            layout, dpi = cfg.get("labelLayout", "side"), int(cfg.get("printerDpi", 203))
             generate_zebra_pdf_labels(cards, pdf_path, layout=layout, dpi=dpi)
             generate_zebra_zpl(cards, zpl_path, layout=layout, dpi=dpi)
             res = {"uploaded_count": 0, "inventory_count": 0, "errors": []}
@@ -802,7 +807,7 @@ def main():
     parser.add_argument("--pdf-out", default="zebra_labels_2x1.pdf", help="Output path for Zebra label PDF.")
     parser.add_argument("--zpl-out", default="zebra_labels.zpl", help="Output path for Zebra raw ZPL file.")
     parser.add_argument("--square-token", default=os.getenv("SQUARE_ACCESS_TOKEN", ""), help="Square API Access Token.")
-    parser.add_argument("--label-layout", choices=["standard", "fold", "side"], default="standard")
+    parser.add_argument("--label-layout", choices=["standard", "fold", "side"], default="side")
     parser.add_argument("--dpi", type=int, choices=[203, 300], default=203)
     parser.add_argument("--square-location", default=os.getenv("SQUARE_LOCATION_ID", ""))
     parser.add_argument("--sandbox", action="store_true", help="Use Square Sandbox environment instead of Production.")

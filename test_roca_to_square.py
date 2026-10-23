@@ -143,7 +143,7 @@ class DesktopTests(unittest.TestCase):
                 page = client.get(base+'/')
                 self.assertEqual(page.status_code, 200)
                 self.assertIn('Create labels only', page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.2.0')
+                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.2.1')
                 config = {'labelLayout':'fold', 'printerDpi':203}
                 parsed = client.post(base+'/api/import', json={'settings':config,'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n'}).json()
                 self.assertEqual(len(parsed['barcodes'][0]), 12)
@@ -152,7 +152,7 @@ class DesktopTests(unittest.TestCase):
                     self.assertEqual(result.status_code, 200, result.text)
                     upload.assert_not_called()
                 data = result.json()
-                self.assertEqual(data['version'], '1.2.0')
+                self.assertEqual(data['version'], '1.2.1')
                 self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+data['pdfUrl']).content)).pages),2)
                 zpl = client.get(base+data['zplUrl']).text
                 self.assertIn('^FD>;'+parsed['barcodes'][0], zpl)
@@ -291,5 +291,34 @@ class DuplicateTests(unittest.TestCase):
             p.write_text('Card Name,Card #,Price,Bin,Qty,Square SKU\nBlack Lotus,233,125.50,1,2,123456789012\n')
             cards=app.parse_roca_csv(str(p))
             self.assertEqual(app.barcode_value(cards[0]),'123456789012')
+
+class LayoutDefaultTests(unittest.TestCase):
+    def test_existing_linear_settings_migrate_to_side_once(self):
+        import json
+        with tempfile.TemporaryDirectory() as d, patch.object(app,'SETTINGS_FILE',str(Path(d)/'settings.json')):
+            Path(app.SETTINGS_FILE).write_text(json.dumps({'labelLayout':'standard','printerDpi':300}))
+            cfg=app.load_settings()
+            self.assertEqual(cfg['labelLayout'],'side')
+            self.assertEqual(cfg['printerDpi'],300)
+            self.assertTrue(cfg['sideFoldDefaultApplied'])
+            cfg['labelLayout']='fold'
+            app.save_settings(cfg)
+            self.assertEqual(app.load_settings()['labelLayout'],'fold')
+
+    def test_default_outputs_are_right_hand_qr(self):
+        import fitz
+        import zxingcpp
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            pdf=str(Path(d)/'labels.pdf');zpl=str(Path(d)/'labels.zpl')
+            app.generate_zebra_pdf_labels([dict(CARD,qty=1)],pdf)
+            app.generate_zebra_zpl([dict(CARD,qty=1)],zpl)
+            self.assertIn('^BQN',Path(zpl).read_text())
+            with fitz.open(pdf) as doc:
+                pix=doc[0].get_pixmap(dpi=203)
+                img=Image.frombytes('RGB',(pix.width,pix.height),pix.samples)
+                result=zxingcpp.read_barcodes(img)
+                self.assertEqual(result[0].text,app.barcode_value(CARD))
+                self.assertGreater(result[0].position.top_left.x,img.width/2)
 
 if __name__ == '__main__': unittest.main()

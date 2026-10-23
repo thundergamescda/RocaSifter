@@ -44,7 +44,7 @@ Download the current GitHub ZIP and **extract it into a new folder**. Updating G
 
 1. Run `Install dependencies.cmd` once on Windows.
 2. Run `Start Roca.cmd` from the extracted folder (or double-click the new `roca_to_square.py`).
-3. Verify the browser shows **Release 1.2.0 • Chrome launcher • compact 12-digit barcodes**.
+3. Verify the browser shows **Release 1.2.1 • Chrome launcher • compact 12-digit barcodes**.
 4. Choose your CSV, printer DPI and standard/fold-over layout, then select **Create labels only** for a test print.
 5. Open the newly generated PDF from the Result area. Old PDFs are not updated. Generated files are kept under `outputs/` with unique names.
 6. To upload inventory, enter the Square token, select **Production** for a real store (or Sandbox for a sandbox token), and click **Load Square locations — connection test**. Select the receiving store from the returned active locations, verify it is your store, then select the confirmation checkbox and click **Create labels + upload inventory**. The connection test only reads locations; it does not create items or change stock.
@@ -57,7 +57,7 @@ New settings are saved in `roca_settings.json`: `labelLayout` (`standard` or `fo
 
 ## Validation
 
-Twenty-two automated tests exercise mocked Square calls (no real merchant writes) and decode generated PDF barcodes at both supported resolutions. To run the tests, install `requests reportlab pymupdf pillow zxing-cpp pypdf` and run:
+Twenty-four automated tests exercise mocked Square calls (no real merchant writes) and decode generated PDF barcodes at both supported resolutions. To run the tests, install `requests reportlab pymupdf pillow zxing-cpp pypdf` and run:
 
 ```sh
 python -m unittest discover -v
@@ -69,7 +69,7 @@ The browser API was exercised from CSV ingestion through PDF/ZPL downloads, with
 
 The app includes a read-only location lookup and a store dropdown. A saved location that is not returned as active by the selected token/environment stops the upload before catalog writes. This means the location belongs to another environment or merchant, was entered incorrectly, or is inactive. Use the location dropdown rather than entering a merchant ID, application ID, store name or address. Whitespace around CLI location IDs is ignored.
 
-Close the old station, extract the updated GitHub ZIP and verify Release 1.2.0. Enter the token locally, choose the environment and click **Load Square locations**. If one active location is found, it is selected for you; verify the store before uploading. If several are found, choose the receiving store. A token or environment change requires another lookup. A stale stored location is reported and replaced only through the displayed selection. Connection testing saves the current local settings, without sending the token back in its response or putting it in Git.
+Close the old station, extract the updated GitHub ZIP and verify Release 1.2.1. Enter the token locally, choose the environment and click **Load Square locations**. If one active location is found, it is selected for you; verify the store before uploading. If several are found, choose the receiving store. A token or environment change requires another lookup. A stale stored location is reported and replaced only through the displayed selection. Connection testing saves the current local settings, without sending the token back in its response or putting it in Git.
 
 HTTP 401 means Square rejected the token in that environment; use the matching Production/Sandbox token and check whether it has expired or been revoked. HTTP 403 means location lookup is forbidden; check merchant authorization and MERCHANT_PROFILE_READ permission. A successful connection with no active locations requires checking/activating a location in Square Dashboard. Catalog and inventory permissions are checked by their respective upload operations; successfully listing locations alone does not prove write permission.
 
@@ -84,3 +84,7 @@ See `examples/side.pdf`, `examples/side.zpl` and `examples/side.png` for a sampl
 ## Release 1.2.0 duplicate inventory support
 
 For example, an existing variation with 4 copies and an incoming quantity of 2 receives an adjustment of +2, resulting in 6 copies (absent intervening sales). Different conditions, finishes, languages or sets keep separate generated SKUs. The 22 tests cover new items, matching existing variations, duplicate rows, stable identifiers, legacy SKU overrides, price mismatch prevention, tracking activation, location validation and all label layouts. Square tests use mocked responses; live merchant stock has not been changed or verified here.
+
+## Release 1.2.1: QR side fold is the default
+
+The default is now card information and price on the left and QR on the right. Existing saved standard/top-fold preferences are switched to side fold once on upgrade. After saving, explicit layout choices remain available. Both the CLI and direct PDF/ZPL generation default to side fold. Close the old station and verify Release 1.2.1, then generate fresh labels using **Create labels only** to avoid adding stock again. Old PDF/ZPL files are not reformatted. A 2D scanner is required for QR.
