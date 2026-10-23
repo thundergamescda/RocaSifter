@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo.
-echo Roca Station 2.2.0 - Windows setup
+echo Roca Station 2.3.0 - Windows setup
 echo.
 if not exist "requirements.txt" goto missing_files
 if not exist "station_store.py" goto missing_files

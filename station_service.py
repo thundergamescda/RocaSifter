@@ -206,6 +206,63 @@ class StationService:
                 self.store.save_receipt(receipt)
             return receipt
 
+    def add_manual_item(self, data):
+        try:
+            request_id = str(uuid.UUID(str(data.get('requestId', ''))))
+        except (ValueError, AttributeError):
+            raise StationError('Reopen Add item and try again.') from None
+        supplied = data.get('item')
+        if not isinstance(supplied, dict):
+            raise StationError('Enter the item details.')
+        # Reuse the same validation and SKU identity as scanned cards, without CSV price rounding.
+        card = {'card_name': '', 'card_num': '', 'card_set': '', 'condition': 'Near Mint',
+                'printing': 'Normal', 'language': 'English', 'qty': 1, 'final_price': '',
+                'storage_location': '', 'sku_override': ''}
+        card.update({key: supplied[key] for key in card if key in supplied})
+        card.update(row_id=uuid.uuid5(uuid.NAMESPACE_URL, 'roca-manual:' + request_id).hex,
+                    entry_source='manual', include=True, reviewed=False)
+        card = self.validate_card(card)
+        payload_hash = hashlib.sha256(json.dumps(card, sort_keys=True).encode()).hexdigest()
+        card['manual_payload_hash'] = payload_hash
+        receipt_id = data.get('receiptId')
+        with self.lock:
+            if receipt_id:
+                receipt = self.active_receipt(str(receipt_id))
+                existing = next((c for c in receipt['cards'] if c['row_id'] == card['row_id']), None)
+            else:
+                existing_id = self.store.find_source('manual:' + request_id)
+                receipt = self.active_receipt(existing_id) if existing_id else None
+                existing = receipt['cards'][0] if receipt else None
+            if existing:
+                if existing.get('manual_payload_hash') != payload_hash:
+                    raise StationError('This item was already saved with different details. Reopen the batch to edit it.')
+                return receipt
+            if receipt:
+                if receipt.get('purchase') or receipt['inventory_status'] in ('received', 'committing', 'needs_attention'):
+                    raise StationError('This batch is locked after purchase or receiving. Start a new batch for another item.')
+                if data.get('revision') != receipt['revision']:
+                    raise StationError('This batch changed in another window. Reopen it before adding an item.')
+                receipt['cards'].append(card)
+                # Existing documents describe the old contents; regenerate them after reviewing this item.
+                for key in ('pdf', 'zpl', 'listing', 'ticket'):
+                    receipt['files'].pop(key, None)
+                receipt['prepared'] = False
+            else:
+                mode = data.get('mode', 'labels')
+                if mode not in MODES:
+                    raise StationError('Choose a workflow.')
+                receipt = {'id': 'R-' + time.strftime('%Y%m%d') + '-' + uuid.uuid4().hex[:6].upper(),
+                    'source_hash': 'manual:' + request_id, 'source_name': 'Manual entry',
+                    'title': card['card_name'][:100], 'created': now(), 'mode': mode,
+                    'cards': [card], 'inventory_status': 'not_received', 'inventory_intent': None,
+                    'purchase': None, 'requires_purchase': mode == 'trade', 'customer_reference': '',
+                    'notes': '', 'channel': 'tcgplayer', 'storage_strategy': 'bin', 'storage_location': '',
+                    'prepared': False, 'intake_source': 'manual-item', 'pickup_pending': False,
+                    'cash_percent': self.preferences()['cashPercent'],
+                    'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
+            self.store.save_receipt(receipt, ('manual_item', f'Manual item added: {card["qty"]} x {card["card_name"]}. No stock changed.'))
+            return receipt
+
     def active_receipt(self, receipt_id):
         receipt = self.store.receipt(receipt_id)
         if receipt.get('deleted_at'):

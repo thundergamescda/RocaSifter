@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import uuid
 from unittest.mock import patch
 import requests
 import roca_to_square as core
@@ -51,6 +52,115 @@ class StationTests(unittest.TestCase):
         self.service.save_preferences({'watchMode':'bulk'})
         restarted=StationService(core)
         self.assertEqual(restarted.preferences()['watchMode'],'bulk')
+
+    def manual_data(self, receipt=None, **item):
+        return {'requestId':str(uuid.uuid4()), 'mode':'labels',
+                'receiptId':receipt['id'] if receipt else None,
+                'revision':receipt['revision'] if receipt else None,
+                'item':dict(card_name='Charizard',condition='PSA 10',final_price='85.13',qty='2',**item)}
+
+    def test_manual_item_needs_no_csv_keeps_exact_price_and_distinguishes_grade(self):
+        with patch.object(core,'upload_to_square') as upload:
+            r=self.service.add_manual_item(self.manual_data())
+            self.assertEqual(len(r['cards']),1)
+            card=r['cards'][0]
+            self.assertEqual(card['final_price'],85.13)
+            self.assertEqual(card['qty'],2)
+            self.assertEqual(card['condition'],'PSA 10')
+            self.assertFalse(card['reviewed']);self.assertIsNone(r['inventory_intent'])
+            self.assertEqual(r['files'],{});self.assertEqual(r['inventory_status'],'not_received')
+            second=self.manual_data();second['item']['condition']='PSA 9'
+            other=self.service.add_manual_item(second)
+            self.assertNotEqual(card['sku'],other['cards'][0]['sku'])
+            third=self.service.add_manual_item(self.manual_data())
+            self.assertEqual(card['sku'],third['cards'][0]['sku'])
+            upload.assert_not_called()
+
+    def test_manual_addition_keeps_scanned_rows_and_invalidates_stale_documents(self):
+        r=self.receipt();r=self.service.labels(r['id'])
+        old_cards=r['cards'];old_hash=r['source_hash']
+        result=self.service.add_manual_item(self.manual_data(r))
+        self.assertEqual(result['cards'][:-1],old_cards)
+        self.assertEqual(result['source_hash'],old_hash)
+        self.assertEqual(result['files'],{})
+        self.assertFalse(result['prepared'])
+        self.assertFalse(result['cards'][-1]['reviewed'])
+        self.assertEqual(self.service.import_csv(CSV,'same-export.csv')['receipt']['id'],r['id'])
+        with self.assertRaisesRegex(StationError,'Review'):
+            self.service.labels(r['id'])
+
+    def test_manual_item_retries_do_not_duplicate_new_or_existing_batches(self):
+        data=self.manual_data();first=self.service.add_manual_item(data)
+        restarted=StationService(core)
+        self.assertEqual(restarted.add_manual_item(data)['revision'],first['revision'])
+        self.assertEqual(len(restarted.store.summaries()),1)
+        more=self.manual_data(first)
+        second=restarted.add_manual_item(more)
+        again=restarted.add_manual_item(more)
+        self.assertEqual(again['revision'],second['revision'])
+        self.assertEqual(len(again['cards']),2)
+        more['item']['final_price']='90.00'
+        with self.assertRaisesRegex(StationError,'already saved'):
+            restarted.add_manual_item(more)
+
+    def test_manual_items_reject_stale_deleted_and_committed_batches(self):
+        r=self.receipt();data=self.manual_data(r);data['revision']-=1
+        with self.assertRaisesRegex(StationError,'another window'):
+            self.service.add_manual_item(data)
+        for status in ('received','needs_attention','committing'):
+            r['inventory_status']=status;self.service.store.save_receipt(r)
+            with self.assertRaisesRegex(StationError,'locked'):
+                self.service.add_manual_item(self.manual_data(r))
+        r['inventory_status']='not_received';self.service.store.save_receipt(r)
+        self.service.delete_receipt(r['id'],r['revision'])
+        with self.assertRaisesRegex(StationError,'deleted'):
+            self.service.add_manual_item(self.manual_data(r))
+        trade=self.service.import_csv(CSV,'new-trade.csv','trade',new_delivery=True)['receipt']
+        for card in trade['cards']:card['reviewed']=True
+        trade=self.service.save_receipt(trade['id'],trade)
+        trade=self.service.accept_buy(trade['id'],'cash')
+        with self.assertRaisesRegex(StationError,'locked'):
+            self.service.add_manual_item(self.manual_data(trade))
+
+    def test_manual_item_validation_cannot_bypass_required_fields_or_review(self):
+        for key,value in [('card_name',''),('condition',''),('qty','0'),('qty','1.5'),
+                          ('final_price','NaN'),('final_price','-1'),('qty','100001')]:
+            data=self.manual_data();data['item'][key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(StationError):
+                self.service.add_manual_item(data)
+        self.assertEqual(self.service.store.summaries(),[])
+        data=self.manual_data();data['item'].update(reviewed=True,include=False,entry_source='scanner')
+        r=self.service.add_manual_item(data)
+        self.assertFalse(r['cards'][0]['reviewed']);self.assertTrue(r['cards'][0]['include'])
+        self.assertEqual(r['cards'][0]['entry_source'],'manual')
+
+    def test_manual_trade_uses_unchanged_buying_percentages(self):
+        data=self.manual_data();data['mode']='trade'
+        r=self.service.add_manual_item(data)
+        with self.assertRaisesRegex(StationError,'Review'):
+            self.service.accept_buy(r['id'],'cash')
+        r['cards'][0]['reviewed']=True;r=self.service.save_receipt(r['id'],r)
+        self.assertEqual(self.service.accept_buy(r['id'],'cash')['purchase']['amount'],59.59)
+
+    def test_manual_item_creates_existing_labels_and_square_inventory_with_safe_reprints(self):
+        self.connect();r=self.service.add_manual_item(self.manual_data())
+        r['inventory_intent']='new';r['cards'][0]['reviewed']=True
+        r=self.service.save_receipt(r['id'],r)
+        with patch.object(core.requests,'get',return_value=Response({'locations':[{'id':'store','status':'ACTIVE'}]})),patch.object(core.requests,'post',side_effect=self.post) as posted:
+            r=self.service.receive(r['id'])
+        self.assertEqual(r['inventory_status'],'received')
+        catalog=next(c.kwargs['json'] for c in posted.call_args_list if c.args[0].endswith('/batch-upsert'))
+        variation=catalog['batches'][0]['objects'][0]['item_data']['variations'][0]['item_variation_data']
+        self.assertEqual(variation['price_money']['amount'],8513)
+        stock=next(c.kwargs['json'] for c in posted.call_args_list if '/inventory/' in c.args[0])
+        self.assertEqual(stock['changes'][0]['adjustment']['quantity'],'2')
+        with patch.object(core,'upload_to_square') as upload:
+            self.service.receive(r['id']);r=self.service.labels(r['id']);upload.assert_not_called()
+        import fitz
+        with fitz.open(Path(core.OUTPUT_DIR)/r['files']['pdf']) as pdf:
+            self.assertEqual(len(pdf),2)
+            text=' '.join(page.get_text() for page in pdf)
+        self.assertIn('PSA 10',text);self.assertIn('$85.13',text)
 
     def test_import_all_bins_and_exact_file_deduplication(self):
         first=self.service.import_csv(CSV,'first.csv')['receipt']
@@ -475,6 +585,21 @@ class AdminHTTPTests(unittest.TestCase):
             self.assertEqual(result.status_code,200)
             self.assertFalse(result.json()['receipt']['pickup_pending'])
             self.assertEqual(self.client.get(self.base+'/api/receipts').json()['pickupQueue'],[])
+            upload.assert_not_called()
+
+    def test_manual_item_endpoint_creates_and_appends_without_stock_changes(self):
+        payload={'requestId':str(uuid.uuid4()),'mode':'trade',
+                 'item':{'card_name':'Graded card','condition':'PSA 10','final_price':'100.13','qty':'1'}}
+        with patch.object(core,'upload_to_square') as upload:
+            result=self.post('/api/manual-items',payload)
+            self.assertEqual(result.status_code,200,result.text)
+            r=result.json()['receipt']
+            self.assertEqual(r['mode'],'trade');self.assertTrue(r['requires_purchase'])
+            self.assertFalse(r['cards'][0]['reviewed'])
+            payload.update(requestId=str(uuid.uuid4()),receiptId=r['id'],revision=r['revision'])
+            result=self.post('/api/manual-items',payload)
+            self.assertEqual(result.status_code,200,result.text)
+            self.assertEqual(len(result.json()['receipt']['cards']),2)
             upload.assert_not_called()
 
     def test_admin_location_check_requires_login_and_never_echoes_token(self):

@@ -175,6 +175,8 @@ def make_handler(core):
             if path=='/api/import':
                 return self.send_json(service.import_csv(str(data.get('csv','')),str(data.get('fileName','Roca export.csv')),
                     str(data.get('mode','bulk')),data.get('newDelivery') is True))
+            if path=='/api/manual-items':
+                return self.send_json({'receipt':service.add_manual_item(data)})
             if path.startswith('/api/receipts/'):
                 pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
                 if action=='save':

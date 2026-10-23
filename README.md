@@ -13,7 +13,7 @@ The 15-page operator manual starts with a one-page daily guide, then covers extr
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.2.0**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.3.0**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Choose **Set up automatic pickup**, unlock Admin, then choose **Use Downloads folder** (or enter the actual Roca export folder) and save. Press Export in Roca; new CSVs open for review automatically. Review every included card before stock or labels.
@@ -88,6 +88,16 @@ Reimporting the same CSV, or opening that receipt from **Activity & orders**, of
 
 Cash and store-credit percentages are configurable defaults, not recommended buying rates. Offers use included quantities and proposed retail prices. Accepted buys are saved separately from inventory receiving, and include an acceptance PDF. They do not transfer money, issue store credit, or create a legal customer signature.
 
+## Manual labels and inventory
+
+Use **Add item** beside New batch for a graded card or any custom item. On a blank workspace it creates a manual batch without a CSV. In an unfinished batch, including a trade-in, it adds the item alongside the scanned cards.
+
+Enter the item name, **selling / label price**, quantity and condition/grade, such as **PSA 10**, **BGS 9.5** or any other text. Set, collector number, finish and language are optional details. Manual prices keep the cents you enter; they are not rounded to a quarter. Grade participates in item identity, so PSA 9 and PSA 10 do not share a generated SKU. If an individual slab needs a separate identity, include its certification/reference in the name. Side-fold QR labels show the condition/grade; include it in the name when using standard/top-fold labels, which print only the name and price.
+
+The new item is unchecked. Verify it, Continue, then choose **Create labels only** or **Add to Square & create labels**, using the same final stock confirmation as scanned cards. In a trade-in, your entered price is the retail value: **the existing cash/store-credit percentages apply normally**. There is no separate fixed buying-price override.
+
+Adding an item never changes Square by itself. Repeated submission of the same request does not add another copy, including after a lost response or restart. Accepted purchases and received/pending-retry batches cannot accept more items; start another batch instead. Adding to an editable batch clears its old output links so labels/listing files are regenerated for the new contents. Existing exported files stay on disk.
+
 ## Password-protected Admin
 
 ![Locked admin settings](docs/screenshots/admin.png)
@@ -156,7 +166,7 @@ python -m playwright install chromium
 python browser_smoke.py
 ```
 
-The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, real file pickup, partial downloads, queued drafts, restart/reopen and duplicate reexports, fresh batches, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
+The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, real file pickup, partial downloads, queued drafts, restart/reopen and duplicate reexports, fresh batches, manual-only labels and inventory, graded identity, exact prices, lost-response retry, mixed trade offers, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
 The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, background instance identity, reopening, graceful shutdown during receiving, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish native Windows launcher/DPAPI behavior, physical printing, or a live merchant integration on your store machine.
 

@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.2.0'
+VERSION='2.3.0'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -34,7 +34,7 @@ PAGE_W,PAGE_H=612,792;M=46;W=PAGE_W-2*M
 PAGE_NAMES={
 2:('desk','Your everyday three steps'),3:('import','Bring in a Roca export'),
 4:('check','Check the physical cards'),5:('finish','Finish & print'),
-6:('variants','Correct variants & copies'),7:('trade','Customer trade-ins'),
+6:('variants','Manual items & corrections'),7:('trade','Customer trade-ins'),
 8:('bulk','Find value in bulk'),9:('online','Prepare online stock'),
 10:('history','Find saved work'),11:('orders','Pull online orders'),
 12:('admin','Admin & saved defaults'),13:('help','If something needs attention'),
@@ -143,7 +143,7 @@ c.bookmarkPage('cover');c.addOutlineEntry('Operator manual','cover',level=0);c.s
 # 02 — Daily desk reference.
 m.new(2,'Keep this by the station','Your everyday three steps','Use Process cards for the normal job. You choose whether to add stock after checking the cards.')
 m.para('<b>Open:</b> double-click <b>Start Roca.vbs</b>. Chrome opens the station. Keep the physical stack together.',size=10.5)
-m.step(1,'Export in Roca.','After the one-time folder setup in Admin, click <b>Export</b> in Roca. Save to that folder. Your cards appear here automatically for review; no import click is needed.')
+m.step(1,'Export in Roca, or add an item.','Click <b>Export</b> in Roca and save to the configured folder for automatic pickup. For a graded card or custom item without a scan, choose <b>Add item</b> (page 6).')
 m.step(2,'Check cards.','Match name, set, number, condition, finish, quantity and price to the physical cards. Use <b>Edit</b> for corrections. Mark checked cards, then click <b>Continue</b>.')
 m.step(3,'Finish.','Choose <b>Add to Square &amp; create labels</b> for new physical stock, or <b>Create labels only</b> when stock should not increase. Click the main button; approve any stock addition.')
 m.callout('Print, then start fresh.','Click <b>Open labels to print</b>. Use 2″ × 1″ media at <b>Actual size / 100%</b>. Check one label, then print the stack. Click <b>Next batch</b> to open the next waiting export, or wait for a new one.','good')
@@ -181,16 +181,17 @@ m.table(['Choose','Result'],[
 m.para('The finished screen reports the result and links to your labels. Click <b>Open labels to print</b>. <b>More files</b> holds ZPL and other documents. Files are stored in the app’s <b>outputs</b> folder.',size=10.3)
 m.callout('For your Zebra ZD411D','Use <b>2″ wide × 1″ high</b> media, the printer’s actual 203/300 DPI and <b>Actual size / 100%</b>. Side fold puts card info and price left, QR right. Fold on a sleeve/toploader, keeping the QR flat on the back. Test one label first.','good')
 m.para('A QR-capable scanner is required. Standard and top-fold layouts use Code 128. Admin saves the normal layout/DPI; <b>More options</b> changes them for this session. PDF/ZPL files are generated; the app does not send a job directly to the printer.',size=9.9,leading=14,color=MUTED)
-# 06 — Variants.
-m.new(6,'When a scan needs fixing','Correct variants & copies','Finish is free text: you can enter any current or future treatment.')
-m.image('card-editor.png','The editor keeps everyday fields visible. Language, location and old-SKU overrides are under Other card details.',max_h=245)
-m.step(1,'Correct the exact variant.','Use <b>Edit</b>. Check condition and enter the precise finish, such as Surge Foil, Etched Foil or another treatment. Suggestions are optional.')
-m.step(2,'Confirm the price for that variant.','Changing identity or finish does not fetch a new market price. Look it up through your store’s pricing source, enter the final price and verify the card again.')
-m.step(3,'Separate a different copy.','If a row has quantity three but one copy differs, choose <b>Separate one copy</b>. Edit that copy’s condition/finish/price. The original row drops to two; the total stays three.')
-m.callout('After a committed action','An accepted buy or started receiving operation locks card identity, quantity and price. Notes and storage can still be updated. Correct completed stock in Square rather than rewriting the committed batch.','care')
+# 06 — Manual items and scan corrections.
+m.new(6,'Graded cards & custom items','Manual items & corrections','Add an item without scanning, or correct a record already in the batch.')
+m.image('manual-item.png','Use your exact selling price and any condition or grade, such as PSA 10.',max_h=205)
+m.step(1,'Choose Add item.','On a blank workspace this starts a manual batch. In an unfinished batch it adds to the current cards. Enter name, selling/label price, quantity and condition/grade. More item details holds set, number, finish and language.')
+m.step(2,'Check it, then finish as usual.','Mark the new item checked, then Continue. Choose labels only or add to Square and create labels. In a trade-in, this selling price uses your <b>normal cash/store-credit percentages</b>. Manual prices keep the exact cents entered.')
+m.h2('Correcting scans and different copies')
+m.para('Use <b>Edit</b> to correct name, set, condition, finish or price. Finish and grade accept free text. A changed variant does not fetch a new price: look it up and confirm it again. Use <b>Separate one copy</b> if just one card in a quantity has a different condition or treatment.',size=10.3)
+m.callout('Keep committed work intact','After a buy is accepted or receiving begins, item details and additions are locked. Start another batch for extra items. For standard/top-fold labels, include the grade in the item name; side-fold QR labels also show the grade separately.','care')
 # 07 — Trade-ins.
 m.new(7,'Extra workflow','Customer trade-ins','Review the cards first, then agree on the offer. Buying and receiving are separate decisions.')
-m.step(1,'Start a customer batch.','Choose <b>Customer trade-in</b>, import the export and check the cards as usual. Remove cards you will not buy, then click <b>Continue</b>.')
+m.step(1,'Start a customer batch.','Choose <b>Customer trade-in</b>, import the export or use <b>Add item</b>. You can combine scanned and manual items before accepting the buy. Check the cards, exclude anything you will not buy, then Continue.')
 m.image('trade-offers.png','The offer uses included quantities, retail prices and the saved buying percentages.',max_h=200)
 m.step(2,'Agree on cash or store credit.','Select the intended offer. If needed, expand <b>Adjust offer percentages</b>. Add a customer/collection reference and record the agreed offer using the main button.')
 m.step(3,'Complete payment through your normal process.','The app records the buy and creates an acceptance PDF. It does not pay cash or issue store credit. Do not record an offer that the customer has not accepted.')

@@ -43,7 +43,7 @@ def run(base, screenshots, square_calls, export_folder):
             expect(page.locator('#emptyState')).to_be_visible()
             expect(page.locator('#cardSearch')).to_have_value('')
             expect(page.locator('#finishStepText')).to_have_text('Finish')
-        page.goto('/');page.wait_for_selector('#version:text("2.2.0")')
+        page.goto('/');page.wait_for_selector('#version:text("2.3.0")')
         expect(page.locator('#pageTitle')).to_have_text('Process cards')
         assert not page.locator('#moreToolsNav').evaluate('(e)=>e.open')
         shot('station-simple-home.png')
@@ -214,8 +214,71 @@ def run(base, screenshots, square_calls, export_folder):
         page.locator('#reviewContinue').click();expect(page.locator('#pageTitle')).to_have_text('Process cards')
         assert batch_id()==large_id and len(square_calls)==1
         expect(page.locator('#reviewView')).to_be_visible();expect(page.locator('#reviewContinue')).to_be_disabled()
+        # Manual-only labels: cancellation and a lost response must never duplicate a card.
+        new_batch();before_manual=len(page.request.get('/api/receipts').json()['receipts'])
+        page.locator('#addManualItem').click();page.locator('#manualName').fill('Cancelled entry')
+        page.locator('#cancelManualItem').click();expect(page.locator('#emptyState')).to_be_visible()
+        assert len(page.request.get('/api/receipts').json()['receipts'])==before_manual
+        page.locator('#addManualItem').click();page.locator('#manualName').fill('Charizard · PSA 10')
+        page.locator('#manualPrice').fill('123.47');page.locator('#manualCondition').fill('PSA 10')
+        shot('station-manual-item.png')
+        page.set_viewport_size({'width':390,'height':844})
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        shot('station-manual-item-mobile.png');page.set_viewport_size({'width':1440,'height':1000})
+        first_response=[True]
+        def lose_once(route):
+            response=route.fetch()
+            if first_response[0]:first_response[0]=False;route.abort('failed')
+            else:route.fulfill(response=response)
+        page.route('**/api/manual-items',lose_once)
+        page.locator('#saveManualItem').click()
+        expect(page.locator('#manualItemMessage')).to_contain_text('retry safely')
+        assert len(page.request.get('/api/receipts').json()['receipts'])==before_manual+1
+        page.locator('#saveManualItem').click();expect(page.locator('#manualItemDialog')).not_to_be_visible()
+        page.unroute('**/api/manual-items',lose_once)
+        manual_id=batch_id();expect(page.locator('#cardRows tr')).to_have_count(1)
+        expect(page.locator('#cardRows')).to_contain_text('$123.47');expect(page.locator('#reviewContinue')).to_be_disabled()
+        assert page.request.get('/api/receipts/'+manual_id).json()['receipt']['cards'][0]['qty']==1
+        check_all();finish();page.locator('[data-intent="existing"]').click();page.locator('#primaryAction').click()
+        expect(page.locator('#doneView')).to_be_visible();assert len(square_calls)==1
+        assert page.request.get(page.locator('#printLabels').get_attribute('href')).status==200
+        # Mixed trade-in: a custom selling price participates in the unchanged buying percentages.
+        page.locator('[data-mode="trade"]').click()
+        import_cards('Mixed manual trade.csv',CSV.replace(b'Snapcaster Mage',b'Mixed trade card'))
+        mixed_id=batch_id();original=page.request.get('/api/receipts/'+mixed_id).json()['receipt']['cards']
+        page.locator('#addManualItem').click();expect(page.locator('#manualItemDescription')).to_contain_text('normal cash')
+        page.locator('#manualName').fill('PSA slab added to trade');page.locator('#manualPrice').fill('100.13')
+        page.locator('#manualQty').fill('2');page.locator('#manualCondition').fill('PSA 9')
+        page.locator('#saveManualItem').click();expect(page.locator('#manualItemDialog')).not_to_be_visible()
+        assert batch_id()==mixed_id
+        saved=page.request.get('/api/receipts/'+mixed_id).json()['receipt']
+        assert saved['cards'][:-1]==original and saved['cards'][-1]['final_price']==100.13
+        expect(page.locator('#statCopies')).to_have_text('8')
+        check_all();finish();expect(page.locator('#cashAmount')).to_have_text('$92.67')
+        expect(page.locator('#creditAmount')).to_have_text('$132.38')
+        page.locator('#primaryAction').click();page.locator('#confirmOkay').click()
+        expect(page.locator('#acceptedBuy')).to_contain_text('$92.67')
+        expect(page.locator('#addManualItem')).to_be_disabled()
+        accepted=page.request.get('/api/receipts/'+mixed_id).json()['receipt']
+        assert accepted['purchase']['amount']==92.67 and accepted['cards'][-1]['final_price']==100.13
+        page.locator('[data-intent="existing"]').click();page.locator('#primaryAction').click()
+        expect(page.locator('#doneView')).to_be_visible();assert len(square_calls)==1
+        # Manual inventory uses the same explicit receiving action and reprint protections.
+        page.locator('[data-mode="labels"]').click();page.locator('#addManualItem').click()
+        page.locator('#manualName').fill('Inventory slab');page.locator('#manualCondition').fill('PSA 9')
+        page.locator('#manualPrice').fill('45.19');page.locator('#manualQty').fill('2')
+        page.locator('#saveManualItem').click();expect(page.locator('#manualItemDialog')).not_to_be_visible()
+        manual_stock=batch_id();check_all();finish();page.locator('[data-intent="new"]').click()
+        page.locator('#primaryAction').click();expect(page.locator('#confirmText')).to_contain_text('2 copies')
+        page.locator('#confirmOkay').click();expect(page.locator('#doneView')).to_be_visible()
+        assert len(square_calls)==2 and square_calls[-1][0]['final_price']==45.19
+        assert square_calls[-1][0]['condition']=='PSA 9' and square_calls[-1][0]['qty']==2
+        expect(page.locator('#addManualItem')).to_be_disabled()
+        new_batch();history(manual_stock);page.locator('#doneReview').click();finish()
+        page.locator('#primaryAction').click();expect(page.locator('#doneView')).to_be_visible()
+        assert len(square_calls)==2
         assert not errors,errors
-        print('PASS: guided import/check/finish, cards above fold, labels without stock, explicit Square confirmation/cancel, one stock addition, safe reprints/delete/restore, fresh batches and saved edits, arbitrary finishes/split copies, Admin defaults/lock, trade approval, online storage guard and files, pull tasks, real export pickup, partial downloads, queued drafts, restart/reopen, duplicate reexports, mobile, 11,000-row filters/paging/search; no JS errors or live Square requests.')
+        print('PASS: guided import/check/finish, cards above fold, labels without stock, explicit Square confirmation/cancel, one stock addition, safe reprints/delete/restore, fresh batches and saved edits, arbitrary finishes/split copies, Admin defaults/lock, trade approval, online storage guard and files, pull tasks, real export pickup, partial downloads, queued drafts, restart/reopen, duplicate reexports, mobile, 11,000-row filters/paging/search, manual-only labels, graded identity, exact custom prices, lost-response retry, mixed trade percentages and manual receiving/reprints; no JS errors or live Square requests.')
         browser.close()
 
 
