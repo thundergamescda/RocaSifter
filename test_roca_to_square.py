@@ -65,7 +65,7 @@ class Tests(unittest.TestCase):
         import zxingcpp
         from PIL import Image
         with tempfile.TemporaryDirectory() as d:
-            for layout in ('standard','fold'):
+            for layout in ('standard','fold','side'):
                 for dpi in (203,300):
                     pdf = str(Path(d)/f'{layout}-{dpi}.pdf')
                     app.generate_zebra_pdf_labels([CARD],pdf,layout=layout,dpi=dpi)
@@ -81,7 +81,7 @@ class Tests(unittest.TestCase):
                     app.generate_zebra_zpl([CARD],zpl,dpi=dpi,layout=layout)
                     text = Path(zpl).read_text()
                     self.assertIn('^PQ3',text)
-                    self.assertIn('^FD>;'+app.barcode_value(CARD), text)
+                    self.assertIn(('^FDMA,' if layout == 'side' else '^FD>;')+app.barcode_value(CARD), text)
 
 
 class DesktopTests(unittest.TestCase):
@@ -127,7 +127,7 @@ class DesktopTests(unittest.TestCase):
                 page = client.get(base+'/')
                 self.assertEqual(page.status_code, 200)
                 self.assertIn('Create labels only', page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.1.1')
+                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.1.2')
                 config = {'labelLayout':'fold', 'printerDpi':203}
                 parsed = client.post(base+'/api/import', json={'settings':config,'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n'}).json()
                 self.assertEqual(len(parsed['barcodes'][0]), 12)
@@ -136,7 +136,7 @@ class DesktopTests(unittest.TestCase):
                     self.assertEqual(result.status_code, 200, result.text)
                     upload.assert_not_called()
                 data = result.json()
-                self.assertEqual(data['version'], '1.1.1')
+                self.assertEqual(data['version'], '1.1.2')
                 self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+data['pdfUrl']).content)).pages),2)
                 zpl = client.get(base+data['zplUrl']).text
                 self.assertIn('^FD>;'+parsed['barcodes'][0], zpl)

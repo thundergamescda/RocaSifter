@@ -41,7 +41,9 @@ except ImportError:
 try:
     from reportlab.lib.units import inch
     from reportlab.pdfgen import canvas
-    from reportlab.graphics.barcode import code128
+    from reportlab.graphics.barcode import code128, qr
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics import renderPDF
 except ImportError:
     canvas = None
     code128 = None
@@ -50,7 +52,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -208,12 +210,40 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
                               layout="standard", dpi=203):
     if canvas is None or code128 is None:
         raise RuntimeError("PDF labels require reportlab: pip install reportlab")
-    if layout not in ("standard", "fold") or dpi not in (203, 300):
-        raise ValueError("Use standard/fold layout and 203/300 DPI.")
+    if layout not in ("standard", "fold", "side") or dpi not in (203, 300):
+        raise ValueError("Use standard/fold/side layout and 203/300 DPI.")
     width, height = width_in * inch, height_in * inch
     c = canvas.Canvas(output_pdf_path, pagesize=(width, height))
     for item in cards:
         name, price, value, qty = label_fields(item)
+        if layout == "side":
+            # A 12-digit linear Code 128 at 2 dots/module cannot fit a 1 inch half.
+            # QR preserves the exact SKU and provides a full four-module quiet zone.
+            from reportlab.lib.utils import simpleSplit
+            for _ in range(qty):
+                left_width = width / 2 - 12
+                c.setFont("Helvetica-Bold", 8)
+                lines = simpleSplit(name, "Helvetica-Bold", 8, left_width)
+                for n, line in enumerate(lines[:3]):
+                    if n == 2 and len(lines) > 3:
+                        line = line[:-3] + "..."
+                    c.drawString(5, height - 11 - n * 9, line)
+                details = f"#{item.get('card_num') or item.get('cardNum') or ''} {item.get('condition') or ''}"
+                c.setFont("Helvetica", 6)
+                for n, line in enumerate(simpleSplit(details, "Helvetica", 6, left_width)[:2]):
+                    c.drawString(5, 32 - n * 7, line)
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(5, 8, price)
+                widget = qr.QrCodeWidget(value, barLevel='M', barBorder=4)
+                x0, y0, x1, y1 = widget.getBounds()
+                size = min(width/2 - 8, height - 12)
+                drawing = Drawing(size, size, transform=[size/(x1-x0), 0, 0, size/(y1-y0), 0, 0])
+                drawing.add(widget)
+                renderPDF.draw(drawing, c, width * .75 - size/2, 11)
+                c.setFont("Helvetica", 5)
+                c.drawCentredString(width * .75, 4, value)
+                c.showPage()
+            continue
         # Two dots per narrow bar at 203 DPI, three at 300 DPI. Never shrink to fit.
         module = (2 if dpi == 203 else 3) * 72 / dpi
         bc = code128.Code128(value, barHeight=23 if layout == "fold" else 30,
@@ -249,8 +279,8 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
 
 
 def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="standard"):
-    if dpi not in (203, 300) or layout not in ("standard", "fold"):
-        raise ValueError("Use standard/fold layout and 203/300 DPI.")
+    if dpi not in (203, 300) or layout not in ("standard", "fold", "side"):
+        raise ValueError("Use standard/fold/side layout and 203/300 DPI.")
     pw, ll = dpi * 2, dpi
     scale = dpi / 203
     dot = lambda n: round(n * scale)
@@ -263,6 +293,28 @@ def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="standard"):
         name, price, value, qty = label_fields(item)
         # Hex-escape all field data so names cannot inject ZPL commands.
         escape = lambda t: "".join(f"_{b:02X}" for b in t.encode("utf-8"))
+        if layout == "side":
+            # Model 2 QR, M correction; 12 numeric digits fit version 1 (21 modules).
+            # Keep four blank modules around the symbol on the right half.
+            from reportlab.lib.utils import simpleSplit
+            name_lines = simpleSplit(name, "Helvetica-Bold", 8, 60)[:3]
+            fields = "".join(f"^FO{dot(14)},{dot(10+n*25)}^A0N,{dot(22)},{dot(10)}^FH^FD{escape(line)}^FS\n"
+                             for n, line in enumerate(name_lines))
+            details = f"#{item.get('card_num') or item.get('cardNum') or ''} {item.get('condition') or ''}"
+            detail_lines = simpleSplit(details, "Helvetica", 6, 60)[:2]
+            fields += "".join(f"^FO{dot(14)},{dot(105+n*19)}^A0N,{dot(16)},{dot(8)}^FH^FD{escape(line)}^FS\n"
+                              for n, line in enumerate(detail_lines))
+            qr_module = 5 if dpi == 203 else 7
+            half = pw//2
+            qr_x = half + (half-21*qr_module)//2
+            qr_y = (ll-21*qr_module)//2 - dot(4)
+            commands.append(
+                f"^XA\n^CI28^PW{pw}^LL{ll}^LH0,0^LS0\n" + fields +
+                f"^FO{dot(14)},{dot(154)}^A0N,{dot(34)},{dot(20)}^FD{price}^FS\n"
+                f"^FO{qr_x},{qr_y}^BQN,2,{qr_module}^FDMA,{value}^FS\n"
+                f"^FO{half},{dot(183)}^A0N,{dot(13)},{dot(8)}^FB{half},1,0,C^FD{value}^FS\n"
+                f"^PQ{qty}^XZ\n")
+            continue
         orientation = "I" if layout == "fold" else "N"
         name_y, price_y = (dot(56), dot(10)) if layout == "fold" else (dot(8), dot(39))
         zpl = (
@@ -729,7 +781,7 @@ def main():
     parser.add_argument("--pdf-out", default="zebra_labels_2x1.pdf", help="Output path for Zebra label PDF.")
     parser.add_argument("--zpl-out", default="zebra_labels.zpl", help="Output path for Zebra raw ZPL file.")
     parser.add_argument("--square-token", default=os.getenv("SQUARE_ACCESS_TOKEN", ""), help="Square API Access Token.")
-    parser.add_argument("--label-layout", choices=["standard", "fold"], default="standard")
+    parser.add_argument("--label-layout", choices=["standard", "fold", "side"], default="standard")
     parser.add_argument("--dpi", type=int, choices=[203, 300], default=203)
     parser.add_argument("--square-location", default=os.getenv("SQUARE_LOCATION_ID", ""))
     parser.add_argument("--sandbox", action="store_true", help="Use Square Sandbox environment instead of Production.")

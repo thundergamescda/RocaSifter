@@ -30,13 +30,13 @@ Omit `--sandbox` only when ready to write production inventory. One active locat
 
 This is an **initial import**, not a restocking/synchronization tool. Existing SKUs stop the import so reruns cannot silently duplicate items or reset stock after sales. SKU generation in the original CSV parser includes row sequence; reordering or changing exports can change SKUs. Do not reimport overlapping exports. If an upload partially succeeds or times out, inspect Square's catalog and inventory before trying again. Catalog creation and stock assignment are separate Square operations; errors report partial success. Existing items must be reconciled separately. The preflight duplicate check is not a lock: do not run simultaneous imports of the same cards.
 
-## Desktop interface — release 1.1.1
+## Desktop interface — release 1.1.2
 
 Download the current GitHub ZIP and **extract it into a new folder**. Updating GitHub does not update Python files already downloaded on your computer. Close all older Roca/Python station windows first, then:
 
 1. Run `Install dependencies.cmd` once on Windows.
 2. Run `Start Roca.cmd` from the extracted folder (or double-click the new `roca_to_square.py`).
-3. Verify the browser shows **Release 1.1.1 • Chrome launcher • compact 12-digit barcodes**.
+3. Verify the browser shows **Release 1.1.2 • Chrome launcher • compact 12-digit barcodes**.
 4. Choose your CSV, printer DPI and standard/fold-over layout, then select **Create labels only** for a test print.
 5. Open the newly generated PDF from the Result area. Old PDFs are not updated. Generated files are kept under `outputs/` with unique names.
 6. To upload inventory, enter the Square token, select **Production** for a real store (or Sandbox for a sandbox token), and click **Load Square locations — connection test**. Select the receiving store from the returned active locations, verify it is your store, then select the confirmation checkbox and click **Create labels + upload inventory**. The connection test only reads locations; it does not create items or change stock.
@@ -59,8 +59,16 @@ The browser API was exercised from CSV ingestion through PDF/ZPL downloads, with
 
 ## Troubleshooting Square location errors
 
-Release 1.1.1 adds a read-only location lookup and a store dropdown. A saved location that is not returned as active by the selected token/environment stops the upload before catalog writes. This means the location belongs to another environment or merchant, was entered incorrectly, or is inactive. Use the location dropdown rather than entering a merchant ID, application ID, store name or address. Whitespace around CLI location IDs is ignored.
+Release 1.1.2 adds a read-only location lookup and a store dropdown. A saved location that is not returned as active by the selected token/environment stops the upload before catalog writes. This means the location belongs to another environment or merchant, was entered incorrectly, or is inactive. Use the location dropdown rather than entering a merchant ID, application ID, store name or address. Whitespace around CLI location IDs is ignored.
 
-Close the old station, extract the updated GitHub ZIP and verify Release 1.1.1. Enter the token locally, choose the environment and click **Load Square locations**. If one active location is found, it is selected for you; verify the store before uploading. If several are found, choose the receiving store. A token or environment change requires another lookup. A stale stored location is reported and replaced only through the displayed selection. Connection testing saves the current local settings, without sending the token back in its response or putting it in Git.
+Close the old station, extract the updated GitHub ZIP and verify Release 1.1.2. Enter the token locally, choose the environment and click **Load Square locations**. If one active location is found, it is selected for you; verify the store before uploading. If several are found, choose the receiving store. A token or environment change requires another lookup. A stale stored location is reported and replaced only through the displayed selection. Connection testing saves the current local settings, without sending the token back in its response or putting it in Git.
 
 HTTP 401 means Square rejected the token in that environment; use the matching Production/Sandbox token and check whether it has expired or been revoked. HTTP 403 means location lookup is forbidden; check merchant authorization and MERCHANT_PROFILE_READ permission. A successful connection with no active locations requires checking/activating a location in Square Dashboard. Catalog and inventory permissions are checked by their respective upload operations; successfully listing locations alone does not prove write permission.
+
+## Side-fold labels
+
+Release 1.1.2 adds **Side fold: info left, QR code right (2D scanner)** to the layout menu, also available as `--label-layout side`. On a 2 inch wide × 1 inch high label, fold vertically down the middle of its 2 inch width. The left 1 inch square shows the card name (up to three lines), number, condition and price on the front. The right 1 inch square shows a QR code on the back. Put the fold over the side edge of the sleeve, keeping the QR code and its white border flat. The center gutter is left blank rather than printing a fold line.
+
+A QR code is used because the existing 12-digit Code 128 cannot fit in a 1 inch square at the selected two/three-dot narrow bar width, even rotated. QR contains the **same SKU**; no Square catalog change or reimport is needed just to select this layout. A QR-capable 2D scanner configured to send the plain SKU into Square is required; 1D laser scanners cannot read it. Verify one physical print with your actual scanner/POS workflow before producing a batch. This does not imply that Square's camera or every Square scanner accepts QR inventory codes. Standard and top-fold linear layouts remain available.
+
+See `examples/side.pdf`, `examples/side.zpl` and `examples/side.png` for a sample. PDF codes were decoded in software at 203 and 300 DPI. ZPL output and physical folding/scan behavior still need a printer test. Print at Actual size / 100%.
