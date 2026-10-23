@@ -177,6 +177,34 @@ class StationTests(unittest.TestCase):
         finally:
             self.service.stop_event.set();self.service.watcher.join(timeout=3)
 
+    def test_application_import_does_not_require_cryptography(self):
+        import subprocess,sys
+        script = """import sys,importlib.abc
+class NoCrypto(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'cryptography' or fullname.startswith('cryptography.'):
+            raise ImportError('cryptography intentionally unavailable')
+sys.meta_path.insert(0,NoCrypto())
+import roca_to_square
+assert 'cryptography' not in sys.modules
+print('Application imports without cryptography')
+"""
+        result=subprocess.run([sys.executable,'-c',script],cwd=Path(core.__file__).parent,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_windows_vault_uses_dpapi_without_loading_fernet(self):
+        import station_store
+        actual_os=station_store.os
+        class WindowsOS:
+            name='nt'
+            def __getattr__(self,key):return getattr(actual_os,key)
+        vault=self.service.vault
+        with patch.object(station_store,'os',WindowsOS()),patch.object(vault,'dpapi',side_effect=lambda data,encrypt:data[::-1]) as dpapi,patch.object(vault,'fernet',side_effect=AssertionError('Fernet must not be used on Windows')):
+            vault.set('test-only-token')
+            self.assertEqual(vault.read(),'test-only-token')
+            self.assertTrue(vault.path.read_bytes().startswith(b'DP1'))
+            self.assertGreaterEqual(dpapi.call_count,3)
+
 
 class AdminHTTPTests(unittest.TestCase):
     def setUp(self):

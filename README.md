@@ -8,8 +8,8 @@ A local receiving workspace for Roca Sifter exports, Square inventory, trade-in 
 
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
-3. Run **Install dependencies.cmd** once, including when upgrading from version 1.
-4. Run **Start Roca.cmd**. The launcher opens Google Chrome and displays **2.0.0**. If an older station owns the port, close its Python/console window first. Edge is never launched as a fallback.
+3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
+4. Run **Start Roca.cmd**. The launcher opens Google Chrome and displays **2.0.1**. If an older station owns the port, close its Python/console window first. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
@@ -115,3 +115,9 @@ python browser_smoke.py
 The browser test uses an isolated temporary database, fictional receipt data, and no live merchant credentials. It exercises trade-in editing, arbitrary finish text, review/acceptance, labels, tab transfer, display-case preparation, downloads, admin setup/save/lock, pull tasks, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
 The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish Windows DPAPI behavior, physical printing, or a live merchant integration on your store machine.
+
+## Windows setup fix in 2.0.1
+
+If an older installer failed building a `cryptography` wheel, download this complete release and rerun **Install dependencies.cmd**. That package is no longer required on Windows. The crypto import is deferred to the non-Windows vault path; Windows credential encryption remains DPAPI. The launcher uses the installer's `.venv` so setup and startup cannot silently select different Python installations. No credentials or receipt history are removed.
+
+If pip still reports no compatible prebuilt package, send the Python version/platform line printed by setup and the last portion of its error (no tokens or passwords). 64-bit Python 3.12 or 3.13 is the recommended baseline. A virtual environment cannot switch its underlying Python version: if an existing `.venv` uses an incompatible interpreter, rename only that `.venv` folder before creating a new one with the intended Python installation; preserve `station_data`, `outputs`, and settings.

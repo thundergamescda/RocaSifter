@@ -8,7 +8,7 @@ def run(BASE):
   browser=p.chromium.launch(executable_path=os.environ.get('ROCA_BROWSER_PATH') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
   page=browser.new_page(base_url=BASE,viewport={'width':1440,'height':1050},device_scale_factor=1)
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-  page.goto(BASE);page.wait_for_selector('#version:text("2.0.0")')
+  page.goto(BASE);page.wait_for_selector('#version:text("2.0.1")')
   page.evaluate('window.scrollTo(0,0)');page.locator('#toast').evaluate('(e)=>e.hidden=true');page.screenshot(path=SCREENSHOTS+'/station2-empty.png',full_page=True)
   page.locator('[data-mode="trade"]').click()
   page.locator('#csvFile').set_input_files({'name':'Customer collection.csv','mimeType':'text/csv','buffer':CSV})

@@ -1,5 +1,4 @@
 """Local persistence, credential vault, and admin authentication for Roca Station."""
-import base64
 import hashlib
 import hmac
 import json
@@ -10,7 +9,6 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from cryptography.fernet import Fernet
 
 
 class StationError(ValueError):
@@ -159,6 +157,12 @@ class Vault:
             ctypes.windll.kernel32.LocalFree(result.data)
 
     def fernet(self):
+        # Windows uses DPAPI and must not depend on a compiled crypto wheel.
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            raise StationError('This saved credential needs the non-Windows encryption package. '
+                               'Install requirements.txt, or save a new token in Admin on Windows.') from None
         keypath = self.root / 'vault.key'
         if not keypath.exists():
             private_write(keypath, Fernet.generate_key())

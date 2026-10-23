@@ -2,7 +2,7 @@
 
 These are the checks that still require the actual store equipment/account. Automated tests use an isolated local database and mocked Square responses.
 
-1. Close any older Roca Station, install the complete v2 folder and dependencies, and open Start Roca.cmd. Verify 2.0.0 in Chrome.
+1. Close any older Roca Station, install the complete v2 folder and dependencies, and open Start Roca.cmd. Verify 2.0.1 in Chrome.
 2. Create an admin password, enter a sandbox token, test locations and save. Close Admin. Verify it requires the password again and the operator screens never display the token. Restart the app and verify settings persist.
 3. Export a small Roca batch with duplicate copies and at least two finishes. Open the draft, split one copy, correct its finish/condition/price, and confirm review.
 4. Generate side-fold labels only. Verify 2″ × 1″ physical dimensions, set/number/condition/finish/price on the left, code on the right, and a flat code after folding on a sleeve. Use the actual printer DPI and Actual size/100% printing.
