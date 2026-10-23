@@ -30,29 +30,29 @@ Omit `--sandbox` only when ready to write production inventory. One active locat
 
 This is an **initial import**, not a restocking/synchronization tool. Existing SKUs stop the import so reruns cannot silently duplicate items or reset stock after sales. SKU generation in the original CSV parser includes row sequence; reordering or changing exports can change SKUs. Do not reimport overlapping exports. If an upload partially succeeds or times out, inspect Square's catalog and inventory before trying again. Catalog creation and stock assignment are separate Square operations; errors report partial success. Existing items must be reconciled separately. The preflight duplicate check is not a lock: do not run simultaneous imports of the same cards.
 
-## Existing desktop interface
+## Desktop interface — release 1.1.0
 
-The desktop launcher prefers Google Chrome, including its standard Windows installation locations. If Chrome is unavailable, it opens the system default browser.
+Download the current GitHub ZIP and **extract it into a new folder**. Updating GitHub does not update Python files already downloaded on your computer. Close all older Roca/Python station windows first, then:
 
-The original script depends on `roca_square_label_app.html`, which was not supplied. Keep your existing HTML beside this updated Python file to use that interface. The CLI works without it. To use new options with the existing interface, retain all current fields in `roca_settings.json` and add:
+1. Run `Install dependencies.cmd` once on Windows.
+2. Run `Start Roca.cmd` from the extracted folder (or double-click the new `roca_to_square.py`).
+3. Verify the browser shows **Release 1.1.0 • Chrome launcher • compact 12-digit barcodes**.
+4. Choose your CSV, printer DPI and standard/fold-over layout, then select **Create labels only** for a test print.
+5. Open the newly generated PDF from the Result area. Old PDFs are not updated. Generated files are kept under `outputs/` with unique names.
+6. To upload inventory, enter the Square token, select Sandbox or Production, enter the receiving location ID if needed, and select the confirmation checkbox before clicking **Create labels + upload inventory**.
 
-```json
-{
-  "labelLayout": "fold",
-  "printerDpi": 203,
-  "squareLocationId": "YOUR_LOCATION_ID",
-  "squareEnvironment": "sandbox"
-}
-```
+The complete `roca_square_label_app.html` is now included and uses the Python backend for both parsing and label generation. Keep it beside the Python script. The interface shows the exact 12-digit barcode/Square SKU and reports partial inventory errors. Square uploads include the SKU only, with **no GTIN or UPC field**.
 
-Use `"standard"` for an unfolded layout. If the HTML posts its own settings object, it must include these fields; otherwise backend defaults apply. The backend now returns `errors`, `inventoryCount`, and a `partial_error` status when needed. Updating interface controls and displaying those errors requires the original HTML file. Preserve the original script's local settings security model: it stores its Square token in its settings file, so keep that file private.
+Chrome is found through PATH, standard install folders and Windows App Paths registration. If Chrome is missing, the station prints instructions and stays available for opening manually in Chrome; it never opens Edge or the system default browser. The launcher binds its port before opening Chrome, and stops with an explicit message if an older station is using the port. Check the console for its version and script path if you may have multiple downloaded copies.
+
+New settings are saved in `roca_settings.json`: `labelLayout` (`standard` or `fold`), `printerDpi` (203 or 300), `squareLocationId`, and `squareEnvironment` (`sandbox` or `production`). The Square token is stored locally in that file; keep it private. Settings, generated outputs and Python caches are excluded from Git.
 
 ## Validation
 
-Five automated tests exercise mocked Square calls (no real merchant writes) and decode generated PDF barcodes at both supported resolutions. To run the tests, install `requests reportlab pymupdf pillow zxing-cpp` and run:
+Nine automated tests exercise mocked Square calls (no real merchant writes) and decode generated PDF barcodes at both supported resolutions. To run the tests, install `requests reportlab pymupdf pillow zxing-cpp pypdf` and run:
 
 ```sh
 python -m unittest discover -v
 ```
 
-PDF page sizes and copy counts were verified. ZPL payloads were checked but have not been physically printed or decoded from a printer. Live Square stock decrement on sale remains to be verified with a sandbox sale or a controlled real-world test.
+The browser API was exercised from CSV ingestion through PDF/ZPL downloads, with Square uploads disabled. Chrome detection, prevention of Edge fallback, busy-port handling, PDF page sizes and copy counts were verified. ZPL payloads were checked but have not been physically printed or decoded from a printer. Live Square stock decrement on sale remains to be verified with a sandbox sale or a controlled real-world test.

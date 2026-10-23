@@ -27,7 +27,8 @@ import argparse
 import subprocess
 import platform
 import shutil
-import webbrowser
+import tempfile
+from urllib.parse import urlsplit, unquote, quote
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any, Callable
@@ -49,6 +50,8 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
+APP_VERSION = "1.1.0"
+OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
 # ==============================================================================
@@ -482,83 +485,121 @@ class RocaStationHandler(BaseHTTPRequestHandler):
     def log_message(self, format_str, *args):
         pass
 
-    def _send_cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self._send_cors_headers()
+    def send_json(self, data, status=200):
+        payload = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
+        self.wfile.write(payload)
+
+    def local_request(self):
+        expected = f"127.0.0.1:{self.server.server_port}"
+        if self.headers.get("Host") != expected:
+            self.send_json({"errors": ["Use the station's 127.0.0.1 address."]}, 403)
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin != f"http://{expected}":
+            self.send_json({"errors": ["Open the interface through the Python launcher."]}, 403)
+            return False
+        return True
 
     def do_GET(self):
-        if self.path == "/api/settings":
-            self.send_response(200)
-            self._send_cors_headers()
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(load_settings()).encode("utf-8"))
+        if not self.local_request():
             return
-
-        if os.path.exists(HTML_APP_FILE):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            with open(HTML_APP_FILE, "rb") as f:
-                self.wfile.write(f.read())
+        path = urlsplit(self.path).path
+        if path == "/api/version":
+            self.send_json({"version": APP_VERSION})
+            return
+        if path == "/api/settings":
+            self.send_json(load_settings())
+            return
+        if path.startswith("/files/"):
+            name = unquote(path[len("/files/"):])
+            if name != os.path.basename(name) or "/" in name or "\\" in name or not name.endswith((".pdf", ".zpl")):
+                self.send_json({"errors": ["Invalid output filename."]}, 400)
+                return
+            filename = os.path.join(OUTPUT_DIR, name)
+            content_type = "application/pdf" if name.endswith(".pdf") else "text/plain; charset=utf-8"
+        elif path == "/":
+            filename = HTML_APP_FILE
+            content_type = "text/html; charset=utf-8"
         else:
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b"Place roca_square_label_app.html in the same folder as roca_to_square.py")
+            self.send_json({"errors": ["Not found."]}, 404)
+            return
+        try:
+            with open(filename, "rb") as f:
+                payload = f.read()
+        except FileNotFoundError:
+            self.send_json({"errors": ["File missing. Extract the complete release ZIP, including the HTML interface."]}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
-
-        if self.path == "/api/settings":
-            save_settings(body)
-            self.send_response(200)
-            self._send_cors_headers()
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+        if not self.local_request():
             return
-
-        if self.path == "/api/process":
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 < length <= 20_000_000:
+                raise ValueError("Upload must be between 1 byte and 20 MB.")
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError("Expected a JSON object.")
+            if self.path == "/api/settings":
+                save_settings(body)
+                self.send_json({"status": "ok"})
+                return
+            cfg = load_settings()
+            cfg.update(body.get("settings", {}))
+            if self.path == "/api/import":
+                # Parse in Python so the GUI and CLI share filters and SKU generation.
+                with tempfile.TemporaryDirectory() as directory:
+                    csv_path = os.path.join(directory, "scan.csv")
+                    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+                        f.write(body.get("csv", ""))
+                    cards = parse_roca_csv(csv_path, target_bin=str(cfg.get("targetBin", "1")),
+                                           min_price=float(cfg.get("minPrice", 0.70)))
+                self.send_json({"cards": cards, "barcodes": [barcode_value(card) for card in cards]})
+                return
+            if self.path != "/api/process":
+                self.send_json({"errors": ["Not found."]}, 404)
+                return
             cards = body.get("cards", [])
-            file_name = os.path.basename(str(body.get("fileName", "roca_scans")))
-            cfg = body.get("settings", load_settings())
+            if not cards:
+                raise ValueError("No matching cards. Choose a CSV and check the bin filter.")
+            for card in cards:
+                label_fields(card)
+            upload = bool(body.get("uploadToSquare", False))
+            token = str(cfg.get("squareToken", "")).strip()
+            if upload and not token:
+                raise ValueError("Enter a Square token before uploading, or choose Create labels only.")
             save_settings(cfg)
-
-            pdf_path = os.path.join(APP_DIR, f"{file_name}_zebra_2x1_labels.pdf")
-            zpl_path = os.path.join(APP_DIR, f"{file_name}_zebra_labels.zpl")
-
-            generate_zebra_pdf_labels(cards, pdf_path, layout=cfg.get("labelLayout", "standard"), dpi=int(cfg.get("printerDpi", 203)))
-            generate_zebra_zpl(cards, zpl_path, layout=cfg.get("labelLayout", "standard"), dpi=int(cfg.get("printerDpi", 203)))
-
-            uploaded = 0
-            res = {"inventory_count": 0, "errors": []}
-            token = cfg.get("squareToken", "").strip()
-            if token and cards:
-                res = upload_to_square(cards, token, environment=cfg.get("squareEnvironment", "production"), location_id=cfg.get("squareLocationId", ""))
-                uploaded = res.get("uploaded_count", 0)
-
-            if cfg.get("autoPdf", True) and os.path.exists(pdf_path):
-                open_file_in_os(pdf_path)
-
-            self.send_response(200)
-            self._send_cors_headers()
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "partial_error" if res.get("errors") else "ok",
-                "errors": res.get("errors", []),
-                "inventoryCount": res.get("inventory_count", 0),
-                "uploaded": uploaded,
-                "pdfPath": pdf_path,
-                "zplPath": zpl_path
-            }).encode("utf-8"))
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            prefix = "roca_" + datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
+            pdf_name, zpl_name = prefix + ".pdf", prefix + ".zpl"
+            pdf_path, zpl_path = os.path.join(OUTPUT_DIR, pdf_name), os.path.join(OUTPUT_DIR, zpl_name)
+            layout, dpi = cfg.get("labelLayout", "standard"), int(cfg.get("printerDpi", 203))
+            generate_zebra_pdf_labels(cards, pdf_path, layout=layout, dpi=dpi)
+            generate_zebra_zpl(cards, zpl_path, layout=layout, dpi=dpi)
+            res = {"uploaded_count": 0, "inventory_count": 0, "errors": []}
+            if upload:
+                res = upload_to_square(cards, token, environment=cfg.get("squareEnvironment", "production"),
+                                       location_id=cfg.get("squareLocationId", ""))
+            self.send_json({
+                "version": APP_VERSION,
+                "status": "partial_error" if res["errors"] else "ok",
+                "errors": res["errors"], "uploaded": res["uploaded_count"],
+                "inventoryCount": res["inventory_count"],
+                "pdfPath": pdf_path, "zplPath": zpl_path,
+                "pdfUrl": "/files/" + quote(pdf_name), "zplUrl": "/files/" + quote(zpl_name)})
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as exc:
+            self.send_json({"status": "error", "errors": [str(exc)]}, 400)
 
 
 def launch_desktop_station():
@@ -566,6 +607,13 @@ def launch_desktop_station():
     print("=================================================================")
     print("   Roca Sifter -> Square POS & Zebra Drag-and-Drop Station      ")
     print("=================================================================")
+    # Bind before opening Chrome: an older running station must not serve this window.
+    try:
+        server = HTTPServer(("127.0.0.1", PORT), RocaStationHandler)
+    except OSError as exc:
+        raise RuntimeError(f"Cannot start Roca {APP_VERSION}: port {PORT} is already in use. "
+                           "Close the older Roca/Python station window and try again.") from exc
+    print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
     print(f"Station running at: {url}")
     print("Opening drag-and-drop window... (Close this window when done)")
 
@@ -573,6 +621,16 @@ def launch_desktop_station():
     chrome_candidates = []
     if platform.system() == "Windows":
         chrome_candidates.append(shutil.which("chrome.exe"))
+        # Chrome can be registered at a custom location outside PATH.
+        import winreg
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                try:
+                    with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+                                        0, winreg.KEY_READ | view) as key:
+                        chrome_candidates.append(winreg.QueryValueEx(key, "")[0].strip('"'))
+                except OSError:
+                    pass
         for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
             directory = os.environ.get(variable)
             if directory:
@@ -596,14 +654,14 @@ def launch_desktop_station():
                 continue
 
     if not opened_app_window:
-        print("Chrome was not found or could not start; opening your system default browser.")
-        webbrowser.open(url)
-
-    server = HTTPServer(("127.0.0.1", PORT), RocaStationHandler)
+        print("Chrome could not be launched. Install Google Chrome, then restart the station, "
+              "or paste the station address into Chrome manually. Edge will not be opened.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down station.")
+    finally:
+        server.server_close()
 
 
 # ==============================================================================
