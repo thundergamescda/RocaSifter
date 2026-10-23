@@ -13,7 +13,7 @@ The 23-page operator manual includes screenshots, all four workflows, admin setu
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.3**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.4**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
@@ -25,6 +25,16 @@ Closing Chrome leaves Roca and automatic export pickup running while this comput
 To shut down, save your edits, wait for **All changes saved**, close the Roca browser window, then double-click **Stop Roca.vbs** (or **Stop Roca.cmd**) and confirm. The stop shortcut waits for active inventory work; it does not force-kill Python processes. Wait for the stopped message before backing up or updating. Startup errors appear in a dialog; details are in **station_data/station.log** (rotated automatically).
 
 When upgrading from a console-based version, close its old Roca/Python command window once, then replace the application files with this complete release. Preserve **station_data**, **outputs**, and settings; rerun the installer. If a background station is running from another folder, use **Stop Roca** from that folder first.
+
+### Automatic updates
+
+For future updates, double-click **Update Roca.vbs** in the application folder. Save your work, close the Roca browser window, then select **Update & reopen Roca**. The updater downloads the current GitHub revision, waits for the station to stop, creates a backup, installs the packages and application files, and reopens Chrome. It does not require a Square token or admin password.
+
+For an older installation that has no updater yet, **[download the small automatic updater](https://raw.githubusercontent.com/thundergamescda/RocaSifter/main/docs/Roca_Automatic_Updater.zip)**, extract its two files together, and double-click **Update Roca.cmd**. Choose your existing application folder and select **Update & reopen Roca**. If asked, close the older Roca command window once; the updater continues automatically. Newer versions stop through their authenticated local shutdown endpoint and finish active receiving first.
+
+Your `station_data`, `outputs`, settings and root CSV/PDF/ZPL files are preserved. Backups are kept in `backups/<date-and-time>/files`, with a setup log and update record beside them. The Python environment is excluded from backups; the updater installs the required packages in that environment. If file installation or its import check fails, it restores the previous application files. A dependency failure leaves application files unchanged and reports its log. Keep the same Windows account so your saved Square credential remains readable.
+
+The updater uses only the Python standard library (including Tcl/Tk for its window). No Git client, GitHub login or manual file copying is required. Updates run when you choose; they are not installed during normal work. The app refuses to start while its updater holds the installation lock.
 
 Python command-line equivalent:
 

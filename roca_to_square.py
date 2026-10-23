@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.0.4"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -670,6 +670,9 @@ def open_station_browser(url):
 
 
 def launch_desktop_station(reuse_existing=False):
+    from roca_update import update_in_progress
+    if update_in_progress(APP_DIR):
+        raise RuntimeError('Roca is being updated. Wait for the updater to finish; it will reopen the app for you.')
     from station_runtime import RuntimeControl, read_runtime, running_status
     url = f"http://127.0.0.1:{PORT}"
     # Bind before opening Chrome so another installation cannot serve this window.

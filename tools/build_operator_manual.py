@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.0.3'
+VERSION='2.0.4'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -345,8 +345,8 @@ m.bullet('Save and wait for <b>All changes saved</b>. Leave useful notes and kee
 m.bullet('Resolve or flag any receiving errors. Tell the next operator about cards waiting for review, labels or a physical pull.')
 m.bullet('Closing Chrome leaves folder pickup running. To stop, save, close Chrome and run <b>Stop Roca.vbs</b>. Confirm and wait for the stopped message; active work finishes first.')
 m.h2('Backup and update')
-m.para('Stop the station before backing up or updating. Preserve the entire <b>station_data</b> and <b>outputs</b> folders. Keep private backups in the store’s approved location.')
-m.para('For an update, use the complete application folder and run its installer. Keep existing data with the updated app. A token protected by Windows should be opened by the same Windows user; otherwise an admin must save a replacement.')
+m.para('For updates, save your work and close the Roca browser. Run <b>Update Roca.vbs</b> → <b>Update &amp; reopen Roca</b>. It stops Roca, backs up your files, installs the update and reopens Chrome.')
+m.para('Older installation? Extract the small automatic updater ZIP, run <b>Update Roca.cmd</b> and choose the existing app folder. Close the old command window if asked. Backups are in <b>backups</b>. Keep the same Windows account for the saved token.')
 m.callout('Back up the records, not just the generated labels.','Losing station_data loses receipt history and its protection against receiving a completed receipt again. Ask an admin before moving, replacing or deleting these folders.','care')
 # 20 — General troubleshooting.
 m.new(20,'Troubleshooting','If something goes wrong','Start with the symptom. Keep the saved receipt and read the message before retrying.')

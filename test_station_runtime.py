@@ -111,6 +111,19 @@ class RuntimeTests(unittest.TestCase):
             station_desktop.stop_station(core)
         self.assertFalse(self.control.stopping.is_set())
 
+    def test_updater_stops_only_the_identified_station_through_its_local_endpoint(self):
+        import roca_update
+        def close_when_stopped():
+            self.thread.join()
+            self.server.server_close()
+        closer=threading.Thread(target=close_when_stopped,daemon=True)
+        closer.start()
+        roca_update.stop_existing_station(Path(core.SETTINGS_FILE).parent,self.server.server_port,lambda *_:None,timeout=4)
+        closer.join(timeout=2)
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(self.control.stopping.is_set())
+        self.assertTrue(self.server.station.stop_event.is_set())
+
     def test_runtime_cleanup_preserves_newer_instance_record(self):
         replacement = dict(self.control.record,instance='new-instance')
         self.control.path.write_text(json.dumps(replacement),encoding='utf-8')

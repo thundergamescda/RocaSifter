@@ -2,7 +2,7 @@
 
 These are the checks that still require the actual store equipment/account. Automated tests use an isolated local database and mocked Square responses.
 
-1. Close any older Roca Station, install the complete v2 folder and dependencies, and double-click Start Roca.vbs. Verify 2.0.3 in Chrome with no command window. Close Chrome and start again: it should reopen the same station. Save, close Chrome and use Stop Roca.vbs; confirm it reports stopped. Start again and verify saved receipts remain.
+1. Close any older Roca Station, install the complete v2 folder and dependencies, and double-click Start Roca.vbs. Verify 2.0.4 in Chrome with no command window. Close Chrome and start again: it should reopen the same station. Save, close Chrome and use Stop Roca.vbs; confirm it reports stopped. Start again and verify saved receipts remain.
 2. Create an admin password, enter a sandbox token, test locations and save. Close Admin. Verify it requires the password again and the operator screens never display the token. Restart the app and verify settings persist.
 3. In Price & label, import a batch and choose Do not add inventory. Select New batch and verify a fresh import screen, then import a different batch and verify a new inventory prompt. Export a small Roca batch with duplicate copies and at least two finishes. Open the draft, split one copy, correct its finish/condition/price, and confirm review.
 4. Generate side-fold labels only. Verify 2″ × 1″ physical dimensions, set/number/condition/finish/price on the left, code on the right, and a flat code after folding on a sleeve. Use the actual printer DPI and Actual size/100% printing.
@@ -16,3 +16,5 @@ These are the checks that still require the actual store equipment/account. Auto
 Keep station_data and outputs with the installation. Back up while the station is closed. Do not wipe receipt history or create a new receipt to bypass a pending Square operation.
 
 11. Delete an unreceived test receipt and restore it by reimporting its CSV. Verify it keeps the same ID and inventory choice. In Sandbox, delete and restore a received test receipt and verify it cannot add stock again. Confirm unresolved receiving cannot be deleted. New batch, tab changes and folder pickup notifications must not reopen old receipts automatically.
+
+12. On Windows, start with the small updater ZIP and select an older test installation. Save and close the browser, then choose Update & reopen Roca. If the old console is detected, close it and confirm the updater resumes. Verify the timestamped backup, installed version, retained receipts/admin connection and Chrome reopening. Run Update Roca.vbs again and confirm an unchanged revision is reported as current without installing packages again. Native Windows launcher/Tk/file-lock behavior still requires this equipment check.

@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory() as temp, patch.object(core,'SETTINGS_FILE',st
             browser = p.chromium.launch(executable_path=shutil.which('chromium'),headless=True,args=['--no-sandbox'])
             page = browser.new_page(base_url=f'http://127.0.0.1:{server.server_port}',viewport={'width':1440,'height':960},device_scale_factor=1.5)
             errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-            page.goto('/');page.wait_for_selector('#version:text("2.0.3")')
+            page.goto('/');page.wait_for_selector('#version:text("2.0.4")')
             page.screenshot(path=str(ASSETS/'welcome.png'))
             page.locator('#receiptPicker').select_option(receipt['id']);page.wait_for_selector('#inventoryDialog[open]');page.locator('[data-choose-intent="new"]').click();page.wait_for_selector('#tradePanel:not([hidden])')
             page.evaluate('window.scrollTo(0,0)');page.screenshot(path=str(ASSETS/'workspace.png'))
