@@ -47,6 +47,7 @@ class StationService:
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.watch_status = {'state': 'off', 'message': 'Folder pickup is off.'}
+        self.watch_observed = {}
         self.watcher = None
         if self.store.get('preferences') is None:
             old = core.load_settings()
@@ -57,6 +58,7 @@ class StationService:
                 'squareLocationId': old.get('squareLocationId', ''),
                 'watchFolder': '', 'watchMode': 'labels'})
         self.migrate_legacy_token()
+        self.watch_status = self.pickup_status()
         # A restart during a commit keeps the same receipt and journal for safe retry.
         for receipt in self.store.summaries():
             if receipt.get('inventory_status') == 'committing':
@@ -120,8 +122,42 @@ class StationService:
             pref['squareLocationId'] = self.core.resolve_square_location(locations, pref['squareLocationId'], pref['squareEnvironment'])
         if token:
             self.vault.set(token)
+        previous_folder = self.preferences().get('watchFolder', '')
+        if folder and (not previous_folder or Path(folder).resolve() != Path(previous_folder).resolve()):
+            # Existing downloads are not new deliveries. Record them before enabling pickup.
+            self.store.put('export_checkpoint', self.export_baseline(folder))
+            self.watch_observed.clear()
         self.store.put('preferences', pref)
+        self.watch_status = self.pickup_status()
         return self.admin_settings()
+
+    def downloads_folder(self):
+        folder = None
+        if os.name == 'nt':
+            import ctypes
+            # FOLDERID_Downloads respects Windows folder redirection.
+            folder_id = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID('374DE290-123F-4565-9164-39C4925E467B').bytes_le)
+            value = ctypes.c_wchar_p()
+            get_folder = ctypes.windll.shell32.SHGetKnownFolderPath
+            get_folder.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar_p)]
+            get_folder.restype = ctypes.c_long
+            if get_folder(ctypes.byref(folder_id), 0, None, ctypes.byref(value)) == 0:
+                try:
+                    folder = Path(value.value)
+                finally:
+                    free = ctypes.windll.ole32.CoTaskMemFree
+                    free.argtypes = [ctypes.c_void_p]
+                    free.restype = None
+                    free(ctypes.cast(value, ctypes.c_void_p))
+        folder = folder or Path.home() / 'Downloads'
+        if not folder.is_dir():
+            raise StationError('Downloads was not found. Enter the folder Roca exports into instead.')
+        return str(folder)
+
+    def pickup_status(self):
+        folder = self.preferences().get('watchFolder', '')
+        return {'state': 'starting' if folder else 'off', 'folder': folder,
+                'message': 'Checking for new Roca exports.' if folder else 'Choose an export folder to enable automatic pickup.'}
 
     def parse(self, content):
         import tempfile
@@ -141,7 +177,7 @@ class StationService:
                 card['sku_override'] = str(card['sku'])
         return cards
 
-    def import_csv(self, content, filename, mode='bulk', new_delivery=False):
+    def import_csv(self, content, filename, mode='bulk', new_delivery=False, intake_source='manual'):
         if mode not in MODES:
             raise StationError('Choose a workflow.')
         digest = hashlib.sha256(content.lstrip('\ufeff').replace('\r\n', '\n').encode()).hexdigest()
@@ -156,10 +192,19 @@ class StationService:
                 'cards': cards, 'inventory_status': 'not_received', 'inventory_intent': None,
                 'purchase': None, 'requires_purchase': mode == 'trade', 'customer_reference': '', 'notes': '', 'channel': 'tcgplayer',
                 'storage_strategy': 'bin', 'storage_location': '', 'prepared': False,
+                'intake_source': intake_source, 'pickup_pending': intake_source == 'folder',
                 'cash_percent': self.preferences()['cashPercent'],
                 'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
             self.store.save_receipt(receipt, ('imported', f'{len(cards)} card rows imported into {mode}.'))
             return {'receipt': receipt, 'duplicate': False}
+
+    def acknowledge_pickup(self, receipt_id):
+        with self.lock:
+            receipt = self.active_receipt(receipt_id)
+            if receipt.get('pickup_pending'):
+                receipt['pickup_pending'] = False
+                self.store.save_receipt(receipt)
+            return receipt
 
     def active_receipt(self, receipt_id):
         receipt = self.store.receipt(receipt_id)
@@ -477,39 +522,84 @@ class StationService:
         self.watcher.start()
 
     def watch_loop(self):
-        observed={};handled=set();failed={}
         while not self.stop_event.wait(2):
-            config=self.preferences();folder=config.get('watchFolder','')
-            if not folder:
-                self.watch_status={'state':'off','message':'Folder pickup is off.'};continue
             try:
-                files=list(Path(folder).glob('*.csv'))
-                for path in files:
-                    stat=path.stat();signature=(str(path),stat.st_size,stat.st_mtime_ns)
-                    if signature in handled:
-                        continue
-                    if observed.get(str(path)) != signature:
-                        observed[str(path)]=signature;continue
-                    if stat.st_size>20_000_000:
-                        raise StationError(f'{path.name} exceeds the 20 MB limit.')
-                    content=path.read_text(encoding='utf-8-sig')
-                    # Check again after reading so a partial write is not received.
-                    after=path.stat()
-                    if (after.st_size,after.st_mtime_ns)!=(stat.st_size,stat.st_mtime_ns):
-                        continue
-                    try:
-                        with self.lock:
-                            if self.stop_event.is_set():
-                                return
-                            self.import_csv(content,path.name,config['watchMode'])
-                    except Exception as exc:
-                        failed[str(path)]=(signature,f'{path.name}: {exc}')
-                        handled.add(signature)
-                        continue
-                    handled.add(signature)
-                    failed.pop(str(path),None)
-                failed={name:value for name,value in failed.items() if Path(name).exists() and Path(name).parent==Path(folder)}
-                self.watch_status=({'state':'error','message':next(iter(failed.values()))[1]} if failed else
-                                   {'state':'watching','message':f'Watching {folder}'})
+                self.poll_exports()
             except Exception as exc:
-                self.watch_status={'state':'error','message':str(exc)}
+                self.watch_status = dict(self.pickup_status(), state='error', message=str(exc))
+
+    @staticmethod
+    def export_files(folder):
+        return sorted((p for p in Path(folder).iterdir()
+                       if p.suffix.lower() == '.csv' and p.is_file() and not p.is_symlink()),
+                      key=lambda p: (p.stat().st_mtime_ns, p.name))
+
+    @staticmethod
+    def file_signature(path):
+        stat = path.stat()
+        return [stat.st_size, stat.st_mtime_ns]
+
+    def export_baseline(self, folder):
+        try:
+            return {'folder': str(Path(folder).resolve()),
+                    'files': {p.name: {'signature': self.file_signature(p)} for p in self.export_files(folder)}}
+        except OSError:
+            raise StationError('The export folder could not be read. Check its location and permissions.') from None
+
+    def poll_exports(self):
+        with self.lock:
+            config = self.preferences()
+            folder = config.get('watchFolder', '')
+            status = self.pickup_status()
+            if not folder:
+                self.watch_status = status
+                self.watch_observed.clear()
+                return
+            root = str(Path(folder).resolve())
+            checkpoint = self.store.get('export_checkpoint', {})
+            if checkpoint.get('folder') != root:
+                # Also covers upgrading an already configured station once.
+                checkpoint = self.export_baseline(folder)
+                self.store.put('export_checkpoint', checkpoint)
+                self.watch_observed.clear()
+            files = self.export_files(folder)
+            records = checkpoint['files']
+            present = {p.name for p in files}
+            updated = False
+            for name in list(records):
+                if name not in present:
+                    del records[name]
+                    updated = True
+            self.watch_observed = {k: v for k, v in self.watch_observed.items() if k[0] == root and k[1] in present}
+            read_errors = []
+            for path in files:
+                if self.stop_event.is_set():
+                    return
+                try:
+                    signature = self.file_signature(path)
+                    if records.get(path.name, {}).get('signature') == signature:
+                        continue
+                    key = (root, path.name)
+                    if self.watch_observed.get(key) != signature:
+                        self.watch_observed[key] = signature
+                        continue
+                    if signature[0] > 20_000_000:
+                        raise StationError('File exceeds the 20 MB limit.')
+                    content = path.read_text(encoding='utf-8-sig')
+                    if self.file_signature(path) != signature:
+                        continue
+                    self.import_csv(content, path.name, config['watchMode'], intake_source='folder')
+                    records[path.name] = {'signature': signature}
+                    updated = True
+                except OSError:
+                    # A browser or scanner can still hold the file. Retry after it settles.
+                    read_errors.append(f'{path.name}: Could not read this export. Check file access; pickup will retry.')
+                    continue
+                except (ValueError, UnicodeError, csv.Error, InvalidOperation) as exc:
+                    records[path.name] = {'signature': signature, 'error': f'{path.name}: {exc}'}
+                    updated = True
+            if updated:
+                self.store.put('export_checkpoint', checkpoint)
+            errors = read_errors + [r['error'] for r in records.values() if r.get('error')]
+            self.watch_status = dict(status, state='error' if errors else 'watching',
+                                     message=errors[0] if errors else 'Ready for the next export from Roca.')

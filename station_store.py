@@ -50,7 +50,8 @@ class Store:
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS receipts (
-                id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL, deleted_at TEXT);
+                id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL, deleted_at TEXT,
+                pickup_pending INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS receipts_source ON receipts(source_hash);
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, at TEXT, kind TEXT, detail TEXT);
@@ -61,6 +62,9 @@ class Store:
             ''')
             if 'deleted_at' not in {row['name'] for row in db.execute('PRAGMA table_info(receipts)')}:
                 db.execute('ALTER TABLE receipts ADD COLUMN deleted_at TEXT')
+            if 'pickup_pending' not in {row['name'] for row in db.execute('PRAGMA table_info(receipts)')}:
+                db.execute('ALTER TABLE receipts ADD COLUMN pickup_pending INTEGER NOT NULL DEFAULT 0')
+            db.execute('CREATE INDEX IF NOT EXISTS receipts_pickup ON receipts(pickup_pending,deleted_at)')
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -97,8 +101,9 @@ class Store:
         receipt['updated'] = now()
         receipt['revision'] = receipt.get('revision', 0) + 1
         with self.db() as db:
-            db.execute('INSERT OR REPLACE INTO receipts (id,source_hash,updated,body,deleted_at) VALUES (?,?,?,?,?)',
-                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], json.dumps(receipt), receipt.get('deleted_at')))
+            db.execute('INSERT OR REPLACE INTO receipts (id,source_hash,updated,body,deleted_at,pickup_pending) VALUES (?,?,?,?,?,?)',
+                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], json.dumps(receipt), receipt.get('deleted_at'),
+                 int(bool(receipt.get('pickup_pending')))))
             if event:
                 db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
                     (receipt['id'], now(), event[0], event[1]))
@@ -126,6 +131,15 @@ class Store:
     def activity(self):
         with self.db() as db:
             return [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 150')]
+
+    def pickup_queue(self):
+        with self.db() as db:
+            rows = db.execute('SELECT body FROM receipts WHERE pickup_pending=1 AND deleted_at IS NULL ORDER BY updated,id LIMIT 150').fetchall()
+        result = []
+        for row in rows:
+            receipt = json.loads(row['body'])
+            result.append({key: receipt[key] for key in ('id', 'title', 'source_name', 'mode')})
+        return result
 
 
 class Vault:

@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.1.0'
+VERSION='2.2.0'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -130,7 +130,7 @@ c.setFont('Bold',9);c.drawRightString(566,733,'OPERATOR EDITION')
 c.setFillColor(WHITE);c.setFont('Bold',55);c.drawString(44,622,'The operator');c.drawString(44,561,'manual.')
 c.setFillColor(colors.HexColor('#A8BDFB'));c.setFont('Body',21);c.drawString(47,519,'From scan to shelf.')
 m.y=486;m.para('Three steps for everyday card processing.<br/>Extra tools for the jobs that need them.',size=12.8,leading=19,color=colors.HexColor('#CBD6E8'),space=14)
-for i,word in enumerate(['IMPORT','CHECK','FINISH']):
+for i,word in enumerate(['EXPORT','CHECK','FINISH']):
     x=46+i*176;c.setFillColor(colors.HexColor('#213551'));c.roundRect(x,407,148,28,6,fill=1,stroke=0)
     c.setFillColor(WHITE);c.setFont('Bold',8.5);c.drawCentredString(x+74,417,word)
     if i<2:c.setFillColor(colors.HexColor('#7992C4'));c.drawString(x+158,417,'›')
@@ -143,10 +143,10 @@ c.bookmarkPage('cover');c.addOutlineEntry('Operator manual','cover',level=0);c.s
 # 02 — Daily desk reference.
 m.new(2,'Keep this by the station','Your everyday three steps','Use Process cards for the normal job. You choose whether to add stock after checking the cards.')
 m.para('<b>Open:</b> double-click <b>Start Roca.vbs</b>. Chrome opens the station. Keep the physical stack together.',size=10.5)
-m.step(1,'Import.','Click <b>Choose Roca export</b> and select the CSV you exported from Roca. Importing does not add stock.')
+m.step(1,'Export in Roca.','After the one-time folder setup in Admin, click <b>Export</b> in Roca. Save to that folder. Your cards appear here automatically for review; no import click is needed.')
 m.step(2,'Check cards.','Match name, set, number, condition, finish, quantity and price to the physical cards. Use <b>Edit</b> for corrections. Mark checked cards, then click <b>Continue</b>.')
 m.step(3,'Finish.','Choose <b>Add to Square &amp; create labels</b> for new physical stock, or <b>Create labels only</b> when stock should not increase. Click the main button; approve any stock addition.')
-m.callout('Print, then start fresh.','Click <b>Open labels to print</b>. Use 2″ × 1″ media at <b>Actual size / 100%</b>. Check one label, then print the stack. Click <b>Next batch</b> for a fresh import.','good')
+m.callout('Print, then start fresh.','Click <b>Open labels to print</b>. Use 2″ × 1″ media at <b>Actual size / 100%</b>. Check one label, then print the stack. Click <b>Next batch</b> to open the next waiting export, or wait for a new one.','good')
 m.para('<b>Reprints:</b> open <b>Batch history</b> and print the existing batch. A successful Square addition cannot be repeated from that batch.',size=10.3)
 m.table(['When you need more','Where to find it'],[
 ('Buy cards from a customer','<b>Customer trade-in</b> · page 7'),
@@ -156,14 +156,13 @@ m.table(['When you need more','Where to find it'],[
 ('An error / closing or updating','Pages 13–14')],[253,W-253],size=9.7)
 m.para('Closing Chrome leaves Roca running. To stop it, save first and use <b>Stop Roca.vbs</b>. Updates: <b>Update Roca.vbs</b>.',size=9.8,leading=13.5,color=MUTED)
 # 03 — Intake.
-m.new(3,'Step 1 / Import','Bring in a Roca export','Every import starts as a draft. Nothing goes to Square until you choose and approve it.')
-m.image('welcome.png','Process cards is the everyday starting point.',max_h=210)
-m.step(1,'Export the scan in Roca.','Click Export in the Roca software and save its CSV. Give the file a recognizable name and keep its physical stack together.')
-m.step(2,'Choose the file.','In <b>Process cards</b>, click <b>Choose Roca export</b>, or drop the CSV into the app. Check the batch title and included quantity.')
-m.h2('If your manager sets up export pickup')
-m.para('Export into the saved folder. Roca Station picks up stable CSV files as unchecked drafts. Open them from <b>Batch history</b>; an arriving file does not replace your current screen or add stock.')
-m.callout('“This export is already saved.”','Open the existing batch for a retry or reprint. Choose the new-delivery override only for <b>additional physical cards</b>. Renaming a file does not make it new stock.','care')
-m.para('Corrected or cumulative exports can overlap stock already received. Check for overlap before approval. The app reads exports; Roca still controls the physical sorting bins.',size=10.3,color=MUTED)
+m.new(3,'Step 1 / Export','Let exports come to you','Set up the folder once. After that, press Export in Roca and the app does the pickup.')
+m.image('export-pickup.png','The waiting screen shows the folder where Roca’s CSV must be saved.',max_h=155)
+m.step(1,'Set up pickup once.','Choose <b>Set up automatic pickup</b> and unlock Admin. Under Automatic export pickup, choose <b>Use Downloads folder</b>, or enter the folder your browser actually uses. Save settings.')
+m.step(2,'Press Export in Roca.','Save the new CSV into that same folder. Within a few seconds, the app opens its unchecked cards when the workspace is free. Existing files in the folder are left alone at setup.')
+m.step(3,'Keep your current work when more scans arrive.','New exports wait in a queue if a batch or dialog is open. Finish your current stack, then use <b>Next batch</b> or <b>Review next export</b>. The queue survives closing and reopening the app.')
+m.callout('Repeat exports are not extra stock.','Identical or renamed CSVs do not create another batch. For genuinely additional physical copies with identical data, use <b>Choose a file instead</b> and the new-delivery override. Check corrected/cumulative exports for overlap.','care')
+m.para('A folder-picked batch uses Admin’s default workflow. Use <b>Batch options</b> to move it to another job. Manual intake remains available through <b>Choose a file instead</b> or dropping a CSV.',size=10.3,color=MUTED)
 # 04 — Card review.
 m.new(4,'Step 2 / Check cards','Check the physical cards','The review table comes first. Work through the stack before choosing what happens next.')
 m.image('card-table.png','Search and filters check the whole batch; the table shows 40 rows per page.',max_h=240)
@@ -219,7 +218,7 @@ m.callout('What these files do','The CSV is a generic review sheet, not a guaran
 m.new(10,'Saved work','Find saved work','Batch history keeps everyday work out of the way until you need it.')
 m.image('history.png','Search the 150 most recent active batches, then click one to reopen it.',max_h=150)
 m.table(['Task','How to do it'],[
-('Start a fresh stack','Choose <b>Next batch</b> or <b>New batch</b>. Pending edits save; filters and the finish choice reset for the new import.'),
+('Start the next stack','Choose <b>Next batch</b> or <b>New batch</b>. Pending edits save. The next queued export opens, or the app waits for a new one.'),
 ('Continue or reprint','Open <b>Batch history</b>. A finished batch opens its result. Print the PDF again, or choose <b>View this batch</b> to check it.'),
 ('Move this stack to another job','Use <b>Batch options → Continue this batch in</b>. The same saved record follows the cards.'),
 ('Delete a batch','Open it, choose <b>Batch options → Delete batch</b>, then confirm. It leaves the active history and returns to import.'),
@@ -237,7 +236,7 @@ m.new(12,'Manager setup','Admin & saved defaults','Set this up once so operators
 m.step(1,'Create or unlock Admin.','Open <b>Admin settings</b>. On first use, create your own password of at least 12 characters and confirm it. There is no default password. Closing the dialog locks it again.')
 m.step(2,'Save the Square connection.','Enter the token, choose Production for the real store or Sandbox for a sandbox token, then <b>Test connection &amp; load stores</b>. Select the active receiving store and save. A blank token field keeps the saved credential.')
 m.step(3,'Save normal printer settings.','Under <b>Workflow defaults</b>, choose the normal label layout and the ZD411D’s actual DPI. Operators can override them under Finish’s More options when necessary.')
-m.step(4,'Choose optional defaults.','Set store-approved cash/credit percentages and sift threshold. To use export pickup, enter an existing folder on this computer and its default workflow. Leave the folder blank for manual import.')
+m.step(4,'Enable export pickup.','Choose <b>Use Downloads folder</b>, or enter the actual Roca export folder. Keep <b>Process cards</b> for routine work. Save, then export a new CSV there. Existing files are skipped at setup; clear the folder to turn pickup off.')
 m.image('admin-settings.png','The token field is never populated with the saved secret.',max_h=190)
 m.para('Credentials are encrypted locally. Keep <b>station_data</b> private and use the same Windows account after updates/restores. Admin can change the password in the dialog. There is no browser password-reset bypass; do not erase station_data to reset access.',size=10.2,color=MUTED)
 # 13 — Troubleshooting.
@@ -249,7 +248,7 @@ m.table(['What you see','What to do'],[
 ('CSV and Square prices differ','Confirm the intended retail price, then correct the batch or Square as appropriate. Existing Square prices are not silently changed.'),
 ('Receiving needs attention','Read the saved error. Use <b>Retry saved Square update</b> if appropriate. Persistent or old partial operations require checking Square before further action.'),
 ('QR will not scan / label is cut off','Use a fresh PDF, 2″ × 1″ media, correct DPI and 100% scaling. Keep the code and its white margins flat and clear. Verify your scanner reads QR.'),
-('Old app / port is already in use','Save and use Stop Roca from the running folder. Close the old console once for a console-based version, then start the current folder.'),
+('Export did not appear','Check the waiting screen’s folder matches where the browser saved the CSV. Old files at setup are skipped; export again. A repeated identical CSV stays in its existing batch.'),
 ('Password or installation trouble','Ask the manager who set the password. For startup errors, read station_data/station.log and rerun the current installer if prompted.')],[157,W-157],size=9.8)
 m.callout('Useful support details','Record the version, batch ID, chosen action and exact error. Keep tokens and passwords out of screenshots. Test physical labels and a real Square variation sale on your store equipment before a full rollout.','note')
 # 14 — Daily operation & maintenance.

@@ -79,7 +79,8 @@ def make_handler(core):
                         self.send_json(self.station.admin_settings())
                     return
                 if path=='/api/receipts':
-                    return self.send_json({'receipts':self.station.store.summaries(),'watcher':self.station.watch_status})
+                    return self.send_json({'receipts':self.station.store.summaries(),'watcher':self.station.watch_status,
+                                           'pickupQueue':self.station.store.pickup_queue()})
                 if path.startswith('/api/receipts/'):
                     return self.send_json({'receipt':self.station.store.receipt(path.rsplit('/',1)[1])})
                 if path=='/api/activity':
@@ -159,6 +160,8 @@ def make_handler(core):
                     return
                 if path=='/api/admin/settings':
                     return self.send_json(service.save_preferences(data))
+                if path=='/api/admin/downloads-folder':
+                    return self.send_json({'folder':service.downloads_folder()})
                 if path=='/api/admin/locations':
                     settings=service.preferences()
                     token=data.get('squareToken','').strip() or service.vault.read()
@@ -188,6 +191,8 @@ def make_handler(core):
                     receipt=service.delete_receipt(receipt_id,data.get('revision'))
                 elif action=='restore':
                     receipt=service.restore_receipt(receipt_id)
+                elif action=='pickup-opened':
+                    receipt=service.acknowledge_pickup(receipt_id)
                 else:
                     raise StationError('Unknown receipt action.')
                 return self.send_json({'receipt':receipt})

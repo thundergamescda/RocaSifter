@@ -12,7 +12,7 @@ from playwright.sync_api import sync_playwright, expect
 CSV=b'Card Name,Card #,Condition,Printing,Set Code,Language,Price,Bin,Qty\nSnapcaster Mage,0808,Near Mint,Foil,SLD,English,24.75,1,2\nSol Ring,0236,Lightly Played,Normal,CMM,English,3.75,2,4\n'
 
 
-def run(base, screenshots, square_calls):
+def run(base, screenshots, square_calls, export_folder):
     with sync_playwright() as p:
         browser=p.chromium.launch(executable_path=os.environ.get('ROCA_BROWSER_PATH') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
         page=browser.new_page(base_url=base,viewport={'width':1440,'height':1000})
@@ -42,7 +42,8 @@ def run(base, screenshots, square_calls):
             else:page.locator('#newReceipt').click()
             expect(page.locator('#emptyState')).to_be_visible()
             expect(page.locator('#cardSearch')).to_have_value('')
-        page.goto('/');page.wait_for_selector('#version:text("2.1.0")')
+            expect(page.locator('#finishStepText')).to_have_text('Finish')
+        page.goto('/');page.wait_for_selector('#version:text("2.2.0")')
         expect(page.locator('#pageTitle')).to_have_text('Process cards')
         assert not page.locator('#moreToolsNav').evaluate('(e)=>e.open')
         shot('station-simple-home.png')
@@ -113,6 +114,7 @@ def run(base, screenshots, square_calls):
         page.locator('#confirmPassword').fill('Station-QA-password-246!');page.locator('#authSubmit').click()
         expect(page.locator('#adminSettings')).to_be_visible()
         page.locator('#defaultDpi').select_option('300');page.locator('#defaultLayout').select_option('standard')
+        page.locator('#useDownloads').click();expect(page.locator('#watchFolder')).to_have_value(str(export_folder))
         page.locator('#adminForm button[type=submit]').click();expect(page.locator('#adminMessage')).to_contain_text('Settings saved')
         with page.expect_response(lambda response:response.url.endswith('/api/auth/logout') and response.status==200):
             page.locator('#closeAdmin').click()
@@ -151,10 +153,49 @@ def run(base, screenshots, square_calls):
         page.locator('#taskLocation').fill('Display case 2 · shelf B');page.locator('#taskForm button[type=submit]').click()
         page.locator('[data-complete]').click();page.locator('#confirmOkay').click()
         expect(page.locator('#taskList')).to_contain_text('PULLED');assert len(square_calls)==1
-        # Folder arrivals notify without replacing a fresh import screen.
+        # Real browser download pickup: no import endpoint or file chooser is used.
         page.locator('[data-mode="labels"]').click();expect(page.locator('#emptyState')).to_be_visible()
-        page.request.post('/api/import',data={'csv':CSV.decode().replace('Snapcaster Mage','Folder pickup card'),'fileName':'Folder draft.csv','mode':'labels'})
-        page.wait_for_timeout(6500);expect(page.locator('#emptyState')).to_be_visible()
+        expect(page.locator('#emptyTitle')).to_have_text('Ready for your next export.')
+        expect(page.locator('#pickupFolderHint')).to_contain_text(str(export_folder))
+        shot('station-export-waiting.png')
+        export_a=CSV.replace(b'Snapcaster Mage',b'Automatic export card A')
+        partial=export_folder/'Roca A.csv.crdownload';partial.write_bytes(export_a)
+        page.wait_for_timeout(5000);expect(page.locator('#emptyState')).to_be_visible()
+        partial.rename(export_folder/'Roca A.csv')
+        expect(page.locator('#cardRows')).to_contain_text('Automatic export card A',timeout=15000)
+        pickup_a=batch_id()
+        expect(page.locator('#reviewContinue')).to_be_disabled()
+        receipt=page.request.get('/api/receipts/'+pickup_a).json()['receipt']
+        assert receipt['inventory_intent'] is None and receipt['files']=={} and not receipt['pickup_pending']
+        assert len(square_calls)==1
+        # More exports queue while a card editor or batch is in use.
+        page.locator('[data-edit]').first.click()
+        page.locator('#editFinish').fill('Unfinished handwritten treatment')
+        (export_folder/'Roca B.CSV').write_bytes(CSV.replace(b'Snapcaster Mage',b'Automatic export card B'))
+        expect(page.locator('#pickupNoticeText')).to_have_text('1 export is ready to review.',timeout=15000)
+        assert batch_id()==pickup_a
+        expect(page.locator('#cardDrawer')).to_be_visible()
+        expect(page.locator('#editFinish')).to_have_value('Unfinished handwritten treatment')
+        page.locator('#cardForm button[type=submit]').click();expect(page.locator('#cardDrawer')).not_to_be_visible()
+        page.locator('#newReceipt').click()
+        expect(page.locator('#cardRows')).to_contain_text('Automatic export card B')
+        pickup_b=batch_id();assert pickup_b!=pickup_a and len(square_calls)==1
+        assert page.request.get('/api/receipts/'+pickup_a).json()['receipt']['cards'][0]['printing']=='Unfinished handwritten treatment'
+        check_all();finish();page.locator('[data-intent="existing"]').click();page.locator('#primaryAction').click()
+        expect(page.locator('#doneView')).to_be_visible();new_batch()
+        # Renamed, repeated exports never recreate or reopen a processed batch.
+        (export_folder/'Roca B (1).csv').write_bytes(CSV.replace(b'Snapcaster Mage',b'Automatic export card B'))
+        page.wait_for_timeout(7500);expect(page.locator('#emptyState')).to_be_visible()
+        assert page.request.get('/api/receipts').json()['pickupQueue']==[] and len(square_calls)==1
+        # A queued export survives a closed browser and reopens for review on startup.
+        page.locator('#moreToolsNav > summary').click()
+        page.locator('[data-mode="activity"]').click()
+        (export_folder/'Roca C.csv').write_bytes(CSV.replace(b'Snapcaster Mage',b'Automatic export card C'))
+        page.wait_for_timeout(7500)
+        assert len(page.request.get('/api/receipts').json()['pickupQueue'])==1
+        page.reload()
+        expect(page.locator('#cardRows')).to_contain_text('Automatic export card C',timeout=15000)
+        assert len(square_calls)==1 and page.request.get('/api/receipts').json()['pickupQueue']==[]
         # Check the actual card and finish views on a small screen.
         history(first_id);page.locator('#doneReview').click();page.set_viewport_size({'width':390,'height':844})
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
@@ -174,7 +215,7 @@ def run(base, screenshots, square_calls):
         assert batch_id()==large_id and len(square_calls)==1
         expect(page.locator('#reviewView')).to_be_visible();expect(page.locator('#reviewContinue')).to_be_disabled()
         assert not errors,errors
-        print('PASS: guided import/check/finish, cards above fold, labels without stock, explicit Square confirmation/cancel, one stock addition, safe reprints/delete/restore, fresh batches and saved edits, arbitrary finishes/split copies, Admin defaults/lock, trade approval, online storage guard and files, pull tasks, folder notifications, mobile, 11,000-row filters/paging/search; no JS errors or live Square requests.')
+        print('PASS: guided import/check/finish, cards above fold, labels without stock, explicit Square confirmation/cancel, one stock addition, safe reprints/delete/restore, fresh batches and saved edits, arbitrary finishes/split copies, Admin defaults/lock, trade approval, online storage guard and files, pull tasks, real export pickup, partial downloads, queued drafts, restart/reopen, duplicate reexports, mobile, 11,000-row filters/paging/search; no JS errors or live Square requests.')
         browser.close()
 
 
@@ -191,6 +232,13 @@ if __name__=='__main__':
         service=server.station;service.vault.set('fake-sandbox-token-for-browser-test')
         pref=service.preferences();pref.update(squareEnvironment='sandbox',squareLocationId='test-store');service.store.put('preferences',pref)
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-        try:run(f'http://127.0.0.1:{server.server_port}',screenshots,square_calls)
-        finally:server.shutdown();server.server_close();thread.join()
+        export_folder=Path(directory)/'Downloads';export_folder.mkdir()
+        (export_folder/'old.csv').write_bytes(CSV.replace(b'Snapcaster Mage',b'Old download must stay ignored'))
+        service.start_watcher()
+        try:
+            with patch.object(service,'downloads_folder',return_value=str(export_folder)):
+                run(f'http://127.0.0.1:{server.server_port}',screenshots,square_calls,export_folder)
+        finally:
+            service.stop_event.set();service.watcher.join(timeout=3)
+            server.shutdown();server.server_close();thread.join()
     print('Screenshots:',screenshots)

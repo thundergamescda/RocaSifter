@@ -13,10 +13,10 @@ The 15-page operator manual starts with a one-page daily guide, then covers extr
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.1.0**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.2.0**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
-7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
+7. Choose **Set up automatic pickup**, unlock Admin, then choose **Use Downloads folder** (or enter the actual Roca export folder) and save. Press Export in Roca; new CSVs open for review automatically. Review every included card before stock or labels.
 
 ### Run in the background
 
@@ -49,9 +49,9 @@ The app serves only the local computer at `127.0.0.1`. A responsive layout suppo
 
 **Process cards** is the default home screen. Extra settings stay out of the way until needed.
 
-1. **Import:** choose a Roca CSV. There is no inventory decision before you see the cards.
+1. **Export:** press Export in Roca and save its CSV in the configured folder. The app picks it up and opens it for review. **Choose a file instead** remains available for manual intake.
 2. **Check cards:** review the physical cards, correct any details, mark the included cards checked, then choose **Continue**.
-3. **Finish:** choose **Add to Square & create labels** or **Create labels only**. The Square action asks for final approval before adding copies. Open the labels to print, then choose **Next batch** for a fresh import.
+3. **Finish:** choose **Add to Square & create labels** or **Create labels only**. The Square action asks for final approval before adding copies. Open the labels to print, then choose **Next batch** to review the next queued export or wait for a new one.
 
 **Batch history** reopens saved work and generated files. Reprints do not add copies. **Batch options** holds notes, Save now, deletion and moving the current stack into another workflow. Printer layout and DPI are saved in Admin; session overrides are under **More options** at Finish.
 
@@ -64,7 +64,7 @@ The app serves only the local computer at `127.0.0.1`. A responsive layout suppo
 | **More tools → Online preparation** | Prepare a listing review CSV and a storage ticket for an online bin or display case | Choose whether to add stock at Finish. A storage location is required before receiving. Nothing is published online. |
 | **More tools → Orders & activity** | Record manual order-pull tasks and look up batch events | Staff confirm physical removal. Pull tasks do not change stock; marketplace synchronization is not connected. |
 
-Navigation opens a fresh import screen, saving pending edits first. **Batch options → Continue this batch in** moves the same physical stack to another workflow. A received batch remains safe to reopen and reprint.
+Navigation opens a fresh workspace, saving pending edits first. Waiting exports open automatically when no batch or dialog is open; an active batch is never replaced. **Batch options → Continue this batch in** moves the same physical stack to another workflow. A received batch remains safe to reopen and reprint.
 
 ## A separate inventory choice for each batch
 
@@ -102,11 +102,15 @@ An old `roca_settings.json` token is migrated into the vault on startup and remo
 
 ## Automatic Roca export pickup
 
-In Admin, enter an existing export folder on the station computer and choose its default workflow. Leave it blank for manual imports.
+Set this up once in **Admin → Automatic export pickup**. Choose **Use Downloads folder** for the Windows account’s actual Downloads location (including folder redirection), or enter the folder your browser uses for Roca exports. Keep **Process cards** as the default workflow for routine receiving, then save. Make sure the browser saves Roca CSVs into that same folder. No Chrome extension is required.
 
-The watcher checks CSVs for unchanged size/mtime before reading and checks again after reading. Imported files become **unreviewed drafts**; they never accept buys, print, or receive stock automatically. An invalid file is reported without preventing valid files from being picked up. Saving a corrected file allows it to be examined again.
+Press **Export** in Roca. The watcher checks every two seconds and waits for unchanged size/mtime across checks, then checks again after reading. New drafts appear in the free workspace within a few seconds. If you are editing, printing or in a dialog, incoming exports wait in a persistent queue. **Review next export** switches when you choose; **Next batch** opens the next waiting export. Closing Chrome leaves pickup running; reopening the station continues the saved queue.
 
-Identical CSV content, including a renamed copy, opens its existing receipt. Manual intake offers a deliberate **new delivery** override for genuinely additional physical stock. Filename changes alone do not make a new delivery. Corrected or cumulative exports may have different content and cannot be reliably identified as the same physical receipt without stable Roca scan identifiers. Review them for overlap before approval; do not blindly receive re-exports. The watcher does not modify Roca files or control Roca’s mechanical bins.
+Existing CSVs are left alone when a folder is enabled or changed. The checkpoint is stored with station_data, so restarting does not reprocess old downloads. Files exported while the station is closed are found after restarting, provided pickup was already configured. Uppercase `.CSV` is supported; temporary downloads such as `.crdownload` are ignored. Locked files are retried, and a bad CSV does not block valid ones. Correcting and saving a bad file retries it. Only the selected folder is watched, without subfolders or symlinks.
+
+Pickup creates **unchecked drafts** with no stock decision selected. It never accepts buys, prints labels or adds stock. Identical CSV content, including renamed/repeated downloads, does not create or queue another batch. Use the manual **new delivery** override only for genuinely additional physical cards with identical CSV content. Corrected or cumulative exports may overlap previously received stock; check them before approval. The watcher does not modify Roca files or control the mechanical bins.
+
+To turn pickup off, clear the export folder in Admin and save. Queued batches remain saved. Each automatically collected batch uses the configured default workflow; use **Batch options → Continue this batch in** if it belongs to a trade-in or another job.
 
 ## Square receiving and duplicate cards
 
@@ -152,7 +156,7 @@ python -m playwright install chromium
 python browser_smoke.py
 ```
 
-The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, fresh batches, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
+The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, real file pickup, partial downloads, queued drafts, restart/reopen and duplicate reexports, fresh batches, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
 The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, background instance identity, reopening, graceful shutdown during receiving, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish native Windows launcher/DPAPI behavior, physical printing, or a live merchant integration on your store machine.
 

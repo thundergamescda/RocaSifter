@@ -144,8 +144,26 @@ class StationTests(unittest.TestCase):
         store=Store(root)
         self.assertEqual(store.summaries()[0]['id'],'legacy')
         self.assertEqual(store.find_source('source'),'legacy')
+        self.assertEqual(store.pickup_queue(),[])
         store.save_receipt(store.receipt('legacy'))
         self.assertEqual(len(Store(root).summaries()),1)
+
+    def test_downloads_shortcut_respects_windows_folder_redirection(self):
+        import ctypes
+        import station_service
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        folder=self.root/'Redirected Downloads';folder.mkdir()
+        buffer=ctypes.create_unicode_buffer(str(folder))
+        def known_folder(folder_id,flags,token,result):
+            ctypes.cast(result,ctypes.POINTER(ctypes.c_wchar_p))[0]=ctypes.cast(buffer,ctypes.c_wchar_p)
+            return 0
+        lookup=Mock(side_effect=known_folder);free=Mock()
+        libraries=SimpleNamespace(shell32=SimpleNamespace(SHGetKnownFolderPath=lookup),
+                                  ole32=SimpleNamespace(CoTaskMemFree=free))
+        with patch.object(station_service,'os',SimpleNamespace(name='nt')),patch.object(ctypes,'windll',libraries,create=True):
+            self.assertEqual(self.service.downloads_folder(),str(folder))
+        free.assert_called_once()
 
     def test_review_required_and_labels_never_receive(self):
         r=self.receipt(reviewed=False)
@@ -272,6 +290,111 @@ class StationTests(unittest.TestCase):
         finally:
             self.service.stop_event.set();self.service.watcher.join(timeout=3)
 
+    def pickup_folder(self):
+        folder=self.root/'exports';folder.mkdir()
+        self.service.save_preferences({'watchFolder':str(folder),'watchMode':'labels'})
+        return folder
+
+    def test_pickup_skips_old_files_and_waits_for_finished_download(self):
+        folder=self.root/'exports';folder.mkdir()
+        (folder/'old.csv').write_text(CSV)
+        self.service.save_preferences({'watchFolder':str(folder),'watchMode':'labels'})
+        path=folder/'new.CSV.crdownload';path.write_text(CSV.replace('Card One','New card'))
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(self.service.store.summaries(),[])
+        path=path.rename(folder/'new.CSV')
+        self.service.poll_exports()
+        self.assertEqual(self.service.store.summaries(),[])
+        path.write_text(CSV.replace('Card One','A changed card'))
+        self.service.poll_exports()
+        self.assertEqual(self.service.store.summaries(),[])
+        self.service.poll_exports()
+        queue=self.service.store.pickup_queue()
+        self.assertEqual(len(queue),1)
+        self.assertEqual(queue[0]['source_name'],'new.CSV')
+        r=self.service.store.receipt(queue[0]['id'])
+        self.assertEqual(r['cards'][0]['card_name'],'A changed card')
+        self.assertFalse(any(c['reviewed'] for c in r['cards']))
+        self.assertIsNone(r['inventory_intent'])
+        self.assertEqual(r['files'],{})
+        self.assertEqual(r['inventory_status'],'not_received')
+
+    def test_pickup_restarts_with_pending_queue_and_finds_exports_saved_while_closed(self):
+        folder=self.pickup_folder()
+        (folder/'first.csv').write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        first=self.service.store.pickup_queue()[0]['id']
+        (folder/'second.csv').write_text(CSV.replace('Card One','Second card'))
+        restarted=StationService(core)
+        with patch.object(core,'upload_to_square') as upload,patch.object(restarted,'labels') as labels:
+            restarted.poll_exports();restarted.poll_exports()
+            self.assertEqual(len(restarted.store.pickup_queue()),2)
+            self.assertEqual(restarted.store.pickup_queue()[0]['id'],first)
+            opened=restarted.acknowledge_pickup(first)
+            self.assertFalse(opened['pickup_pending'])
+            self.assertEqual(restarted.acknowledge_pickup(first)['revision'],opened['revision'])
+            self.assertEqual(len(restarted.store.pickup_queue()),1)
+            self.assertEqual(len(restarted.store.summaries()),2)
+            upload.assert_not_called();labels.assert_not_called()
+
+    def test_pickup_duplicate_reexports_do_not_queue_completed_or_deleted_batches(self):
+        folder=self.pickup_folder()
+        (folder/'first.csv').write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        r=self.service.acknowledge_pickup(self.service.store.pickup_queue()[0]['id'])
+        for name in ['renamed.csv','browser download (1).csv']:
+            (folder/name).write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(self.service.store.pickup_queue(),[])
+        self.assertEqual(len(self.service.store.summaries()),1)
+        self.service.delete_receipt(r['id'],r['revision'])
+        (folder/'another.csv').write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(self.service.store.pickup_queue(),[])
+        self.assertEqual(self.service.store.summaries(),[])
+
+    def test_pickup_bad_file_isolated_corrected_and_retried(self):
+        folder=self.pickup_folder()
+        (folder/'bad.csv').write_text('Wrong,Header\nnot,a card\n')
+        (folder/'good.csv').write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),1)
+        self.assertEqual(self.service.watch_status['state'],'error')
+        (folder/'bad.csv').write_text(CSV.replace('Card One','Corrected card'))
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),2)
+        self.assertEqual(self.service.watch_status['state'],'watching')
+
+    def test_pickup_retries_locked_file_without_blocking_other_exports(self):
+        folder=self.pickup_folder()
+        locked=folder/'locked.csv';locked.write_text(CSV)
+        (folder/'good.csv').write_text(CSV.replace('Card One','Readable card'))
+        self.service.poll_exports()
+        read=Path.read_text
+        def sometimes_locked(path,*args,**kwargs):
+            if path==locked:raise PermissionError('locked by downloader')
+            return read(path,*args,**kwargs)
+        with patch.object(Path,'read_text',sometimes_locked):self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),1)
+        self.assertEqual(self.service.watch_status['state'],'error')
+        self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),2)
+        self.assertEqual(self.service.watch_status['state'],'watching')
+
+    def test_switching_pickup_folder_baselines_old_files_and_retains_waiting_batches(self):
+        folder=self.pickup_folder();(folder/'first.csv').write_text(CSV)
+        self.service.poll_exports();self.service.poll_exports()
+        other=self.root/'other';other.mkdir()
+        (other/'old.csv').write_text(CSV.replace('Card One','Historical card'))
+        self.service.save_preferences({'watchFolder':str(other)})
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),1)
+        self.service.save_preferences({'watchFolder':''})
+        (other/'new.csv').write_text(CSV.replace('Card One','Disabled card'))
+        self.service.poll_exports();self.service.poll_exports()
+        self.assertEqual(len(self.service.store.pickup_queue()),1)
+        self.assertEqual(self.service.watch_status['state'],'off')
+
     def test_application_import_does_not_require_cryptography(self):
         import subprocess,sys
         script = """import sys,importlib.abc
@@ -333,6 +456,26 @@ class AdminHTTPTests(unittest.TestCase):
         for file in (self.path/'station_data').iterdir():
             if file.is_file():
                 data=file.read_bytes();self.assertNotIn(token.encode(),data);self.assertNotIn(password.encode(),data)
+
+    def test_downloads_shortcut_is_admin_only_and_saves_no_settings_until_approved(self):
+        folder=self.path/'Downloads';folder.mkdir()
+        self.assertEqual(self.post('/api/admin/downloads-folder',{}).status_code,403)
+        self.post('/api/auth/setup',{'password':'Only-test-password-246!'})
+        with patch.object(self.server.station,'downloads_folder',return_value=str(folder)):
+            result=self.post('/api/admin/downloads-folder',{})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['folder'],str(folder))
+        self.assertEqual(self.server.station.preferences()['watchFolder'],'')
+
+    def test_pickup_queue_is_visible_and_acknowledged_without_stock_changes(self):
+        r=self.server.station.import_csv(CSV,'export.csv','labels',intake_source='folder')['receipt']
+        self.assertEqual(self.client.get(self.base+'/api/receipts').json()['pickupQueue'][0]['id'],r['id'])
+        with patch.object(core,'upload_to_square') as upload:
+            result=self.post('/api/receipts/'+r['id']+'/pickup-opened',{})
+            self.assertEqual(result.status_code,200)
+            self.assertFalse(result.json()['receipt']['pickup_pending'])
+            self.assertEqual(self.client.get(self.base+'/api/receipts').json()['pickupQueue'],[])
+            upload.assert_not_called()
 
     def test_admin_location_check_requires_login_and_never_echoes_token(self):
         self.assertEqual(self.post('/api/admin/locations',{}).status_code,403)
