@@ -1,90 +1,117 @@
-# Roca Sifter → Square and 2 × 1 inch labels
+# Roca Station 2
 
-The updated `roca_to_square.py` adds the CSV quantity to Square inventory after creating catalog variations. It uses the real variation IDs returned by Square, sets `IN_STOCK` at the receiving location, and enables inventory tracking. Selling that catalog variation through Square POS at the same location lets Square reduce its stock. A custom amount sale does not identify the variation and cannot reduce that card's inventory.
+A local receiving workspace for Roca Sifter exports, Square inventory, trade-in offers, and Zebra 2″ × 1″ labels.
 
-## Install and run
+![Roca Station trade-in workspace](docs/screenshots/workspace.png)
 
-Requires Python 3.9+:
+## Start on Windows
+
+1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
+2. Install Python 3.10 or newer if needed.
+3. Run **Install dependencies.cmd** once, including when upgrading from version 1.
+4. Run **Start Roca.cmd**. The launcher opens Google Chrome and displays **2.0.0**. If an older station owns the port, close its Python/console window first. Edge is never launched as a fallback.
+5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
+6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
+7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
+
+Python command-line equivalent:
 
 ```sh
-python -m pip install requests reportlab
-python roca_to_square.py --csv cards.csv --dry-run
-python roca_to_square.py --csv cards.csv --dry-run --label-layout fold --dpi 203
+python -m pip install -r requirements.txt
+python roca_to_square.py
 ```
 
-Print PDFs at **Actual size / 100%**, on 2 inch wide × 1 inch high stock, without fit-to-page scaling. Alternatively send the generated ZPL as raw data to a compatible Zebra printer. Your Zebra ZD411D is a direct thermal printer available in 203 or 300 DPI versions. The default is 203 DPI; check the printer configuration label and select `--dpi 300` for a 300 DPI unit. Use direct thermal label stock. Physical scan reliability also depends on printer calibration, darkness/speed, media and the scanner; test one printed label before printing a batch.
+The app serves only the local computer at `127.0.0.1`. A responsive layout supports smaller browser windows, but this release does not expose a network server for other devices.
 
-The standard label has the card name, price, then barcode. Long names are shortened to fit. Labels use a 12-digit Code 128 value as the Square SKU, with wide narrow bars and blank quiet zones. The old longer barcode was difficult to fit. This changes barcode values for new imports: **do not use these new labels for previously uploaded items without reconciling their Square SKUs**. The hash conversion is deterministic, and duplicate resulting SKUs are rejected within an upload and checked against Square.
+## Four workflows, one receipt
 
-The optional `fold` layout folds across the middle of the 1 inch height, producing two 2 inch × 0.5 inch faces. Place the barcode half flat on the back of a sleeve/toploader; fold the name/price half over its top edge to face the front. The front text is rotated so it reads upright after folding. Keep the barcode and its blank margins flat, away from the edge. Apply labels to protective sleeves, not directly to collectible cards. Thick holders consume fold space; printer model and holder dimensions are needed for final physical tuning. No fold guide is printed through the barcode.
+| Workflow | What it does | Inventory behavior |
+| --- | --- | --- |
+| **Bulk scan / sift** | Imports all bins, applies a value threshold, and identifies what deserves further processing | Never receives stock. Move the same receipt to the next workflow. |
+| **Walk-in trade-ins** | Reviews card details and calculates adjustable cash/store-credit offers; records the agreed buy and a printable acceptance record | Acceptance is recorded before receiving or retail labeling. Payment/credit issuance happens outside this app. |
+| **Price & label** | Reviews final prices and produces side-fold QR, standard, or top-fold labels | Choose **New incoming copies** to receive stock, or **Already in inventory** for labels without adding copies. |
+| **Online preparation** | Prepares a listing review CSV and a storage ticket for an online bin or a display case | **Receive & prepare** receives new stock first. **Prepare only** creates files without changing stock. Nothing is published online. |
 
-## Square upload
+Switching navigation tabs opens that workflow. Use **Move receipt to…** to continue the same physical receipt in another workflow. Moving it does not receive it again. A received receipt is safe to reopen and reprint.
 
-Set `SQUARE_ACCESS_TOKEN` securely in your own machine's environment. The token needs access to locations, catalog read/write, and inventory write for the selected merchant. No live Square calls have been made during this change.
+**Activity & orders** records receipt history and manual online-order pull tasks. A task includes an order reference, card details, quantity, and physical storage location. Staff explicitly confirm removal from the display or bin. Task confirmation does not change stock; live marketplace sale synchronization is not connected.
+
+## Reviewing cards
+
+- Open a card’s editor to correct name, set, collector number, language, condition, finish/treatment, quantity, price, or storage location.
+- Finish is a free-text field with optional suggestions, not a fixed list. Future/custom treatments are supported.
+- Changing identity or treatment clears the review confirmation and a legacy SKU override in the editor. Confirm the price for the corrected variant; no live market-price lookup is connected.
+- **Split one copy** separates one card from a quantity so it can receive a different condition or treatment. The total incoming quantity is preserved by the UI.
+- Confirm each card, or explicitly confirm that all included cards have been physically reviewed.
+- Search and review filters operate across the entire receipt. The table renders 40 rows per page; an 11,000-row import was exercised in the browser.
+- After accepting a buy or receiving stock, card identity/quantity/price are locked. Notes and storage assignments can still be updated. Handle post-receiving stock corrections in Square and record a separate correction workflow rather than rewriting a committed receipt.
+
+Cash and store-credit percentages are configurable defaults, not recommended buying rates. Offers use included quantities and proposed retail prices. Accepted buys are saved separately from inventory receiving, and include an acceptance PDF. They do not transfer money, issue store credit, or create a legal customer signature.
+
+## Password-protected Admin
+
+![Locked admin settings](docs/screenshots/admin.png)
+
+Admin protects the Square credential, environment/location, watched folder, and workflow defaults. Operators can use the saved connection without entering or seeing the token. A blank token field keeps the saved credential. Saving a changed Square connection validates its active location before accepting it.
+
+Passwords are stored as salted PBKDF2 hashes; sessions use HttpOnly/SameSite cookies, expire, and are revoked on password change. Closing the Admin dialog locks it. Login attempts are rate limited. The old unprotected settings/write routes are retired, and public settings never contain the token or password hash.
+
+Credentials are encrypted locally: Windows uses the current Windows user’s DPAPI; other supported development hosts use a local Fernet key with restricted files. This protects the application boundary and local credential files; it is not an operating-system account isolation system. Keep the workstation account and `station_data` private. There is no browser password-reset bypass.
+
+An old `roca_settings.json` token is migrated into the vault on startup and removed from that settings file only after the encrypted credential is readable. Existing backup copies of older settings are outside this migration.
+
+## Automatic Roca export pickup
+
+In Admin, enter an existing export folder on the station computer and choose its default workflow. Leave it blank for manual imports.
+
+The watcher checks CSVs for unchanged size/mtime before reading and checks again after reading. Imported files become **unreviewed drafts**; they never accept buys, print, or receive stock automatically. An invalid file is reported without preventing valid files from being picked up. Saving a corrected file allows it to be examined again.
+
+Identical CSV content, including a renamed copy, opens its existing receipt. Manual intake offers a deliberate **new delivery** override for genuinely additional physical stock. Filename changes alone do not make a new delivery. Corrected or cumulative exports may have different content and cannot be reliably identified as the same physical receipt without stable Roca scan identifiers. Review them for overlap before approval; do not blindly receive re-exports. The watcher does not modify Roca files or control Roca’s mechanical bins.
+
+## Square receiving and duplicate cards
+
+New card identifiers are independent of CSV row order and price. They include card name, collector number, condition, finish, language and set. Supply consistent set data to keep editions separate. Common condition/non-foil aliases are normalized; different variants stay separate.
+
+Repeated matching CSV rows are grouped for the inventory request. A matching Square SKU receives an additive adjustment from `NONE` to `IN_STOCK`, not an absolute count: 4 existing + 2 incoming = 6, absent intervening sales. Existing prices are preserved, and a mismatch between the CSV label price and Square price stops preflight. Multiple Square variations sharing a SKU also stop preflight.
+
+Each receipt has one receiving operation. Repeating **Receive** after success is a no-op. The local SQLite journal stores outgoing payloads and Square idempotency keys before sending; retries use the saved payload, including timestamps, and reuse confirmed responses. This covers tested restarts and lost-response cases. A preflight error before any catalog/inventory write leaves the receipt editable; ambiguous or partial writes lock it for a saved retry. Restore the original environment/location before retrying. Do not create a new receipt as a workaround. Very old pending requests, manual Square changes during a pending operation, or persistent Square errors require merchant-side reconciliation; do not assume stock is correct until Square confirms it.
+
+Square catalog and inventory are separate API operations. The app reports partial failures. When the item variation is sold through Square POS at the receiving location, Square’s inventory behavior applies; a custom-amount sale cannot identify the card. Validate your real POS/location/variation-tracking configuration before rolling out shared stock.
+
+**Version 1 stock:** older releases generated row-dependent SKUs. Add the existing **12-digit Square SKU** in a `Square SKU` or `SKU` CSV column to preserve that original item/label and add copies to it. Do not silently remap existing items by card name. No migration of live Square items was performed.
+
+## Zebra labels
+
+Side fold is the default: card name, set/number, condition, finish, and price on the left; QR code on the right. Fold vertically down the center of the 2-inch width, with the QR half flat on the sleeve’s back. Apply adhesive to a sleeve/toploader, not a collectible card. Long text is shortened to fit the physical label.
+
+- Stock is **2 inches wide × 1 inch high**; print PDFs at **Actual size / 100%**, with no fit-to-page scaling.
+- Choose the actual ZD411D resolution: 203 or 300 DPI.
+- QR contains the same 12-digit SKU used in Square. It requires a QR-capable scanner and a tested Square lookup workflow; a 1D laser scanner cannot read it.
+- Standard and top-fold layouts retain linear Code 128.
+- PDFs and raw ZPL are written to `outputs/` with unique names and linked in the receipt. Reprinting does not receive inventory.
+- ZPL is a download for a configured raw-print workflow; this release does not submit jobs directly to a USB/wireless printer. The printer stays connected by USB unless separately configured with supported networking.
+
+PDF barcode/QR decoding was tested at both supported resolutions. Actual Zebra output, media calibration, scanner compatibility, and a real Square sale still need a store acceptance test.
+
+## Online preparation boundaries
+
+The CSV is a **generic listing review sheet**, with SKU, identity, variant, quantity, price, channel and storage location. It is not guaranteed to match TCGplayer/eBay’s native import schema. Listings must be published through a verified seller workflow. Marketplace APIs, automatic delisting, live price feeds, and automatic order notifications are not implemented in this release. Physical bins are configured in Roca; this app records where the approved cards are stored.
+
+## Upgrading, files and backups
+
+Close the old station before updating. Copy your old `roca_settings.json` into the new folder before the first version-2 launch if you want its token migrated. For subsequent version-2 updates, preserve the entire **station_data/** directory and **outputs/** while the station is closed. Do not replace them with empty directories from a clean installation. A Windows credential must be opened by the same Windows user; otherwise save a replacement token through Admin.
+
+`station_data/` holds receipts, operations, preferences, password hashes, and encrypted credentials. It is excluded from Git, along with old settings, Python caches and generated outputs. Back up the complete directory while the app is closed, keep backups private, and restore to the same workstation/user or re-enter the token. Deleting it loses receipt history and duplicate protection.
+
+## Validation and development
 
 ```sh
-python roca_to_square.py --csv cards.csv --sandbox --square-location YOUR_SANDBOX_LOCATION_ID
-```
-
-Omit `--sandbox` only when ready to write production inventory. One active location is automatically selected; multiple locations require `--square-location` or `SQUARE_LOCATION_ID`.
-
-Matching Square SKUs now receive **additional incoming stock**, using inventory adjustments from `NONE` to `IN_STOCK`, rather than setting an absolute count. Repeated matching rows in a CSV are combined for the inventory request; every incoming copy still gets its own label. New SKUs are stable across row order and price changes, based on name, card number, condition, finish, language and set when supplied. Include a `Set Code`, `Set`, `Set Name` or `Expansion` column to distinguish editions; missing edition data cannot distinguish otherwise identical editions. Common condition abbreviations and non-foil aliases are normalized. Multiple Square variations with the same SKU or conflicting incoming prices stop the import for correction.
-
-Existing Square prices are preserved. If the incoming label price differs from the existing Square price, the import stops before stock adjustments so you can correct the CSV or Square price. Existing variations with tracking disabled are updated to enable it while preserving catalog fields and version. Upload status counts distinct variations created/matched separately from units added.
-
-**Each upload adds the incoming quantity again.** Upload only newly received copies. Do not resend a completed CSV as a stock refresh. If an operation times out or partially succeeds, inspect catalog and stock in Square before resubmitting; this version does not persist retry state across runs. Concurrent import of the same new SKU is not supported.
-
-### Cards uploaded by older releases
-
-Earlier releases generated SKUs using row sequence. Their stock is not automatically migrated or merged by card name, since that could combine different editions. For those cards, add a `Square SKU` (or `SKU`) column to the incoming CSV with the **existing 12-digit SKU from Square**. That overrides automatic generation, preserves the label code, and adds copies to that existing variation. Use that same SKU on future receipts of those cards. Without this one-time mapping, the stable SKU generated by this release may create a new variation instead of matching a legacy one. Other manually entered Square SKUs outside the app's 12-digit format require separate reconciliation. No live migration was performed.
-
-## Desktop interface — release 1.2.0
-
-Download the current GitHub ZIP and **extract it into a new folder**. Updating GitHub does not update Python files already downloaded on your computer. Close all older Roca/Python station windows first, then:
-
-1. Run `Install dependencies.cmd` once on Windows.
-2. Run `Start Roca.cmd` from the extracted folder (or double-click the new `roca_to_square.py`).
-3. Verify the browser shows **Release 1.2.1 • Chrome launcher • compact 12-digit barcodes**.
-4. Choose your CSV, printer DPI and standard/fold-over layout, then select **Create labels only** for a test print.
-5. Open the newly generated PDF from the Result area. Old PDFs are not updated. Generated files are kept under `outputs/` with unique names.
-6. To upload inventory, enter the Square token, select **Production** for a real store (or Sandbox for a sandbox token), and click **Load Square locations — connection test**. Select the receiving store from the returned active locations, verify it is your store, then select the confirmation checkbox and click **Create labels + upload inventory**. The connection test only reads locations; it does not create items or change stock.
-
-The complete `roca_square_label_app.html` is now included and uses the Python backend for both parsing and label generation. Keep it beside the Python script. The interface shows the exact 12-digit barcode/Square SKU and reports partial inventory errors. Square uploads include the SKU only, with **no GTIN or UPC field**.
-
-Chrome is found through PATH, standard install folders and Windows App Paths registration. If Chrome is missing, the station prints instructions and stays available for opening manually in Chrome; it never opens Edge or the system default browser. The launcher binds its port before opening Chrome, and stops with an explicit message if an older station is using the port. Check the console for its version and script path if you may have multiple downloaded copies.
-
-New settings are saved in `roca_settings.json`: `labelLayout` (`standard` or `fold`), `printerDpi` (203 or 300), `squareLocationId`, and `squareEnvironment` (`sandbox` or `production`). The Square token is stored locally in that file; keep it private. Settings, generated outputs and Python caches are excluded from Git.
-
-## Validation
-
-Twenty-four automated tests exercise mocked Square calls (no real merchant writes) and decode generated PDF barcodes at both supported resolutions. To run the tests, install `requests reportlab pymupdf pillow zxing-cpp pypdf` and run:
-
-```sh
+python -m pip install -r requirements-dev.txt
 python -m unittest discover -v
+python -m playwright install chromium
+python browser_smoke.py
 ```
 
-The browser API was exercised from CSV ingestion through PDF/ZPL downloads, with Square uploads disabled. Chrome detection, prevention of Edge fallback, busy-port handling, PDF page sizes and copy counts were verified. ZPL payloads were checked but have not been physically printed or decoded from a printer. Live Square stock decrement on sale remains to be verified with a sandbox sale or a controlled real-world test.
+The browser test uses an isolated temporary database, fictional receipt data, and no live merchant credentials. It exercises trade-in editing, arbitrary finish text, review/acceptance, labels, tab transfer, display-case preparation, downloads, admin setup/save/lock, pull tasks, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
-## Troubleshooting Square location errors
-
-The app includes a read-only location lookup and a store dropdown. A saved location that is not returned as active by the selected token/environment stops the upload before catalog writes. This means the location belongs to another environment or merchant, was entered incorrectly, or is inactive. Use the location dropdown rather than entering a merchant ID, application ID, store name or address. Whitespace around CLI location IDs is ignored.
-
-Close the old station, extract the updated GitHub ZIP and verify Release 1.2.1. Enter the token locally, choose the environment and click **Load Square locations**. If one active location is found, it is selected for you; verify the store before uploading. If several are found, choose the receiving store. A token or environment change requires another lookup. A stale stored location is reported and replaced only through the displayed selection. Connection testing saves the current local settings, without sending the token back in its response or putting it in Git.
-
-HTTP 401 means Square rejected the token in that environment; use the matching Production/Sandbox token and check whether it has expired or been revoked. HTTP 403 means location lookup is forbidden; check merchant authorization and MERCHANT_PROFILE_READ permission. A successful connection with no active locations requires checking/activating a location in Square Dashboard. Catalog and inventory permissions are checked by their respective upload operations; successfully listing locations alone does not prove write permission.
-
-## Side-fold labels
-
-Release 1.1.2 adds **Side fold: info left, QR code right (2D scanner)** to the layout menu, also available as `--label-layout side`. On a 2 inch wide × 1 inch high label, fold vertically down the middle of its 2 inch width. The left 1 inch square shows the card name (up to three lines), number, condition and price on the front. The right 1 inch square shows a QR code on the back. Put the fold over the side edge of the sleeve, keeping the QR code and its white border flat. The center gutter is left blank rather than printing a fold line.
-
-A QR code is used because the existing 12-digit Code 128 cannot fit in a 1 inch square at the selected two/three-dot narrow bar width, even rotated. QR contains the **same SKU**; no Square catalog change or reimport is needed just to select this layout. A QR-capable 2D scanner configured to send the plain SKU into Square is required; 1D laser scanners cannot read it. Verify one physical print with your actual scanner/POS workflow before producing a batch. This does not imply that Square's camera or every Square scanner accepts QR inventory codes. Standard and top-fold linear layouts remain available.
-
-See `examples/side.pdf`, `examples/side.zpl` and `examples/side.png` for a sample. PDF codes were decoded in software at 203 and 300 DPI. ZPL output and physical folding/scan behavior still need a printer test. Print at Actual size / 100%.
-
-## Release 1.2.0 duplicate inventory support
-
-For example, an existing variation with 4 copies and an incoming quantity of 2 receives an adjustment of +2, resulting in 6 copies (absent intervening sales). Different conditions, finishes, languages or sets keep separate generated SKUs. The 22 tests cover new items, matching existing variations, duplicate rows, stable identifiers, legacy SKU overrides, price mismatch prevention, tracking activation, location validation and all label layouts. Square tests use mocked responses; live merchant stock has not been changed or verified here.
-
-## Release 1.2.1: QR side fold is the default
-
-The default is now card information and price on the left and QR on the right. Existing saved standard/top-fold preferences are switched to side fold once on upgrade. After saving, explicit layout choices remain available. Both the CLI and direct PDF/ZPL generation default to side fold. Close the old station and verify Release 1.2.1, then generate fresh labels using **Create labels only** to avoid adding stock again. Old PDF/ZPL files are not reformatted. A 2D scanner is required for QR.
+The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish Windows DPAPI behavior, physical printing, or a live merchant integration on your store machine.

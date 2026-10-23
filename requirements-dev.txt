@@ -1,0 +1,6 @@
+-r requirements.txt
+pillow
+pypdf
+pymupdf
+zxing-cpp
+playwright

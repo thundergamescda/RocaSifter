@@ -127,45 +127,34 @@ class DesktopTests(unittest.TestCase):
             app.launch_desktop_station()
             self.assertEqual(launch.call_args.args[0][0], 'C:/Custom/Chrome/chrome.exe')
 
-    def test_full_browser_api_csv_to_decodable_labels_without_square_write(self):
+    def test_full_browser_api_csv_to_labels_without_square_write(self):
         import threading
         import requests
         from pypdf import PdfReader
         import io
         with tempfile.TemporaryDirectory() as directory, patch.object(app, 'OUTPUT_DIR', directory), patch.object(app, 'SETTINGS_FILE', str(Path(directory)/'settings.json')):
             server = app.HTTPServer(('127.0.0.1', 0), app.RocaStationHandler)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            base = f'http://127.0.0.1:{server.server_port}'
-            client = requests.Session()
-            client.trust_env = False
+            thread = threading.Thread(target=server.serve_forever, daemon=True);thread.start()
+            base=f'http://127.0.0.1:{server.server_port}'
+            client=requests.Session();client.trust_env=False
             try:
-                page = client.get(base+'/')
-                self.assertEqual(page.status_code, 200)
-                self.assertIn('Create labels only', page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'], '1.2.1')
-                config = {'labelLayout':'fold', 'printerDpi':203}
-                parsed = client.post(base+'/api/import', json={'settings':config,'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n'}).json()
-                self.assertEqual(len(parsed['barcodes'][0]), 12)
-                with patch.object(app, 'upload_to_square') as upload:
-                    result = client.post(base+'/api/process',json={'cards':parsed['cards'],'settings':config,'uploadToSquare':False})
-                    self.assertEqual(result.status_code, 200, result.text)
+                page=client.get(base+'/')
+                self.assertEqual(page.status_code,200)
+                self.assertIn('Roca Station',page.text)
+                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.0.0')
+                receipt=client.post(base+'/api/import',json={'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n','fileName':'test.csv','mode':'labels'}).json()['receipt']
+                receipt['cards'][0]['reviewed']=True
+                receipt=client.post(base+'/api/receipts/'+receipt['id'],json=receipt).json()['receipt']
+                with patch.object(app,'upload_to_square') as upload:
+                    result=client.post(base+'/api/receipts/'+receipt['id']+'/labels',json={})
+                    self.assertEqual(result.status_code,200,result.text)
                     upload.assert_not_called()
-                data = result.json()
-                self.assertEqual(data['version'], '1.2.1')
-                self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+data['pdfUrl']).content)).pages),2)
-                zpl = client.get(base+data['zplUrl']).text
-                self.assertIn('^FD>;'+parsed['barcodes'][0], zpl)
-                rejected = client.post(base+'/api/process',json={'cards':parsed['cards'],'settings':config,'uploadToSquare':True})
-                self.assertEqual(rejected.status_code, 400)
-                self.assertIn('token', rejected.json()['errors'][0])
-                cross_origin = client.get(base+'/api/settings', headers={'Origin':'https://example.com'})
-                self.assertEqual(cross_origin.status_code,403)
+                pdf=result.json()['receipt']['files']['pdf']
+                self.assertEqual(len(PdfReader(io.BytesIO(client.get(base+'/files/'+pdf).content)).pages),2)
+                self.assertNotIn('squareToken',client.get(base+'/api/settings').text)
+                self.assertEqual(client.get(base+'/api/settings',headers={'Origin':'https://example.com'}).status_code,403)
             finally:
-                client.close()
-                server.shutdown()
-                server.server_close()
-                thread.join()
+                client.close();server.shutdown();server.server_close();thread.join()
 
 class LocationTests(unittest.TestCase):
     def test_wrong_location_reports_actual_options_and_prevents_writes(self):
@@ -198,27 +187,17 @@ class LocationTests(unittest.TestCase):
             app.square_locations('fake','sandbox')
         self.assertEqual(get.call_args.args[0],'https://connect.squareupsandbox.com/v2/locations')
 
-    def test_location_api_reads_without_writing_or_echoing_token(self):
-        import threading
-        import requests
-        server = app.HTTPServer(('127.0.0.1',0), app.RocaStationHandler)
-        thread = threading.Thread(target=server.serve_forever,daemon=True)
-        thread.start()
-        client = requests.Session()
-        client.trust_env = False
-        try:
-            with patch.object(app,'square_locations',return_value=[{'id':'a','name':'Shop','status':'ACTIVE','currency':'USD'}]) as lookup, patch.object(app,'upload_to_square') as upload:
-                result = client.post(f'http://127.0.0.1:{server.server_port}/api/square/locations',json={'settings':{'squareToken':'FAKE_TEST_TOKEN','squareEnvironment':'production'}})
-                self.assertEqual(result.status_code,200)
-                self.assertEqual(result.json()['locations'][0]['name'],'Shop')
-                self.assertNotIn('FAKE_TEST_TOKEN', result.text)
-                lookup.assert_called_once_with('FAKE_TEST_TOKEN','production')
-                upload.assert_not_called()
-        finally:
-            client.close()
-            server.shutdown()
-            server.server_close()
-            thread.join()
+    def test_old_unguarded_location_api_is_retired(self):
+        import threading,requests
+        with tempfile.TemporaryDirectory() as d,patch.object(app,'SETTINGS_FILE',str(Path(d)/'settings.json')):
+            server=app.HTTPServer(('127.0.0.1',0),app.RocaStationHandler)
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            client=requests.Session();client.trust_env=False
+            try:
+                result=client.post(f'http://127.0.0.1:{server.server_port}/api/square/locations',json={})
+                self.assertEqual(result.status_code,410)
+            finally:
+                client.close();server.shutdown();server.server_close();thread.join()
 
 class DuplicateTests(unittest.TestCase):
     def test_csv_sku_is_stable_and_duplicates_keep_label_quantities(self):

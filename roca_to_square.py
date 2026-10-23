@@ -1,17 +1,8 @@
 """
-Roca Sifter to Square POS & Zebra Label Desktop Launcher
---------------------------------------------------------
-Double-clicking this file launches the Drag-and-Drop Station window on your
-desktop and powers 1-click automatic Square POS API uploads and Zebra 2"x1"
-thermal label printing in the background.
-
-Key Features:
-- Parses Roca Scan & Identify CSV exports
-- Filters for Bin 1 line items ($0.70+ sift criteria)
-- Rounds pricing to the nearest $0.25 increment ($0.70 -> $0.75, $0.88 -> $1.00, $1.45 -> $1.50)
-- Generates standardized Code 128 barcodes matching Square SKUs
-- Uploads items & variations to Square Catalog API (/v2/catalog/batch-upsert)
-- Generates 2" x 1" thermal label PDFs (ReportLab) and direct Zebra ZPL files
+Roca Station 2: local receiving, review, trade-in offers, Square and Zebra labels.
+Run with no arguments to open the Chrome desktop workspace. Keep the complete
+application folder together and install requirements.txt before first launch.
+The command-line CSV/label workflow remains available for existing operators.
 """
 
 import os
@@ -29,7 +20,7 @@ import platform
 import shutil
 import tempfile
 from urllib.parse import urlsplit, unquote, quote
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer as HTTPServer
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any, Callable
 
@@ -52,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "1.2.1"
+APP_VERSION = "2.0.0"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 
@@ -112,7 +103,9 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
 
     with open(file_path, mode="r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        headers = {col.strip().lower(): col for col in reader.fieldnames or []}
+        headers = {col.strip().lower(): col for col in reader.fieldnames or [] if col}
+        if not ({"card name", "name"} & set(headers)):
+            raise ValueError("The CSV needs a Card Name or Name column.")
 
         def get_col(row, *aliases):
             for alias in aliases:
@@ -142,10 +135,14 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
             try:
                 qty = int(qty_str)
             except ValueError:
-                qty = 1
+                raise ValueError(f"Invalid quantity on CSV row {reader.line_num}.") from None
+            if qty <= 0:
+                raise ValueError(f"Quantity must be positive on CSV row {reader.line_num}.")
+            if not card_name:
+                continue
 
             bin_clean = bin_val.lower().replace("bin", "").strip()
-            is_target_bin = (bin_clean == target_bin.lower()) or (target_bin.lower() in bin_clean) or (bin_val == "1")
+            is_target_bin = target_bin == "*" or bin_clean == target_bin.lower().replace("bin", "").strip()
 
             if is_target_bin or (raw_price >= min_price and not bin_val):
                 rounded_price = round_to_nearest_quarter(raw_price)
@@ -217,12 +214,18 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
                     if n == 2 and len(lines) > 3:
                         line = line[:-3] + "..."
                     c.drawString(5, height - 11 - n * 9, line)
-                details = f"#{item.get('card_num') or item.get('cardNum') or ''} {item.get('condition') or ''}"
+                details = [f"{item.get('card_set') or ''} #{item.get('card_num') or item.get('cardNum') or ''}",
+                           str(item.get('condition') or ''), str(item.get('printing') or '')]
                 c.setFont("Helvetica", 6)
-                for n, line in enumerate(simpleSplit(details, "Helvetica", 6, left_width)[:2]):
-                    c.drawString(5, 32 - n * 7, line)
+                for n, line in enumerate(details):
+                    fitted = line
+                    while c.stringWidth(fitted, "Helvetica", 6) > left_width:
+                        fitted = fitted[:-1]
+                    if fitted != line:
+                        fitted = fitted[:-3] + "..."
+                    c.drawString(5, 34 - n * 7, fitted)
                 c.setFont("Helvetica-Bold", 12)
-                c.drawString(5, 8, price)
+                c.drawString(5, 5, price)
                 widget = qr.QrCodeWidget(value, barLevel='M', barBorder=4)
                 x0, y0, x1, y1 = widget.getBounds()
                 size = min(width/2 - 8, height - 12)
@@ -289,9 +292,9 @@ def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="side"):
             name_lines = simpleSplit(name, "Helvetica-Bold", 8, 60)[:3]
             fields = "".join(f"^FO{dot(14)},{dot(10+n*25)}^A0N,{dot(22)},{dot(10)}^FH^FD{escape(line)}^FS\n"
                              for n, line in enumerate(name_lines))
-            details = f"#{item.get('card_num') or item.get('cardNum') or ''} {item.get('condition') or ''}"
-            detail_lines = simpleSplit(details, "Helvetica", 6, 60)[:2]
-            fields += "".join(f"^FO{dot(14)},{dot(105+n*19)}^A0N,{dot(16)},{dot(8)}^FH^FD{escape(line)}^FS\n"
+            detail_lines = [f"{item.get('card_set') or ''} #{item.get('card_num') or item.get('cardNum') or ''}",
+                            str(item.get('condition') or ''), str(item.get('printing') or '')]
+            fields += "".join(f"^FO{dot(14)},{dot(96+n*20)}^A0N,{dot(16)},{dot(8)}^FH^FD{escape(line[:22])}^FS\n"
                               for n, line in enumerate(detail_lines))
             qr_module = 5 if dpi == 203 else 7
             half = pw//2
@@ -299,7 +302,7 @@ def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="side"):
             qr_y = (ll-21*qr_module)//2 - dot(4)
             commands.append(
                 f"^XA\n^CI28^PW{pw}^LL{ll}^LH0,0^LS0\n" + fields +
-                f"^FO{dot(14)},{dot(154)}^A0N,{dot(34)},{dot(20)}^FD{price}^FS\n"
+                f"^FO{dot(14)},{dot(163)}^A0N,{dot(30)},{dot(19)}^FD{price}^FS\n"
                 f"^FO{qr_x},{qr_y}^BQN,2,{qr_module}^FDMA,{value}^FS\n"
                 f"^FO{half},{dot(183)}^A0N,{dot(13)},{dot(8)}^FB{half},1,0,C^FD{value}^FS\n"
                 f"^PQ{qty}^XZ\n")
@@ -387,7 +390,8 @@ def upload_to_square(
     access_token: str,
     environment: str = "production",
     log_fn: Callable[[str], None] = print,
-    location_id: str = ""
+    location_id: str = "",
+    request_log=None
 ) -> Dict[str, Any]:
     if requests is None or not access_token.strip():
         return {"uploaded_count": 0, "inventory_count": 0, "errors": ["Install requests and supply a Square access token."]}
@@ -424,9 +428,11 @@ def upload_to_square(
                 grouped[value] = dict(card, qty=int(card.get("qty", 1)))
         existing_variations = {}
         for value in grouped:
-            existing = requests.post(f"{base_url}/v2/catalog/search", headers=headers,
-                json={"object_types": ["ITEM_VARIATION"], "query": {
-                    "exact_query": {"attribute_name": "sku", "attribute_value": value}}}, timeout=30)
+            search_payload = {"object_types": ["ITEM_VARIATION"], "query": {
+                    "exact_query": {"attribute_name": "sku", "attribute_value": value}}}
+            existing = (request_log("search:" + value, f"{base_url}/v2/catalog/search", search_payload, headers)
+                        if request_log else requests.post(f"{base_url}/v2/catalog/search", headers=headers,
+                                                          json=search_payload, timeout=30))
             existing.raise_for_status()
             found = existing.json()
             if found.get("errors"):
@@ -477,8 +483,8 @@ def upload_to_square(
                     objects_payload.append(variation)
                 continue
 
-            item_id = f"#item_{uuid.uuid4().hex[:12]}"
-            var_id = f"#var_{uuid.uuid4().hex[:12]}"
+            item_id = f"#item_{c_sku}"
+            var_id = f"#var_{c_sku}"
             price_cents = int(round(c_price * 100))
             pending_inventory.append((var_id, int(item.get("qty", 1))))
 
@@ -518,7 +524,8 @@ def upload_to_square(
         try:
             mappings = {}
             if objects_payload:
-                response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+                response = (request_log(f"catalog:{i}", endpoint, payload, headers) if request_log else
+                            requests.post(endpoint, headers=headers, json=payload, timeout=30))
                 response.raise_for_status()
                 resp_json = response.json()
                 if resp_json.get("errors"):
@@ -537,9 +544,13 @@ def upload_to_square(
                     "location_id": location_id, "from_state": "NONE", "to_state": "IN_STOCK",
                     "quantity": str(qty),
                     "occurred_at": datetime.now(timezone.utc).isoformat()}})
-            stock_response = requests.post(f"{base_url}/v2/inventory/changes/batch-create",
-                headers=headers, json={"idempotency_key": str(uuid.uuid4()),
-                                     "changes": changes}, timeout=30)
+            stock_payload = {"idempotency_key": str(uuid.uuid4()), "changes": changes}
+            if request_log:
+                for change in changes:
+                    change["adjustment"]["reference_id"] = payload["idempotency_key"]
+            stock_url = f"{base_url}/v2/inventory/changes/batch-create"
+            stock_response = (request_log(f"stock:{i}", stock_url, stock_payload, headers) if request_log else
+                              requests.post(stock_url, headers=headers, json=stock_payload, timeout=30))
             stock_response.raise_for_status()
             stock_result = stock_response.json()
             if stock_result.get("errors"):
@@ -604,129 +615,8 @@ def open_file_in_os(filepath: str):
         pass
 
 
-class RocaStationHandler(BaseHTTPRequestHandler):
-    def log_message(self, format_str, *args):
-        pass
-
-    def send_json(self, data, status=200):
-        payload = json.dumps(data).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def local_request(self):
-        expected = f"127.0.0.1:{self.server.server_port}"
-        if self.headers.get("Host") != expected:
-            self.send_json({"errors": ["Use the station's 127.0.0.1 address."]}, 403)
-            return False
-        origin = self.headers.get("Origin")
-        if origin and origin != f"http://{expected}":
-            self.send_json({"errors": ["Open the interface through the Python launcher."]}, 403)
-            return False
-        return True
-
-    def do_GET(self):
-        if not self.local_request():
-            return
-        path = urlsplit(self.path).path
-        if path == "/api/version":
-            self.send_json({"version": APP_VERSION})
-            return
-        if path == "/api/settings":
-            self.send_json(load_settings())
-            return
-        if path.startswith("/files/"):
-            name = unquote(path[len("/files/"):])
-            if name != os.path.basename(name) or "/" in name or "\\" in name or not name.endswith((".pdf", ".zpl")):
-                self.send_json({"errors": ["Invalid output filename."]}, 400)
-                return
-            filename = os.path.join(OUTPUT_DIR, name)
-            content_type = "application/pdf" if name.endswith(".pdf") else "text/plain; charset=utf-8"
-        elif path == "/":
-            filename = HTML_APP_FILE
-            content_type = "text/html; charset=utf-8"
-        else:
-            self.send_json({"errors": ["Not found."]}, 404)
-            return
-        try:
-            with open(filename, "rb") as f:
-                payload = f.read()
-        except FileNotFoundError:
-            self.send_json({"errors": ["File missing. Extract the complete release ZIP, including the HTML interface."]}, 404)
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def do_POST(self):
-        if not self.local_request():
-            return
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            if not 0 < length <= 20_000_000:
-                raise ValueError("Upload must be between 1 byte and 20 MB.")
-            body = json.loads(self.rfile.read(length).decode("utf-8"))
-            if not isinstance(body, dict):
-                raise ValueError("Expected a JSON object.")
-            if self.path == "/api/settings":
-                save_settings(body)
-                self.send_json({"status": "ok"})
-                return
-            cfg = load_settings()
-            cfg.update(body.get("settings", {}))
-            if self.path == "/api/square/locations":
-                locations = square_locations(cfg.get("squareToken", ""), cfg.get("squareEnvironment", "production"))
-                self.send_json({"environment": cfg.get("squareEnvironment", "production"), "locations": locations})
-                return
-            if self.path == "/api/import":
-                # Parse in Python so the GUI and CLI share filters and SKU generation.
-                with tempfile.TemporaryDirectory() as directory:
-                    csv_path = os.path.join(directory, "scan.csv")
-                    with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                        f.write(body.get("csv", ""))
-                    cards = parse_roca_csv(csv_path, target_bin=str(cfg.get("targetBin", "1")),
-                                           min_price=float(cfg.get("minPrice", 0.70)))
-                self.send_json({"cards": cards, "barcodes": [barcode_value(card) for card in cards]})
-                return
-            if self.path != "/api/process":
-                self.send_json({"errors": ["Not found."]}, 404)
-                return
-            cards = body.get("cards", [])
-            if not cards:
-                raise ValueError("No matching cards. Choose a CSV and check the bin filter.")
-            for card in cards:
-                label_fields(card)
-            upload = bool(body.get("uploadToSquare", False))
-            token = str(cfg.get("squareToken", "")).strip()
-            if upload and not token:
-                raise ValueError("Enter a Square token before uploading, or choose Create labels only.")
-            save_settings(cfg)
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            prefix = "roca_" + datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
-            pdf_name, zpl_name = prefix + ".pdf", prefix + ".zpl"
-            pdf_path, zpl_path = os.path.join(OUTPUT_DIR, pdf_name), os.path.join(OUTPUT_DIR, zpl_name)
-            layout, dpi = cfg.get("labelLayout", "side"), int(cfg.get("printerDpi", 203))
-            generate_zebra_pdf_labels(cards, pdf_path, layout=layout, dpi=dpi)
-            generate_zebra_zpl(cards, zpl_path, layout=layout, dpi=dpi)
-            res = {"uploaded_count": 0, "inventory_count": 0, "errors": []}
-            if upload:
-                res = upload_to_square(cards, token, environment=cfg.get("squareEnvironment", "production"),
-                                       location_id=cfg.get("squareLocationId", ""))
-            self.send_json({
-                "version": APP_VERSION,
-                "status": "partial_error" if res["errors"] else "ok",
-                "errors": res["errors"], "uploaded": res["uploaded_count"],
-                "inventoryCount": res["inventory_count"],
-                "pdfPath": pdf_path, "zplPath": zpl_path,
-                "pdfUrl": "/files/" + quote(pdf_name), "zplUrl": "/files/" + quote(zpl_name)})
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as exc:
-            self.send_json({"status": "error", "errors": [str(exc)]}, 400)
+from station_server import make_handler
+RocaStationHandler = make_handler(sys.modules[__name__])
 
 
 def launch_desktop_station():
@@ -740,6 +630,9 @@ def launch_desktop_station():
     except OSError as exc:
         raise RuntimeError(f"Cannot start Roca {APP_VERSION}: port {PORT} is already in use. "
                            "Close the older Roca/Python station window and try again.") from exc
+    from station_service import StationService
+    server.station = StationService(sys.modules[__name__])
+    server.station.start_watcher()
     print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
     print(f"Station running at: {url}")
     print("Opening drag-and-drop window... (Close this window when done)")
@@ -788,6 +681,7 @@ def launch_desktop_station():
     except KeyboardInterrupt:
         print("\nShutting down station.")
     finally:
+        server.station.stop_event.set()
         server.server_close()
 
 

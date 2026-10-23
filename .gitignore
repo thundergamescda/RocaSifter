@@ -5,3 +5,5 @@ roca_settings.json
 .env
 
 outputs/
+
+station_data/

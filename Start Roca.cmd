@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo Starting Roca Label Station release 1.2.1 in Google Chrome...
+echo Starting Roca Label Station release 2.0.0 in Google Chrome...
 where py >nul 2>nul
 if errorlevel 1 goto use_python
 py -3 roca_to_square.py
