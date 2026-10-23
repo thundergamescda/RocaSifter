@@ -32,6 +32,8 @@ This is an **initial import**, not a restocking/synchronization tool. Existing S
 
 ## Existing desktop interface
 
+The desktop launcher prefers Google Chrome, including its standard Windows installation locations. If Chrome is unavailable, it opens the system default browser.
+
 The original script depends on `roca_square_label_app.html`, which was not supplied. Keep your existing HTML beside this updated Python file to use that interface. The CLI works without it. To use new options with the existing interface, retain all current fields in `roca_settings.json` and add:
 
 ```json

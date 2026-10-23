@@ -26,6 +26,7 @@ import re
 import argparse
 import subprocess
 import platform
+import shutil
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from decimal import Decimal, ROUND_HALF_UP
@@ -568,17 +569,34 @@ def launch_desktop_station():
     print(f"Station running at: {url}")
     print("Opening drag-and-drop window... (Close this window when done)")
 
-    opened_app_window = False
+    # Chrome is often installed outside PATH on Windows.
+    chrome_candidates = []
     if platform.system() == "Windows":
-        for browser_exe in ["chrome.exe", "msedge.exe"]:
+        chrome_candidates.append(shutil.which("chrome.exe"))
+        for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            directory = os.environ.get(variable)
+            if directory:
+                chrome_candidates.append(os.path.join(directory, "Google", "Chrome", "Application", "chrome.exe"))
+    elif platform.system() == "Darwin":
+        chrome_candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        ]
+    else:
+        chrome_candidates = [shutil.which("google-chrome"), shutil.which("google-chrome-stable")]
+
+    opened_app_window = False
+    for browser_exe in chrome_candidates:
+        if browser_exe and os.path.isfile(browser_exe):
             try:
                 subprocess.Popen([browser_exe, f"--app={url}", "--window-size=1150,820"])
                 opened_app_window = True
                 break
-            except Exception:
-                pass
+            except OSError:
+                continue
 
     if not opened_app_window:
+        print("Chrome was not found or could not start; opening your system default browser.")
         webbrowser.open(url)
 
     server = HTTPServer(("127.0.0.1", PORT), RocaStationHandler)
