@@ -13,10 +13,18 @@ The 23-page operator manual includes screenshots, all four workflows, admin setu
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Run **Start Roca.cmd**. The launcher opens Google Chrome and displays **2.0.1**. If an older station owns the port, close its Python/console window first. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.0.2**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Import a Roca CSV or configure automatic export pickup in Admin. Review every included card before receiving stock or printing labels.
+
+### Run in the background
+
+Closing Chrome leaves Roca and automatic export pickup running while this computer is awake and signed in. Double-click **Start Roca.vbs** again to reopen the same station. Roca does not start automatically after a reboot or Windows sign-out.
+
+To shut down, save your edits, wait for **All changes saved**, close the Roca browser window, then double-click **Stop Roca.vbs** (or **Stop Roca.cmd**) and confirm. The stop shortcut waits for active inventory work; it does not force-kill Python processes. Wait for the stopped message before backing up or updating. Startup errors appear in a dialog; details are in **station_data/station.log** (rotated automatically).
+
+When upgrading from a console-based version, close its old Roca/Python command window once, then replace the application files with this complete release. Preserve **station_data**, **outputs**, and settings; rerun the installer. If a background station is running from another folder, use **Stop Roca** from that folder first.
 
 Python command-line equivalent:
 
@@ -118,7 +126,7 @@ python browser_smoke.py
 
 The browser test uses an isolated temporary database, fictional receipt data, and no live merchant credentials. It exercises trade-in editing, arbitrary finish text, review/acceptance, labels, tab transfer, display-case preparation, downloads, admin setup/save/lock, pull tasks, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.
 
-The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish Windows DPAPI behavior, physical printing, or a live merchant integration on your store machine.
+The automated backend suite covers auth boundaries, token redaction/encryption/migration, receiving deduplication, background instance identity, reopening, graceful shutdown during receiving, saved retries across restart, duplicate cards, trade approval, folder pickup, listing sheets, and label decoding. Square interactions are mocked. Browser and API validation here do not establish native Windows launcher/DPAPI behavior, physical printing, or a live merchant integration on your store machine.
 
 ## Windows setup fix in 2.0.1
 

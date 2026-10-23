@@ -18,9 +18,10 @@ import argparse
 import subprocess
 import platform
 import shutil
+import socket
 import tempfile
 from urllib.parse import urlsplit, unquote, quote
-from http.server import ThreadingHTTPServer as HTTPServer
+from http.server import ThreadingHTTPServer
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any, Callable
 
@@ -43,8 +44,17 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.0.2"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
+
+
+class HTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # Windows SO_REUSEADDR can let two stations bind the same local port.
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.allow_reuse_address = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 # ==============================================================================
@@ -619,24 +629,7 @@ from station_server import make_handler
 RocaStationHandler = make_handler(sys.modules[__name__])
 
 
-def launch_desktop_station():
-    url = f"http://127.0.0.1:{PORT}"
-    print("=================================================================")
-    print("   Roca Sifter -> Square POS & Zebra Drag-and-Drop Station      ")
-    print("=================================================================")
-    # Bind before opening Chrome: an older running station must not serve this window.
-    try:
-        server = HTTPServer(("127.0.0.1", PORT), RocaStationHandler)
-    except OSError as exc:
-        raise RuntimeError(f"Cannot start Roca {APP_VERSION}: port {PORT} is already in use. "
-                           "Close the older Roca/Python station window and try again.") from exc
-    from station_service import StationService
-    server.station = StationService(sys.modules[__name__])
-    server.station.start_watcher()
-    print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
-    print(f"Station running at: {url}")
-    print("Opening drag-and-drop window... (Close this window when done)")
-
+def open_station_browser(url):
     # Chrome is often installed outside PATH on Windows.
     chrome_candidates = []
     if platform.system() == "Windows":
@@ -673,16 +666,63 @@ def launch_desktop_station():
             except OSError:
                 continue
 
-    if not opened_app_window:
-        print("Chrome could not be launched. Install Google Chrome, then restart the station, "
-              "or paste the station address into Chrome manually. Edge will not be opened.")
+    return opened_app_window
+
+
+def launch_desktop_station(reuse_existing=False):
+    from station_runtime import RuntimeControl, read_runtime, running_status
+    url = f"http://127.0.0.1:{PORT}"
+    # Bind before opening Chrome so another installation cannot serve this window.
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down station.")
+        server = HTTPServer(("127.0.0.1", PORT), RocaStationHandler)
+    except OSError as exc:
+        if reuse_existing:
+            # Allow a simultaneous first launch to finish initializing its runtime file.
+            import time
+            for _ in range(20):
+                record = read_runtime(sys.modules[__name__])
+                status = running_status(record) if record and record['port'] == PORT else None
+                if status:
+                    if status.get('stopping'):
+                        raise RuntimeError("Roca is stopping. Wait for it to finish before starting again.") from exc
+                    if status['version'] != APP_VERSION:
+                        raise RuntimeError("An older Roca version is running. Use Stop Roca from its folder first.") from exc
+                    if not open_station_browser(url):
+                        raise RuntimeError("Install Google Chrome, then start Roca again.") from exc
+                    return
+                time.sleep(.1)
+        raise RuntimeError(f"Cannot start Roca {APP_VERSION}: port {PORT} is already in use. "
+                           "Use Stop Roca from the running station's folder, or close the older Roca/Python "
+                           "console window, then try again.") from exc
+    control = None
+    try:
+        from station_service import StationService
+        server.station = StationService(sys.modules[__name__])
+        control = server.runtime_control = RuntimeControl(server, sys.modules[__name__])
+        server.station.start_watcher()
+        print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
+        print(f"Station running at: {url}")
+        print("Use Stop Roca to shut down. Closing Chrome leaves the station running.")
+        if not open_station_browser(url):
+            if reuse_existing:
+                raise RuntimeError("Chrome could not be launched. Install Google Chrome, then restart Roca.")
+            print("Chrome could not be launched. Install Google Chrome or paste the station address "
+                  "into Chrome manually. Edge will not be opened.")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nShutting down station.")
     finally:
-        server.station.stop_event.set()
+        if hasattr(server, 'station'):
+            server.station.stop_event.set()
+            with server.station.lock:
+                pass
+            if server.station.watcher:
+                server.station.watcher.join(timeout=5)
         server.server_close()
+        if control:
+            control.close()
+
 
 
 # ==============================================================================

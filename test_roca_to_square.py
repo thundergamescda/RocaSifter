@@ -101,6 +101,15 @@ class Tests(unittest.TestCase):
 
 
 class DesktopTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.settings_patch = patch.object(app, 'SETTINGS_FILE', str(Path(self.directory.name)/'settings.json'))
+        self.settings_patch.start()
+
+    def tearDown(self):
+        self.settings_patch.stop()
+        self.directory.cleanup()
+
     def test_busy_port_does_not_open_browser(self):
         with patch.object(app, 'HTTPServer', side_effect=OSError('in use')), patch.object(app.subprocess, 'Popen') as launch:
             with self.assertRaisesRegex(RuntimeError, 'older Roca'):
@@ -110,6 +119,7 @@ class DesktopTests(unittest.TestCase):
     def test_chrome_absent_does_not_launch_edge(self):
         from unittest.mock import MagicMock
         server = MagicMock()
+        server.server_port = 8765
         server.serve_forever.side_effect = KeyboardInterrupt
         with patch.object(app, 'HTTPServer', return_value=server), patch.object(app.platform, 'system', return_value='Linux'), patch.object(app.shutil, 'which', return_value=None), patch.object(app.subprocess, 'Popen') as launch:
             app.launch_desktop_station()
@@ -122,6 +132,7 @@ class DesktopTests(unittest.TestCase):
         registry = MagicMock()
         registry.QueryValueEx.return_value = ('C:/Custom/Chrome/chrome.exe', 1)
         server = MagicMock()
+        server.server_port = 8765
         server.serve_forever.side_effect = KeyboardInterrupt
         with patch.dict(sys.modules, {'winreg': registry}), patch.object(app, 'HTTPServer', return_value=server), patch.object(app.platform, 'system', return_value='Windows'), patch.object(app.shutil, 'which', return_value=None), patch.object(app.os.path, 'isfile', side_effect=lambda p: p == 'C:/Custom/Chrome/chrome.exe'), patch.object(app.subprocess, 'Popen') as launch:
             app.launch_desktop_station()
@@ -141,7 +152,7 @@ class DesktopTests(unittest.TestCase):
                 page=client.get(base+'/')
                 self.assertEqual(page.status_code,200)
                 self.assertIn('Roca Station',page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.0.1')
+                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.0.2')
                 receipt=client.post(base+'/api/import',json={'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n','fileName':'test.csv','mode':'labels'}).json()['receipt']
                 receipt['cards'][0]['reviewed']=True
                 receipt=client.post(base+'/api/receipts/'+receipt['id'],json=receipt).json()['receipt']

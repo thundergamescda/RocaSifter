@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo.
-echo Roca Station 2.0.1 - Windows setup
+echo Roca Station 2.0.2 - Windows setup
 echo.
 if not exist "requirements.txt" goto missing_files
 if not exist "station_store.py" goto missing_files
@@ -34,7 +34,7 @@ if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" -c "import roca_to_square; print('Roca Station', roca_to_square.APP_VERSION, 'import check passed.')"
 if errorlevel 1 goto failed
 echo.
-echo Setup complete. Close this window and run Start Roca.cmd.
+echo Setup complete. Close this window and double-click Start Roca.vbs.
 set "ROCA_INSTALL_RESULT=0"
 goto finished
 :python_required

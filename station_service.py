@@ -469,7 +469,10 @@ class StationService:
                     if (after.st_size,after.st_mtime_ns)!=(stat.st_size,stat.st_mtime_ns):
                         continue
                     try:
-                        self.import_csv(content,path.name,config['watchMode'])
+                        with self.lock:
+                            if self.stop_event.is_set():
+                                return
+                            self.import_csv(content,path.name,config['watchMode'])
                     except Exception as exc:
                         failed[str(path)]=(signature,f'{path.name}: {exc}')
                         handled.add(signature)

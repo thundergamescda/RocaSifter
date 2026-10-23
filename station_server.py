@@ -67,6 +67,9 @@ def make_handler(core):
                 path=urlsplit(self.path).path
                 if path=='/api/version':
                     return self.send_json({'version':core.APP_VERSION})
+                if path=='/api/runtime':
+                    control=getattr(self.server,'runtime_control',None)
+                    return self.send_json(control.status() if control else {'errors':['No background launcher.']},200 if control else 404)
                 if path=='/api/settings':
                     return self.send_json(self.station.public_settings())
                 if path=='/api/auth':
@@ -104,7 +107,7 @@ def make_handler(core):
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
-                self.send_json({'errors':['The local station could not read this resource. Check the station window.']},500)
+                self.send_json({'errors':['The local station could not read this resource. Check station_data/station.log.']},500)
 
         def do_POST(self):
             if not self.local_request():
@@ -118,64 +121,78 @@ def make_handler(core):
                 data=json.loads(self.rfile.read(size).decode())
                 if not isinstance(data,dict):
                     raise StationError('Expected a JSON object.')
-                service=self.station;path=self.path
-                if path=='/api/auth/setup':
-                    with service.lock:
-                        if service.auth.configured():
-                            raise StationError('Admin is already set up. Enter the existing password.')
-                        service.auth.set_password(str(data.get('password','')))
-                    token=service.auth.login(str(data['password']),self.client_address[0])
-                    return self.send_json({'status':'ok'},cookie=f'roca_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800')
-                if path=='/api/auth/login':
-                    token=service.auth.login(str(data.get('password','')),self.client_address[0])
-                    return self.send_json({'status':'ok'},cookie=f'roca_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800')
-                if path=='/api/auth/logout':
-                    service.auth.logout(self.session())
-                    return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
-                if path.startswith('/api/admin/'):
-                    if not self.admin_required():
-                        return
-                    if path=='/api/admin/settings':
-                        return self.send_json(service.save_preferences(data))
-                    if path=='/api/admin/locations':
-                        settings=service.preferences()
-                        token=data.get('squareToken','').strip() or service.vault.read()
-                        environment=data.get('squareEnvironment',settings['squareEnvironment'])
-                        locations=core.square_locations(token,environment)
-                        return self.send_json({'locations':locations,'environment':environment})
-                    if path=='/api/admin/password':
-                        # The active session is required and changing the password revokes all sessions.
-                        service.auth.set_password(str(data.get('password','')))
-                        return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
-                if path=='/api/import':
-                    return self.send_json(service.import_csv(str(data.get('csv','')),str(data.get('fileName','Roca export.csv')),
-                        str(data.get('mode','bulk')),data.get('newDelivery') is True))
-                if path.startswith('/api/receipts/'):
-                    pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
-                    if action=='save':
-                        receipt=service.save_receipt(receipt_id,data)
-                    elif action=='accept-buy':
-                        receipt=service.accept_buy(receipt_id,data.get('offerType'))
-                    elif action=='receive':
-                        receipt=service.receive(receipt_id)
-                    elif action=='labels':
-                        receipt=service.labels(receipt_id,data.get('layout'),data.get('dpi'))
-                    elif action=='prepare':
-                        receipt=service.prepare_online(receipt_id)
-                    else:
-                        raise StationError('Unknown receipt action.')
-                    return self.send_json({'receipt':receipt})
-                if path=='/api/tasks':
-                    return self.send_json({'task':service.create_task(data)})
-                if path.startswith('/api/tasks/') and path.endswith('/complete'):
-                    return self.send_json({'task':service.complete_task(path.split('/')[3])})
-                if path in ('/api/process','/api/settings','/api/square/locations'):
-                    return self.send_json({'errors':['This older interface is no longer supported. Reload the complete Roca Station 2 app.']},410)
-                return self.send_json({'errors':['Not found.']},404)
+                control=getattr(self.server,'runtime_control',None)
+                if self.path=='/api/shutdown':
+                    if not control or not control.authorized(data.get('token')):
+                        return self.send_json({'errors':['Use the Stop Roca shortcut in this application folder.']},403)
+                    control.request_stop()
+                    return self.send_json({'status':'stopping'},202)
+                if control and control.stopping.is_set():
+                    return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
+                with self.station.lock:
+                    if control and control.stopping.is_set():
+                        return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
+                    return self.dispatch_post(data)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
                 # Never echo credential handling errors or arbitrary request payloads.
                 self.send_json({'errors':['The operation could not complete. Your receipt is saved; check Activity before retrying.']},500)
+
+        def dispatch_post(self,data):
+            service=self.station;path=self.path
+            if path=='/api/auth/setup':
+                with service.lock:
+                    if service.auth.configured():
+                        raise StationError('Admin is already set up. Enter the existing password.')
+                    service.auth.set_password(str(data.get('password','')))
+                token=service.auth.login(str(data['password']),self.client_address[0])
+                return self.send_json({'status':'ok'},cookie=f'roca_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800')
+            if path=='/api/auth/login':
+                token=service.auth.login(str(data.get('password','')),self.client_address[0])
+                return self.send_json({'status':'ok'},cookie=f'roca_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800')
+            if path=='/api/auth/logout':
+                service.auth.logout(self.session())
+                return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
+            if path.startswith('/api/admin/'):
+                if not self.admin_required():
+                    return
+                if path=='/api/admin/settings':
+                    return self.send_json(service.save_preferences(data))
+                if path=='/api/admin/locations':
+                    settings=service.preferences()
+                    token=data.get('squareToken','').strip() or service.vault.read()
+                    environment=data.get('squareEnvironment',settings['squareEnvironment'])
+                    locations=core.square_locations(token,environment)
+                    return self.send_json({'locations':locations,'environment':environment})
+                if path=='/api/admin/password':
+                    # The active session is required and changing the password revokes all sessions.
+                    service.auth.set_password(str(data.get('password','')))
+                    return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
+            if path=='/api/import':
+                return self.send_json(service.import_csv(str(data.get('csv','')),str(data.get('fileName','Roca export.csv')),
+                    str(data.get('mode','bulk')),data.get('newDelivery') is True))
+            if path.startswith('/api/receipts/'):
+                pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
+                if action=='save':
+                    receipt=service.save_receipt(receipt_id,data)
+                elif action=='accept-buy':
+                    receipt=service.accept_buy(receipt_id,data.get('offerType'))
+                elif action=='receive':
+                    receipt=service.receive(receipt_id)
+                elif action=='labels':
+                    receipt=service.labels(receipt_id,data.get('layout'),data.get('dpi'))
+                elif action=='prepare':
+                    receipt=service.prepare_online(receipt_id)
+                else:
+                    raise StationError('Unknown receipt action.')
+                return self.send_json({'receipt':receipt})
+            if path=='/api/tasks':
+                return self.send_json({'task':service.create_task(data)})
+            if path.startswith('/api/tasks/') and path.endswith('/complete'):
+                return self.send_json({'task':service.complete_task(path.split('/')[3])})
+            if path in ('/api/process','/api/settings','/api/square/locations'):
+                return self.send_json({'errors':['This older interface is no longer supported. Reload the complete Roca Station 2 app.']},410)
+            return self.send_json({'errors':['Not found.']},404)
 
     return StationHandler

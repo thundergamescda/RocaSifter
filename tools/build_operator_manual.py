@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.0.1'
+VERSION='2.0.2'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -154,7 +154,7 @@ m.y=163;m.callout('One receipt follows the cards.','Use <b>Move receipt to…</b
 m.para('For Roca Station '+VERSION+' on a local Windows workstation. Screenshots use fictional training receipts. Labels, buy records and listing sheets are created only when you choose their actions.',size=9.2,leading=13,color=MUTED)
 # 03 — Daily start.
 m.new(3,'Daily quick start','Start your day.','The short version: open, import, review, choose an action, then check the result.')
-m.step(1,'Open the station.','Double-click <b>Start Roca.cmd</b> in the application folder. Keep its console window open. Check that Chrome shows version <b>'+VERSION+'</b>.')
+m.step(1,'Open the station.','Double-click <b>Start Roca.vbs</b> (or <b>Start Roca.cmd</b>). Roca runs in the background without a command window. Check Chrome shows version <b>'+VERSION+'</b>.')
 m.step(2,'Choose the job before importing.','Select <b>Bulk scan / sift</b>, <b>Walk-in trade-ins</b>, <b>Price & label</b>, or <b>Online preparation</b>.')
 m.step(3,'Export from Roca.','Click Export in Roca. Save to the watched export folder, or click <b>Import CSV</b> in the app and choose the file.')
 m.step(4,'Review the included cards.','Correct identity, set, condition, finish, quantity and price. Confirm only cards you have actually checked.')
@@ -342,17 +342,17 @@ m.table(['Where to look','What you will find'],[
 m.h2('End-of-day handoff')
 m.bullet('Save and wait for <b>All changes saved</b>. Leave useful notes and keep each stack matched to its receipt ID.')
 m.bullet('Resolve or flag any receiving errors. Tell the next operator about cards waiting for review, labels or a physical pull.')
-m.bullet('Close the browser and the station’s console window when work is finished. Folder pickup stops when the station is closed.')
+m.bullet('Closing Chrome leaves folder pickup running. To stop, save, close Chrome and run <b>Stop Roca.vbs</b>. Confirm and wait for the stopped message; active work finishes first.')
 m.h2('Backup and update')
-m.para('Close the station before backing up or updating. Preserve the entire <b>station_data</b> and <b>outputs</b> folders. Keep private backups in the store’s approved location.')
+m.para('Stop the station before backing up or updating. Preserve the entire <b>station_data</b> and <b>outputs</b> folders. Keep private backups in the store’s approved location.')
 m.para('For an update, use the complete application folder and run its installer. Keep existing data with the updated app. A token protected by Windows should be opened by the same Windows user; otherwise an admin must save a replacement.')
 m.callout('Back up the records, not just the generated labels.','Losing station_data loses receipt history and its protection against receiving a completed receipt again. Ask an admin before moving, replacing or deleting these folders.','care')
 # 20 — General troubleshooting.
 m.new(20,'Troubleshooting','If something goes wrong','Start with the symptom. Keep the saved receipt and read the message before retrying.')
 m.table(['What you see','What to do'],[
-('The app will not start','Run <b>Start Roca.cmd</b>, not an old HTML file or shortcut. Read the console message. Run the current <b>Install dependencies.cmd</b> if prompted.'),
-('An older station / port-in-use message','Close the old Roca/Python console window, then start the current folder. Check the version in the app.'),
-('An old layout or Edge opens','Verify you launched the current <b>Start Roca.cmd</b>. Confirm Chrome is installed. Open a newly generated label PDF, not an older file.'),
+('The app will not start','Run <b>Start Roca.vbs</b>. Read any error dialog and <b>station_data/station.log</b>. Run the current <b>Install dependencies.cmd</b> if prompted.'),
+('An older station / port-in-use message','Use <b>Stop Roca</b> from the running folder. For a console-based version, close its Roca/Python window. Then start the current folder.'),
+('An old layout or Edge opens','Verify you launched the current <b>Start Roca.vbs</b>. Confirm Chrome is installed. Open a newly generated label PDF, not an older file.'),
 ('A button is disabled','Include at least one card and finish review. Trade-ins need an accepted buy before retail labels or receiving. Committed cards may be locked.'),
 ('“This receipt changed in another window”','Do not keep editing both copies. Save needed notes separately, reopen the latest receipt and let one operator finish it.'),
 ('The export does not appear','Check that the station is running, the file is CSV, and the saved export folder is correct. Read the folder status; try manual import if needed.'),
@@ -387,6 +387,7 @@ for text in ['Physical copies match the included quantity.','Name, set, number, 
     y=m.y;c.setStrokeColor(MUTED);c.roundRect(M,y-10,8,8,1,stroke=1,fill=0)
     m.para(text,x=M+19,width=W-19,size=10.5,leading=14.7,space=7)
 m.para('<b>Printing:</b> 2″ × 1″ · correct DPI · Actual size / 100% · QR flat on the back of a sleeve.',size=10.3,color=TEAL)
+m.para('<b>Start:</b> Start Roca.vbs · <b>Stop:</b> Stop Roca.vbs. Closing Chrome leaves Roca running.',size=10.3,color=MUTED)
 # 23 — Fillable station profile.
 m.new(23,'Store handoff','Your store’s station profile','Fill this in with your manager. Keep credentials somewhere else.')
 fields=[('Store / team name','store_name'),('Manager or admin contact','manager_contact'),('Station computer / Windows user','station_computer'),('Roca export folder','export_folder'),('Receiving Square store name','receiving_store'),('Zebra printer name / resolution','printer_details'),('Normal cash / credit offer policy','offer_policy'),('Display / bin naming convention','storage_convention')]
