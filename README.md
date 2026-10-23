@@ -2,6 +2,10 @@
 
 A local receiving workspace for Roca Sifter exports, Square inventory, trade-in offers, and Zebra 2″ × 1″ labels.
 
+**[Operator manual — PDF](docs/Roca_Station_Operator_Manual.pdf)** · **[One-page desk reference — PDF](docs/Roca_Station_Desk_Reference.pdf)**
+
+The 23-page operator manual includes screenshots, all four workflows, admin setup, label printing, troubleshooting, and a fillable store profile.
+
 ![Roca Station trade-in workspace](docs/screenshots/workspace.png)
 
 ## Start on Windows
