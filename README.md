@@ -13,7 +13,7 @@ The 15-page operator manual starts with a one-page daily guide, then covers extr
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
 2. Install Python 3.10 or newer if needed.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.3.0**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.3.1**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Choose **Set up automatic pickup**, unlock Admin, then choose **Use Downloads folder** (or enter the actual Roca export folder) and save. Press Export in Roca; new CSVs open for review automatically. Review every included card before stock or labels.
@@ -97,6 +97,16 @@ Enter the item name, **selling / label price**, quantity and condition/grade, su
 The new item is unchecked. Verify it, Continue, then choose **Create labels only** or **Add to Square & create labels**, using the same final stock confirmation as scanned cards. In a trade-in, your entered price is the retail value: **the existing cash/store-credit percentages apply normally**. There is no separate fixed buying-price override.
 
 Adding an item never changes Square by itself. Repeated submission of the same request does not add another copy, including after a lost response or restart. Accepted purchases and received/pending-retry batches cannot accept more items; start another batch instead. Adding to an editable batch clears its old output links so labels/listing files are regenerated for the new contents. Existing exported files stay on disk.
+
+## Direct price comparisons
+
+Use **Compare prices** in **Add item** or the card editor. Select Pokémon or Magic for the current batch. The app opens four source searches: **eBay sold**, **eBay current listings**, **PriceCharting guide**, and **TCGplayer values**. Unsaved name, set, collector number, finish, language and condition/grade are included in the searches.
+
+For a slab, compare the exact grader, grade and premium tier. TCGplayer is labeled as a **raw-card reference**, rather than a slab valuation. PSA 10, BGS 10, BGS Black Label 10, CGC Gem Mint 10 and CGC Pristine 10 must not be pooled. Generic “Grade 9” guide data is not automatically identified as PSA 9.
+
+**These are direct search links, not fetched or verified prices.** Check the exact product/grade on the source site, return to the item, and enter the selling price you choose. The app does not read those pages, average their results, or overwrite a manual price. Existing buying percentages, label layouts, export pickup and inventory approvals are unchanged.
+
+Automatic import-time Pokémon repricing still requires verified data access. The offline comparison engine in `pricing_review.py` has raw and graded policies plus tests, but only its search-link helper is connected to the running app. No subscription or API feed has been activated. See [pricing implementation status](docs/PRICING_RESEARCH.md).
 
 ## Password-protected Admin
 

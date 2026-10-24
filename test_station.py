@@ -602,6 +602,21 @@ class AdminHTTPTests(unittest.TestCase):
             self.assertEqual(len(result.json()['receipt']['cards']),2)
             upload.assert_not_called()
 
+    def test_direct_price_links_do_not_fetch_prices_or_change_receipts(self):
+        before=self.server.station.store.summaries()
+        result=self.post('/api/pricing/links',{'game':'pokemon','card_name':'Charizard ex','card_set':'151',
+                                             'card_num':'006/165','condition':'PSA 10','printing':'Holofoil','language':'English'})
+        self.assertEqual(result.status_code,200,result.text)
+        data=result.json();self.assertIs(data['livePricesFetched'],False)
+        self.assertEqual(data['links']['tcgplayer_role'],'raw_card_reference')
+        self.assertIn('LH_Sold=1',data['links']['ebay_sold'])
+        self.assertNotIn('LH_Sold',data['links']['ebay_listings'])
+        self.assertIn('www.pricecharting.com',data['links']['pricecharting'])
+        self.assertEqual(self.server.station.store.summaries(),before)
+        result=self.post('/api/pricing/links',{'game':'pokemon','card_name':'CGC card','condition':'CGC 10'})
+        self.assertTrue(result.json()['gradeNeedsReview'])
+        self.assertEqual(self.post('/api/pricing/links',{'game':'pokemon','card_name':''}).status_code,400)
+
     def test_admin_location_check_requires_login_and_never_echoes_token(self):
         self.assertEqual(self.post('/api/admin/locations',{}).status_code,403)
         self.post('/api/auth/setup',{'password':'Password-test-only-246!'})

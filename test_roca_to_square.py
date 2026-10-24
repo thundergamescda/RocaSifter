@@ -152,7 +152,7 @@ class DesktopTests(unittest.TestCase):
                 page=client.get(base+'/')
                 self.assertEqual(page.status_code,200)
                 self.assertIn('Roca Station',page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.3.0')
+                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.3.1')
                 receipt=client.post(base+'/api/import',json={'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n','fileName':'test.csv','mode':'labels'}).json()['receipt']
                 receipt['cards'][0]['reviewed']=True
                 receipt=client.post(base+'/api/receipts/'+receipt['id'],json=receipt).json()['receipt']

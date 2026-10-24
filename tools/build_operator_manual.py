@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 ROOT=Path(__file__).resolve().parents[1]
 ASSETS=ROOT/'docs'/'manual-assets'
 OUTPUT=ROOT/'docs'/'Roca_Station_Operator_Manual.pdf'
-VERSION='2.3.0'
+VERSION='2.3.1'
 FONT_ROOT=Path('/usr/share/fonts/truetype/liberation')
 if FONT_ROOT.exists():
     for name,file in [('Body','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf'),('Italic','LiberationSans-Italic.ttf')]:
@@ -183,9 +183,9 @@ m.callout('For your Zebra ZD411D','Use <b>2″ wide × 1″ high</b> media, the 
 m.para('A QR-capable scanner is required. Standard and top-fold layouts use Code 128. Admin saves the normal layout/DPI; <b>More options</b> changes them for this session. PDF/ZPL files are generated; the app does not send a job directly to the printer.',size=9.9,leading=14,color=MUTED)
 # 06 — Manual items and scan corrections.
 m.new(6,'Graded cards & custom items','Manual items & corrections','Add an item without scanning, or correct a record already in the batch.')
-m.image('manual-item.png','Use your exact selling price and any condition or grade, such as PSA 10.',max_h=205)
+m.image('manual-item.png','Use your exact selling price and any condition or grade, such as PSA 10.',max_h=165)
 m.step(1,'Choose Add item.','On a blank workspace this starts a manual batch. In an unfinished batch it adds to the current cards. Enter name, selling/label price, quantity and condition/grade. More item details holds set, number, finish and language.')
-m.step(2,'Check it, then finish as usual.','Mark the new item checked, then Continue. Choose labels only or add to Square and create labels. In a trade-in, this selling price uses your <b>normal cash/store-credit percentages</b>. Manual prices keep the exact cents entered.')
+m.step(2,'Compare, check and finish.','Use <b>Compare prices</b> for direct eBay sold/current, PriceCharting and TCGplayer searches. No live prices are fetched or changed. Enter your chosen selling price, check the item and Continue. Trade-ins use the <b>normal cash/store-credit percentages</b>. Manual prices keep the exact cents entered.')
 m.h2('Correcting scans and different copies')
 m.para('Use <b>Edit</b> to correct name, set, condition, finish or price. Finish and grade accept free text. A changed variant does not fetch a new price: look it up and confirm it again. Use <b>Separate one copy</b> if just one card in a quantity has a different condition or treatment.',size=10.3)
 m.callout('Keep committed work intact','After a buy is accepted or receiving begins, item details and additions are locked. Start another batch for extra items. For standard/top-fold labels, include the grade in the item name; side-fold QR labels also show the grade separately.','care')

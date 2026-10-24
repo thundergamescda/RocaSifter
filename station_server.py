@@ -177,6 +177,18 @@ def make_handler(core):
                     str(data.get('mode','bulk')),data.get('newDelivery') is True))
             if path=='/api/manual-items':
                 return self.send_json({'receipt':service.add_manual_item(data)})
+            if path=='/api/pricing/links':
+                from pricing_review import lookup_links, grading
+                card = {key:str(data.get(key,'')).strip()[:500] for key in
+                        ('game','card_name','card_set','card_num','printing','condition','language')}
+                if not card['card_name']:
+                    raise StationError('Enter the item name before comparing prices.')
+                if card['game'] not in ('pokemon','magic'):
+                    raise StationError('Choose Pokémon or Magic for this search.')
+                tier = grading(card)
+                return self.send_json({'links':lookup_links(card), 'title':card['card_name'],
+                                       'details':' · '.join(card[k] for k in ('card_set','card_num','condition','printing','language') if card[k]),
+                                       'gradeNeedsReview':tier[0]=='?', 'livePricesFetched':False})
             if path.startswith('/api/receipts/'):
                 pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
                 if action=='save':

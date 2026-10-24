@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
 PORT = 8765
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
 
 

@@ -1,4 +1,4 @@
-"""Conservative, offline pricing review rules. Not connected to production workflows yet.
+"""Offline pricing evaluation and the app's direct source-search link helper.
 
 Sources must supply their own identity, dates, price basis and provenance. A search
 query or requested card is never evidence that a result describes that variant.
@@ -11,15 +11,16 @@ import json
 import re
 from statistics import median
 import unicodedata
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 
 
-REQUIRED_SOURCES = ('tcg_market', 'tcg_sales', 'tcg_listings', 'ebay_sold', 'ebay_listings')
+REQUIRED_SOURCES = ('tcg_market', 'tcg_sales', 'tcg_listings', 'ebay_sold', 'ebay_listings', 'pricecharting')
 SALE_SOURCES = ('tcg_sales', 'ebay_sold')
+GRADED_SOURCES = ('ebay_sold', 'ebay_listings', 'pricecharting')
 SOURCE_LABELS = {
     'tcg_market': 'TCGplayer market', 'tcg_sales': 'TCGplayer completed sales',
     'tcg_listings': 'TCGplayer current listings', 'ebay_sold': 'eBay completed sales',
-    'ebay_listings': 'eBay current listings',
+    'ebay_listings': 'eBay current listings', 'pricecharting': 'PriceCharting guide',
 }
 
 
@@ -61,6 +62,36 @@ def game(value):
     return {'pokémon': 'pokemon', 'pokemon tcg': 'pokemon', 'pokémon tcg': 'pokemon'}.get(value, value)
 
 
+def grading(card):
+    raw = text(card.get('condition'))
+    match = re.fullmatch(r'(psa|bgs|cgc|sgc|tag|ace)\s*(?:(black label|pristine|perfect|gem mint)\s*)?(10|[1-9](?:\.5)?)(?:\s*(black label|pristine|perfect|gem mint))?', raw)
+    if match:
+        parsed = (match[1], match[3], match[2] or match[4] or '')
+        if parsed[0] == 'psa' and parsed[2] == 'gem mint':
+            parsed = (parsed[0], parsed[1], '')
+    else:
+        parsed = ('', '', '')
+    explicit = (text(card.get('grader')), text(card.get('grade')), text(card.get('grade_qualifier')))
+    if any(explicit):
+        if not explicit[0] or not re.fullmatch(r'10|[1-9](?:\.5)?', explicit[1]):
+            return ('?', '?', '?')
+        if any(parsed) and explicit != parsed:
+            return ('?', '?', '?')
+        if not any(parsed) and raw not in ('graded', 'slab', ''):
+            return ('?', '?', '?')
+        parsed = explicit
+    if any(parsed):
+        grader, grade, qualifier = parsed
+        allowed = {'psa': ('',), 'bgs': ('', 'black label'),
+                   'cgc': ('', 'gem mint', 'pristine', 'perfect'), 'sgc': ('',), 'tag': ('',), 'ace': ('',)}
+        if (grader not in allowed or qualifier not in allowed[grader]
+                or (qualifier in ('black label','pristine','perfect') and grade != '10')
+                or (grader == 'cgc' and grade == '10' and not qualifier)
+                or (grader == 'psa' and grade == '9.5')):
+            return ('?', '?', '?')
+    return parsed
+
+
 @dataclass(frozen=True)
 class Identity:
     game: str
@@ -70,20 +101,49 @@ class Identity:
     finish: str
     condition: str
     language: str
+    grader: str = ''
+    grade: str = ''
+    grade_qualifier: str = ''
 
     @classmethod
     def from_card(cls, card):
+        grader, grade, qualifier = grading(card)
         return cls(game(card.get('game')), text(card.get('card_name')), text(card.get('card_set')),
                    number(card.get('card_num')), finish(card.get('printing')),
-                   condition(card.get('condition')), language(card.get('language')))
+                   'graded' if grader else condition(card.get('condition')), language(card.get('language')),
+                   grader, grade, qualifier)
 
     @property
     def complete(self):
-        return all((self.game, self.name, self.card_set, self.number, self.finish, self.condition, self.language))
+        return all((self.game, self.name, self.card_set, self.number, self.finish, self.condition, self.language)) and self.grader != '?'
+
+    @property
+    def is_graded(self):
+        return bool(self.grader and self.grade and self.grader != '?')
 
     @property
     def cache_key(self):
         return hashlib.sha256(json.dumps(self.__dict__, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def lookup_links(card):
+    """Direct search links are navigation aids, never evidence of a checked price."""
+    target = Identity.from_card(card)
+    product_line = 'magic' if target.game in ('magic','mtg','magic the gathering','magic: the gathering') else 'pokemon'
+    prefix = 'Magic The Gathering' if product_line == 'magic' else 'Pokemon'
+    base = prefix + ' ' + ' '.join(str(card.get(k) or '').strip() for k in ('card_name','card_set','card_num','printing','language')).strip()
+    slab = target.is_graded or target.grader == '?' or bool(re.match(r'^(psa|bgs|cgc|sgc|tag|ace)\b',text(card.get('condition'))))
+    descriptor = ' '.join((target.grader, target.grade_qualifier, target.grade)) if target.is_graded else str(card.get('condition') or '')
+    ebay_query = base + ' ' + descriptor + ' -proxy -replica -lot -digital'
+    if not slab:
+        ebay_query += ' -PSA -BGS -CGC -graded'
+    return {
+        'ebay_sold':'https://www.ebay.com/sch/i.html?' + urlencode({'_nkw':ebay_query,'LH_Sold':'1','LH_Complete':'1'}),
+        'ebay_listings':'https://www.ebay.com/sch/i.html?' + urlencode({'_nkw':ebay_query,'LH_BIN':'1'}),
+        'pricecharting':'https://www.pricecharting.com/search-products?' + urlencode({'type':'prices','q':base,'go':'Go'}),
+        'tcgplayer':f'https://www.tcgplayer.com/search/{product_line}/product?' + urlencode({'productLineName':product_line,'q':base,'view':'grid'}),
+        'tcgplayer_role':'raw_card_reference' if slab else 'condition_specific_comparison',
+    }
 
 
 def price(value):
@@ -121,8 +181,8 @@ def rejected_reason(target, evidence, current_time):
     source = evidence.get('source')
     try:
         link = urlsplit(str(evidence['url']))
-        domains = ('tcgplayer.com',) if source and source.startswith('tcg_') else (
-            'ebay.com', 'ebay.co.uk', 'ebay.ca', 'ebay.com.au', 'ebay.de', 'ebay.es', 'ebay.fr')
+        domains = (('tcgplayer.com',) if source and source.startswith('tcg_') else ('pricecharting.com',)
+                   if source == 'pricecharting' else ('ebay.com','ebay.co.uk','ebay.ca','ebay.com.au','ebay.de','ebay.es','ebay.fr'))
         if link.scheme != 'https' or link.username or not any(
                 link.hostname == d or (link.hostname or '').endswith('.' + d) for d in domains):
             return 'Source link does not belong to the stated marketplace.'
@@ -130,8 +190,8 @@ def rejected_reason(target, evidence, current_time):
         return 'Invalid source link.'
     if evidence.get('is_lot') is not False or isinstance(evidence.get('quantity'), bool) or evidence.get('quantity') != 1:
         return 'Not verified as a single-card comparison.'
-    if any(evidence.get(k) is not False for k in ('graded', 'signed', 'altered', 'proxy')):
-        return 'The comparison is graded, altered, signed, a proxy, or those attributes are unverified.'
+    if evidence.get('graded') is not target.is_graded or any(evidence.get(k) is not False for k in ('signed', 'altered', 'proxy')):
+        return 'Grading state or signed/altered/proxy exclusions do not match or are unverified.'
     observed = timestamp(evidence.get('observed_at'))
     if observed is None or not current_time - timedelta(hours=36) <= observed <= current_time + timedelta(minutes=5):
         return 'Source snapshot is missing, stale or in the future.'
@@ -141,83 +201,100 @@ def rejected_reason(target, evidence, current_time):
             return 'Sale date is missing, older than 30 days, or in the future.'
         if evidence.get('sale_price_verified') is not True:
             return 'The actual paid amount was not verified (including accepted offers).'
+    elif source == 'pricecharting':
+        if evidence.get('guide_verified') is not True:
+            return 'The exact PriceCharting grade/tier and guide value were not verified.'
     elif evidence.get('active') is not True:
         return 'Current availability was not verified.'
     return None
 
 
-def review(card, observations, current_time=None):
-    """Return a proposal and audit trail; never change a card, label, or stock count.
+def source_summary(target, source, observations, current_time):
+    accepted = {}
+    rejected = []
+    candidates = [e for e in observations if e.get('source') == source]
+    for evidence in candidates:
+        reason = rejected_reason(target, evidence, current_time)
+        key = str(evidence.get('record_id', ''))
+        if reason:
+            rejected.append({'record_id':key, 'reason':reason})
+        elif key in accepted:
+            if price(accepted[key]['amount']) != price(evidence['amount']):
+                rejected.append({'record_id':key, 'reason':'Duplicate source ID has conflicting prices.'})
+        else:
+            accepted[key] = evidence
+    values = [price(e['amount']) for e in accepted.values()]
+    minimum = 3 if source in SALE_SOURCES else 1
+    return {'status':('checked' if len(values) >= minimum and not rejected else 'needs_review') if candidates else 'unavailable',
+            'count':len(values), 'required_count':minimum, 'median':float(median(values)) if values else None,
+            'records':list(accepted.values()), 'rejected':rejected}
 
-    Five checked sources are required for a consensus proposal. Market/listing
-    snapshots must be <=36 hours old, and completed sales <=30 days old. Listing
-    prices provide context; they do not get averaged into completed sale prices.
+
+def review(card, observations, current_time=None, *, lookup_manual=False):
+    """Compare direct-source evidence; never mutate a card, price, label or stock.
+
+    Raw cards use TCGplayer market/sales/listings, eBay sold/current, and an exact guide.
+    Slabs use same-grader/grade/tier eBay sold/current listings and PriceCharting.
+    Guide values must match the exact identity too. Manual lookups are opt-in.
     """
     current_time = current_time or datetime.now(timezone.utc)
     if current_time.tzinfo is None:
         raise ValueError('Use a timezone-aware review time.')
     target = Identity.from_card(card)
-    result = {'identity_key': target.cache_key, 'checked_at': current_time.isoformat(),
-              'status': 'needs_review', 'suggested_price': None, 'sources': {}, 'reasons': []}
-    if card.get('entry_source') == 'manual':
-        return dict(result, status='manual_price', reasons=['Keep the operator’s custom selling price.'])
+    result = {'identity_key':target.cache_key, 'checked_at':current_time.isoformat(),
+              'status':'needs_review', 'suggested_price':None, 'sources':{}, 'reasons':[],
+              'lookup_links':lookup_links(card)}
+    if card.get('entry_source') == 'manual' and not lookup_manual:
+        return dict(result, status='manual_price', reasons=['Keep the operator’s custom selling price. An explicit lookup can compare it.'])
     if not target.game:
         return dict(result, status='needs_identity', reasons=['Identify the game so Pokémon cannot be silently skipped.'])
     if target.game != 'pokemon':
         return dict(result, status='not_pokemon', reasons=['This policy applies to Pokémon.'])
     if not target.complete:
-        return dict(result, status='needs_identity', reasons=['Complete the set, number, finish, condition and language before comparing.'])
-    if target.condition not in ('near mint', 'lightly played', 'moderately played', 'heavily played', 'damaged'):
-        return dict(result, status='needs_identity', reasons=['Graded and custom conditions need a separate verified pricing policy.'])
-    for source in REQUIRED_SOURCES:
-        accepted = {}
-        rejected = []
-        candidates = [e for e in observations if e.get('source') == source]
-        for evidence in candidates:
-            reason = rejected_reason(target, evidence, current_time)
-            key = str(evidence.get('record_id', ''))
-            if reason:
-                rejected.append({'record_id': key, 'reason': reason})
-            elif key in accepted:
-                if price(accepted[key]['amount']) != price(evidence['amount']):
-                    rejected.append({'record_id': key, 'reason': 'Duplicate source ID has conflicting prices.'})
-            else:
-                accepted[key] = evidence
-        values = [price(e['amount']) for e in accepted.values()]
-        minimum = 3 if source in SALE_SOURCES else 1
-        summary = {'status': 'checked' if len(values) >= minimum and not rejected else 'needs_review',
-                   'count': len(values), 'required_count': minimum,
-                   'median': float(median(values)) if values else None,
-                   'records': list(accepted.values()), 'rejected': rejected}
-        if not candidates:
-            summary['status'] = 'unavailable'
+        return dict(result, status='needs_identity', reasons=['Complete the identity, including an unambiguous grade/tier, before comparing.'])
+    if not target.is_graded and target.condition not in ('near mint','lightly played','moderately played','heavily played','damaged'):
+        return dict(result, status='needs_identity', reasons=['Identify the raw condition or the exact grader, grade and tier.'])
+    required = GRADED_SOURCES if target.is_graded else REQUIRED_SOURCES
+    result['required_sources'] = list(required)
+    result['tcgplayer_role'] = 'raw_card_reference' if target.is_graded else 'condition_specific_comparison'
+    for source in required:
+        summary = source_summary(target,source,observations,current_time)
         result['sources'][source] = summary
         if summary['status'] != 'checked':
             result['reasons'].append(f'{SOURCE_LABELS[source]}: {summary["status"].replace("_", " ")}.')
     if result['reasons']:
         return result
-    market = Decimal(str(result['sources']['tcg_market']['median']))
-    sales = [Decimal(str(result['sources'][s]['median'])) for s in SALE_SOURCES]
-    if any(abs(value - market) / market > Decimal('.20') for value in sales):
-        result['reasons'].append('TCGplayer market and recent sold medians disagree by more than 20%.')
-        return result
-    for source in SALE_SOURCES:
+    primary = 'ebay_sold' if target.is_graded else 'tcg_market'
+    anchor = Decimal(str(result['sources'][primary]['median']))
+    corroborators = ('pricecharting',) if target.is_graded else (*SALE_SOURCES, 'pricecharting')
+    if any(abs(Decimal(str(result['sources'][s]['median'])) - anchor) / anchor > Decimal('.20') for s in corroborators):
+        result['reasons'].append('Exact guide/market value and recent sold medians disagree by more than 20%.')
+    for source in (s for s in required if s in SALE_SOURCES):
         values = [price(e['amount']) for e in result['sources'][source]['records']]
         mid = median(values)
-        if max(values) / min(values) > 2 or any(abs(v - mid) / mid > Decimal('.50') for v in values):
+        if max(values) / min(values) > 2 or any(abs(v-mid) / mid > Decimal('.50') for v in values):
             result['reasons'].append(f'{SOURCE_LABELS[source]} contains a wide spread or outliers.')
-    for source in ('tcg_listings', 'ebay_listings'):
+    for source in (s for s in required if s.endswith('_listings')):
         asking = Decimal(str(result['sources'][source]['median']))
-        if abs(asking - market) / market > Decimal('.50'):
-            result['reasons'].append(f'{SOURCE_LABELS[source]} differs from market by more than 50%.')
+        if abs(asking-anchor) / anchor > Decimal('.50'):
+            result['reasons'].append(f'{SOURCE_LABELS[source]} differs from sold/market value by more than 50%.')
     if result['reasons']:
         return result
-    result.update(status='proposal_ready', suggested_price=float(market))
-    result['reasons'] = ['Exact current TCGplayer market is corroborated by both recent completed-sale sources. Operator approval remains required.']
+    result.update(status='proposal_ready', suggested_price=float(anchor))
+    result['reasons'] = ['Exact direct-source comparisons agree. Operator approval remains required; a manual price is not overwritten.']
     return result
 
 
-def review_batch(cards, observations_by_identity, current_time=None):
-    # Every row gets an explicit result; an unrecognized game is not skipped as a non-Pokémon card.
-    return [dict(row_id=c.get('row_id'), **review(c, observations_by_identity.get(Identity.from_card(c).cache_key, []), current_time))
-            for c in cards]
+def review_batch(cards, observations_by_identity, current_time=None, *, batch_game=None):
+    # Separate game batches can supply the game once; each row still has its own exact identity.
+    results = []
+    for original in cards:
+        card = dict(original)
+        if batch_game:
+            if card.get('game') and game(card['game']) != game(batch_game):
+                results.append({'row_id':card.get('row_id'), 'status':'needs_identity', 'suggested_price':None,
+                                'reasons':['The row game conflicts with the selected batch game.']})
+                continue
+            card['game'] = batch_game
+        results.append(dict(row_id=card.get('row_id'), **review(card, observations_by_identity.get(Identity.from_card(card).cache_key, []), current_time)))
+    return results
