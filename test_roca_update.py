@@ -48,7 +48,10 @@ class UpdaterTests(unittest.TestCase):
                     content=f'APP_VERSION = "{version}"\nPORT = {self.port}\n'
                 bundle.writestr('RocaSifter-revision/'+name,content)
             for name,content in (extras or {}).items():
-                bundle.writestr(name if name.startswith('/') else 'RocaSifter-revision/'+name,content)
+                # ZipInfo preserves intentionally invalid backslashes on Windows.
+                info=zipfile.ZipInfo(name if name.startswith('/') else 'RocaSifter-revision/'+name)
+                info.filename=info.orig_filename
+                bundle.writestr(info,content)
 
     def run_update(self, **kwargs):
         with patch.object(update,'download_release',return_value=(self.archive,self.commit)), \

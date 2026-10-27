@@ -9,3 +9,8 @@ outputs/
 station_data/
 
 backups/
+.build-venv/
+build/
+dist/
+Testing/run-profile/
+Downloads/

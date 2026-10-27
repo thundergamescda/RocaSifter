@@ -78,11 +78,22 @@ def make_handler(core):
                     if self.admin_required():
                         self.send_json(self.station.admin_settings())
                     return
+                if path=='/api/admin/cleanup':
+                    if self.admin_required():
+                        self.send_json(self.station.cleanup.preview(opted_in=self.station.store.get('cleanup_opt_in',False)))
+                    return
                 if path=='/api/receipts':
                     return self.send_json({'receipts':self.station.store.summaries(),'watcher':self.station.watch_status,
                                            'pickupQueue':self.station.store.pickup_queue()})
                 if path.startswith('/api/receipts/'):
+                    if path.endswith('/pricing'):
+                        return self.send_json(self.station.pricing.receipt_status(self.station.active_receipt(path.split('/')[3])))
                     return self.send_json({'receipt':self.station.store.receipt(path.rsplit('/',1)[1])})
+                if path.startswith('/api/pricing/jobs/'):
+                    key = path.rsplit('/', 1)[1]
+                    if len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
+                        raise StationError('Invalid pricing request.')
+                    return self.send_json(self.station.pricing.get(key))
                 if path=='/api/activity':
                     return self.send_json({'events':self.station.store.activity(),'tasks':self.station.tasks()})
                 if path.startswith('/files/'):
@@ -92,13 +103,19 @@ def make_handler(core):
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css'):
+                elif path in ('/station.js','/station.css','/preview.js'):
+                    filename=Path(core.APP_DIR)/path[1:]
+                elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
                 else:
                     return self.send_json({'errors':['Not found.']},404)
                 if not filename.is_file() or filename.is_symlink():
                     return self.send_json({'errors':['File missing. Extract the complete application ZIP.']},404)
                 content=filename.read_bytes()
+                if path=='/':
+                    from html import escape
+                    from product_brand import display_name
+                    content=content.decode('utf-8').replace('{{PRODUCT_NAME}}',escape(display_name())).encode('utf-8')
                 self.send_response(200);self.security_headers()
                 mime=mimetypes.guess_type(str(filename))[0] or 'text/plain'
                 self.send_header('Content-Type',mime+('' if mime=='application/pdf' else '; charset=utf-8'))
@@ -160,6 +177,10 @@ def make_handler(core):
                     return
                 if path=='/api/admin/settings':
                     return self.send_json(service.save_preferences(data))
+                if path=='/api/admin/cleanup-policy':
+                    if not isinstance(data.get('optedIn'),bool):raise StationError('Choose whether to enable cleanup observation.')
+                    service.store.put('cleanup_opt_in',data['optedIn'])
+                    return self.send_json(service.cleanup.preview(opted_in=data['optedIn']))
                 if path=='/api/admin/downloads-folder':
                     return self.send_json({'folder':service.downloads_folder()})
                 if path=='/api/admin/locations':
@@ -177,6 +198,28 @@ def make_handler(core):
                     str(data.get('mode','bulk')),data.get('newDelivery') is True))
             if path=='/api/manual-items':
                 return self.send_json({'receipt':service.add_manual_item(data)})
+            if path.startswith('/api/credit/'):
+                if service.credit is None:return self.send_json({'errors':['Credit tracking is not included in this edition.']},404)
+                if path=='/api/credit/search':return self.send_json({'customers':service.credit.search(data.get('query',''))})
+                if path=='/api/credit/customer':return self.send_json({'customer':service.credit.add_customer(data)})
+                if path=='/api/credit/export':return self.send_json({'csv':service.credit.export(str(data.get('customerId','')))})
+                if path=='/api/credit/account':return self.send_json(service.credit.account(str(data.get('customerId',''))))
+                if path=='/api/credit/transaction':
+                    temporary=None
+                    try:
+                        if data.get('kind') in ('opening','adjust_add','adjust_remove') and not service.auth.authorized(self.session()):
+                            temporary=service.auth.login(str(data.get('adminPassword','')),self.client_address[0])
+                        return self.send_json(service.credit.transaction(data))
+                    finally:
+                        if temporary:service.auth.logout(temporary)
+            if path=='/api/pricing/research':
+                if not service.preferences().get('pricingEnabled', True):
+                    raise StationError('Price research is paused. Enable it in Admin to continue.')
+                card = {key:str(data.get(key, '')).strip()[:500] for key in
+                        ('game', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language')}
+                if not card['card_name'] or card['game'] not in ('pokemon', 'magic'):
+                    raise StationError('Enter a name and choose the game before researching.')
+                return self.send_json({'key': service.pricing.enqueue(card, force=data.get('force') is True)})
             if path=='/api/pricing/links':
                 from pricing_review import lookup_links, grading
                 card = {key:str(data.get(key,'')).strip()[:500] for key in
@@ -193,6 +236,17 @@ def make_handler(core):
                 pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
                 if action=='save':
                     receipt=service.save_receipt(receipt_id,data)
+                elif action=='approve-price':
+                    receipt=service.approve_price(receipt_id,data)
+                elif action=='apply-safe-prices':
+                    return self.send_json(service.apply_safe_prices(receipt_id,data.get('revision'),data.get('rowIds')))
+                elif action=='research':
+                    if not service.preferences().get('pricingEnabled', True):
+                        raise StationError('Price research is paused. Enable it in Admin to continue.')
+                    receipt=service.active_receipt(receipt_id)
+                    if data.get('revision') != receipt['revision']:
+                        raise StationError('This batch changed. Reload it before researching.')
+                    service.pricing.enqueue_receipt(receipt, force=True)
                 elif action=='accept-buy':
                     receipt=service.accept_buy(receipt_id,data.get('offerType'))
                 elif action=='receive':

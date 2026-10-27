@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 import sys
 import time
+from product_brand import display_name
 
 
 def message(text, *, error=False, confirm=False):
     if os.name == 'nt':
         flags = 0x10 if error else (0x21 if confirm else 0x40)
-        return ctypes.windll.user32.MessageBoxW(None, text, 'Roca Station', flags) == 1
+        return ctypes.windll.user32.MessageBoxW(None, text, display_name(), flags) == 1
     print(text, file=sys.__stderr__)
     return True
 
@@ -55,7 +56,24 @@ def stop_station(core):
 
 
 def main():
-    root = Path(__file__).resolve().parent
+    # Check mode exits before logging, store initialization, migrations or networking.
+    if '--self-check' in sys.argv[1:]:
+        import argparse
+        import json
+        from station_diagnostics import readiness
+        parser = argparse.ArgumentParser(description='Read-only Roca desktop readiness check')
+        parser.add_argument('--self-check', action='store_true')
+        parser.add_argument('--report', type=Path, help='Write the safe JSON report to this file')
+        args = parser.parse_args()
+        report = readiness()
+        content = json.dumps(report, indent=2)
+        if args.report:
+            args.report.write_text(content + '\n', encoding='utf-8')
+        elif sys.stdout is not None:
+            print(content)
+        return 0 if report['ready'] else 1
+    from station_paths import resolve_paths
+    root = resolve_paths().data
     log_path = root / 'station_data' / 'station.log'
     logger = logging.getLogger('roca.desktop')
     logger.setLevel(logging.INFO)
@@ -75,7 +93,7 @@ def main():
         logger.exception('Roca desktop launcher could not complete')
         detail = str(exc)+'\n\n' if isinstance(exc, RuntimeError) else ''
         message('Roca Station could not complete this action.\n\n'+detail+
-                'Check station_data\\station.log in this application folder for details. '
+                f'Check {log_path} for details. '
                 'If dependencies are missing, run Install dependencies.cmd.\n\n'
                 'Keep station_data and outputs; they contain your saved work.', error=True)
         return 1

@@ -40,12 +40,18 @@ except ImportError:
     canvas = None
     code128 = None
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
+from station_paths import resolve_paths
+
+_paths = resolve_paths(__file__)
+APP_DIR = str(_paths.resources)
+DATA_DIR = str(_paths.data)
+SETTINGS_FILE = os.path.join(DATA_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
-PORT = 8765
-APP_VERSION = "2.3.1"
-OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
+PORT = int(os.environ.get('ROCA_STATION_PORT', '8765'))
+if not 1 <= PORT <= 65535:
+    raise RuntimeError('ROCA_STATION_PORT must be between 1 and 65535.')
+APP_VERSION = "2.6.0"
+OUTPUT_DIR = os.path.join(DATA_DIR, "outputs")
 
 
 class HTTPServer(ThreadingHTTPServer):
@@ -401,10 +407,14 @@ def upload_to_square(
     environment: str = "production",
     log_fn: Callable[[str], None] = print,
     location_id: str = "",
-    request_log=None
+    request_log=None,
+    price_variations=False
 ) -> Dict[str, Any]:
     if requests is None or not access_token.strip():
         return {"uploaded_count": 0, "inventory_count": 0, "errors": ["Install requests and supply a Square access token."]}
+    if price_variations:
+        from square_variations import upload
+        return upload(sys.modules[__name__], cards, access_token, environment, location_id, log_fn, request_log)
 
     base_url = "https://connect.squareupsandbox.com" if environment.lower() == "sandbox" else "https://connect.squareup.com"
     endpoint = f"{base_url}/v2/catalog/batch-upsert"
@@ -671,7 +681,7 @@ def open_station_browser(url):
 
 def launch_desktop_station(reuse_existing=False):
     from roca_update import update_in_progress
-    if update_in_progress(APP_DIR):
+    if update_in_progress(APP_DIR) or update_in_progress(os.path.dirname(SETTINGS_FILE)):
         raise RuntimeError('Roca is being updated. Wait for the updater to finish; it will reopen the app for you.')
     from station_runtime import RuntimeControl, read_runtime, running_status
     url = f"http://127.0.0.1:{PORT}"
@@ -703,6 +713,7 @@ def launch_desktop_station(reuse_existing=False):
         server.station = StationService(sys.modules[__name__])
         control = server.runtime_control = RuntimeControl(server, sys.modules[__name__])
         server.station.start_watcher()
+        server.station.pricing.start()
         print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
         print(f"Station running at: {url}")
         print("Use Stop Roca to shut down. Closing Chrome leaves the station running.")
@@ -722,6 +733,8 @@ def launch_desktop_station(reuse_existing=False):
                 pass
             if server.station.watcher:
                 server.station.watcher.join(timeout=5)
+            if server.station.pricing.worker:
+                server.station.pricing.worker.join(timeout=5)
         server.server_close()
         if control:
             control.close()

@@ -151,8 +151,15 @@ class DesktopTests(unittest.TestCase):
             try:
                 page=client.get(base+'/')
                 self.assertEqual(page.status_code,200)
-                self.assertIn('Roca Station',page.text)
-                self.assertEqual(client.get(base+'/api/version').json()['version'],'2.3.1')
+                from product_brand import display_name
+                from html import escape
+                self.assertIn(escape(display_name()),page.text)
+                self.assertNotIn('{{PRODUCT_NAME}}',page.text)
+                for asset in ('stock-and-sleeve.png','stock-and-sleeve.ico'):
+                    image=client.get(base+'/assets/'+asset)
+                    self.assertEqual(image.status_code,200)
+                    self.assertEqual(image.content,(Path(app.APP_DIR)/'assets'/asset).read_bytes())
+                self.assertEqual(client.get(base+'/api/version').json()['version'],app.APP_VERSION)
                 receipt=client.post(base+'/api/import',json={'csv':'Card Name,Card #,Price,Bin,Qty\nBlack Lotus,233,125.50,1,2\n','fileName':'test.csv','mode':'labels'}).json()['receipt']
                 receipt['cards'][0]['reviewed']=True
                 receipt=client.post(base+'/api/receipts/'+receipt['id'],json=receipt).json()['receipt']
