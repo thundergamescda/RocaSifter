@@ -73,10 +73,12 @@ def make_handler(core):
                     return self.send_json(control.status() if control else {'errors':['No background launcher.']},200 if control else 404)
                 if path=='/api/settings':
                     return self.send_json(self.station.public_settings())
-                if path=='/api/cloud/session':
-                    return self.send_json(self.station.cloud.status())
-                if path=='/api/cloud/pending':
-                    return self.send_json(self.station.cloud.pending(expected_session_id=self.headers.get('X-SS-Local-Session','')))
+                if path in ('/api/cloud/session','/api/cloud/pending'):
+                    with self.station.cloud.lock:
+                        control=getattr(self.server,'runtime_control',None)
+                        if control and control.stopping.is_set():return self.send_json({'errors':['The app is stopping. Reopen it before using shared credit.']},503)
+                        if path=='/api/cloud/session':return self.send_json(self.station.cloud.status())
+                        return self.send_json(self.station.cloud.pending(expected_session_id=self.headers.get('X-SS-Local-Session','')))
                 if path=='/api/auth':
                     return self.send_json({'configured':self.station.auth.configured(),'authenticated':self.station.auth.authorized(self.session())})
                 if path=='/api/admin/settings':
@@ -108,7 +110,7 @@ def make_handler(core):
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js'):
+                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css'):
                     filename=Path(core.APP_DIR)/path[1:]
                 elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
@@ -147,6 +149,18 @@ def make_handler(core):
                 if not isinstance(data,dict):
                     raise StationError('Expected a JSON object.')
                 control=getattr(self.server,'runtime_control',None)
+                if self.path=='/api/quit':
+                    # An in-app quit is a deliberate same-origin action for this
+                    # instance. A stale window must not stop a replacement app.
+                    origin=f'http://127.0.0.1:{self.server.server_port}'
+                    if self.headers.get('Origin')!=origin or self.headers.get('X-SS-User-Action')!='quit':
+                        return self.send_json({'errors':['Use Quit app inside Stock & Sleeve.']},403)
+                    if not control:
+                        return self.send_json({'errors':['This session has no desktop launcher. Close its console to stop it.']},409)
+                    if data.get('instance')!=control.record['instance']:
+                        return self.send_json({'errors':['This window belongs to an earlier session. Reopen the app from its desktop icon.']},409)
+                    control.request_stop()
+                    return self.send_json({'status':'stopping'},202)
                 if self.path=='/api/shutdown':
                     if not control or not control.authorized(data.get('token')):
                         return self.send_json({'errors':['Use the Stop Roca shortcut in this application folder.']},403)
@@ -157,7 +171,9 @@ def make_handler(core):
                 if self.path.startswith('/api/cloud/'):
                     # The cloud client serializes its own staff session. A provider
                     # timeout must not hold the lock used to save local receipts.
-                    return self.dispatch_post(data)
+                    with self.station.cloud.lock:
+                        if control and control.stopping.is_set():return self.send_json({'errors':['The app is stopping. Reopen it before using shared credit.']},503)
+                        return self.dispatch_post(data)
                 with self.station.lock:
                     if control and control.stopping.is_set():
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
@@ -195,6 +211,10 @@ def make_handler(core):
                 if path=='/api/cloud/customer':return self.send_json(service.cloud.create_customer(data,expected_session_id=expected))
                 if path=='/api/cloud/adjust':return self.send_json(service.cloud.adjust(data.get('customerId'),data,expected_session_id=expected))
                 if path=='/api/cloud/recover':return self.send_json(service.cloud.recover(data.get('requestKey'),retry=data.get('retry') is True,expected_session_id=expected))
+                if path=='/api/cloud/trade-prepare':return self.send_json(service.shared_trades.prepare(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/trade-status':return self.send_json(service.shared_trades.status(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/trade-accept':return self.send_json(service.shared_trades.accept(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/trade-cancel':return self.send_json(service.shared_trades.cancel(str(data.get('receiptId','')),expected))
                 return self.send_json({'errors':['Cloud action not found.']},404)
             if path.startswith('/api/admin/'):
                 if not self.admin_required():
@@ -217,6 +237,8 @@ def make_handler(core):
                     # The active session is required and changing the password revokes all sessions.
                     service.auth.set_password(str(data.get('password','')))
                     return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
+            if path=='/api/import/preview':
+                return self.send_json(service.preview_import(data.get('csv'),data.get('intakeOptions')))
             if path=='/api/import':
                 return self.send_json(service.import_csv(str(data.get('csv','')),str(data.get('fileName','Roca export.csv')),
                     str(data.get('mode','bulk')),data.get('newDelivery') is True,intake_options=data.get('intakeOptions')))

@@ -181,7 +181,7 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual((self.root/'roca_to_square.py').read_bytes(),self.old)
 
     def test_cloud_and_scanner_runtime_dependencies_are_required_before_stopping(self):
-        for missing in ('station_cloud.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py','cloud.js','cloud.css','intake.js'):
+        for missing in ('station_cloud.py','station_shared_trade.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py','cloud.js','cloud.css','intake.js','import.js','import.css','shared-trade.js','shared-trade.css'):
             self.make_archive(omit=missing)
             with self.subTest(missing=missing),patch.object(update,'download_release',return_value=(self.archive,self.commit)), \
                  patch.object(update,'stop_existing_station') as stop:

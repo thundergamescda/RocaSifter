@@ -108,6 +108,8 @@ class ImportPreview:
     quantity_semantics: str = 'count'
     requires_quantity_confirmation: bool = False
     unknown_columns: list = field(default_factory=list)
+    columns: list = field(default_factory=list)
+    sample_rows: list = field(default_factory=list)
 
     @property
     def can_import(self):
@@ -118,7 +120,8 @@ class ImportPreview:
                 'issues': [asdict(i) for i in self.issues], 'can_import': self.can_import,
                 'quantity_column': self.quantity_column, 'quantity_semantics': self.quantity_semantics,
                 'requires_quantity_confirmation': self.requires_quantity_confirmation,
-                'unknown_columns': self.unknown_columns}
+                'unknown_columns': self.unknown_columns, 'columns': self.columns,
+                'sample_rows': self.sample_rows}
 
     def require_valid(self):
         if not self.can_import:
@@ -254,6 +257,7 @@ def parse_csv(content, *, adapter='auto', default_game='', column_mapping=None,
     try:header = next(reader)
     except (StopIteration, csv.Error):
         issue(1, '', 'headers', 'A header row and at least one card row are required.');return result
+    result.columns = list(header)
     headers = {}
     if len(header) > 100:
         issue(1, '', 'header_limit', 'This CSV exceeds 100 columns; map a smaller card export.');return result
@@ -265,6 +269,18 @@ def parse_csv(content, *, adapter='auto', default_game='', column_mapping=None,
         except ValueError as error:issue(1, name, 'header', str(error))
         headers[key] = name
     if result.issues:return result
+    # The first few source rows help an operator map unfamiliar column names.
+    # A separate bounded reader leaves the validation reader's line numbers exact.
+    try:
+        sample = csv.reader(io.StringIO(content, newline=''), dialect=dialect, strict=True)
+        next(sample)
+        for _ in range(5):
+            values = next(sample, None)
+            if values is None:break
+            result.sample_rows.append([value[:200] for value in values[:100]])
+        del sample
+    except csv.Error:
+        issue(2, '', 'csv', 'Malformed CSV quoting or a cell exceeds the supported field limit.');return result
     result.adapter = _detect(headers) if adapter == 'auto' else adapter
     if result.adapter not in ('roca', 'canonical', 'tcgplayer_app', 'tcgplayer_inventory', 'mapped'):
         issue(1, '', 'adapter', 'Choose a supported CSV format or map its columns.');return result

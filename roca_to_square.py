@@ -663,7 +663,7 @@ def launch_desktop_station(reuse_existing=False):
     from roca_update import update_in_progress
     if update_in_progress(APP_DIR) or update_in_progress(os.path.dirname(SETTINGS_FILE)):
         raise RuntimeError('Roca is being updated. Wait for the updater to finish; it will reopen the app for you.')
-    from station_runtime import RuntimeControl, read_runtime, running_status
+    from station_runtime import RuntimeControl, current_build, drain_station_work, read_runtime, running_status
     url = f"http://127.0.0.1:{PORT}"
     # Bind before opening Chrome so another installation cannot serve this window.
     try:
@@ -680,6 +680,8 @@ def launch_desktop_station(reuse_existing=False):
                         raise RuntimeError("Roca is stopping. Wait for it to finish before starting again.") from exc
                     if status['version'] != APP_VERSION:
                         raise RuntimeError("An older Roca version is running. Use Stop Roca from its folder first.") from exc
+                    if status.get('build')!=current_build(sys.modules[__name__]):
+                        raise RuntimeError('A different Stock & Sleeve build is already running. Use Quit app in that window, then open your desktop icon again.') from exc
                     if not open_station_browser(url):
                         raise RuntimeError("Install Google Chrome, then start Roca again.") from exc
                     return
@@ -694,9 +696,9 @@ def launch_desktop_station(reuse_existing=False):
         control = server.runtime_control = RuntimeControl(server, sys.modules[__name__])
         server.station.start_watcher()
         server.station.pricing.start()
-        print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
+        print(f"Stock & Sleeve release {APP_VERSION} | {os.path.abspath(__file__)}")
         print(f"Station running at: {url}")
-        print("Use Stop Roca to shut down. Closing Chrome leaves the station running.")
+        print("Use Quit app to shut down. Closing the window leaves the station running.")
         if not open_station_browser(url):
             if reuse_existing:
                 raise RuntimeError("Chrome could not be launched. Install Google Chrome, then restart Roca.")
@@ -707,10 +709,11 @@ def launch_desktop_station(reuse_existing=False):
         except KeyboardInterrupt:
             print("\nShutting down station.")
     finally:
+        if control:
+            control.stopping.set()
         if hasattr(server, 'station'):
             server.station.stop_event.set()
-            with server.station.lock:
-                pass
+            drain_station_work(server.station)
             if server.station.watcher:
                 server.station.watcher.join(timeout=5)
             if server.station.pricing.worker:

@@ -8,17 +8,39 @@ const usd=n=>Number(n||0).toLocaleString('en-US',{style:'currency',currency:'USD
 const modes={labels:{title:'Process cards',eyebrow:'FROM SCAN TO SHELF',description:'Check your cards. Create labels. Choose whether to add stock.',empty:'Let your exports come to you.',copy:'Choose your export folder once. Then press Export in Roca,<br>and your cards will arrive here for review.',foot:'Your work is saved automatically.'},trade:{title:'Customer trade-in',eyebrow:'BUY WITH CONFIDENCE',description:'Check the cards, agree on an offer, then create labels.',empty:'Start with the customer’s cards.',copy:'Import their Roca export and check the cards first.<br>You’ll agree on the buy before adding stock or creating labels.',foot:'Payment and store credit are handled separately.'},bulk:{title:'Find value in bulk',eyebrow:'MORE TOOLS',description:'Filter a collection, then continue with the cards worth processing.',empty:'Find the cards worth keeping.',copy:'Import the full Roca export, then use the value filter.<br>Continue with the selected cards when you’re ready.',foot:'Finding value does not add inventory.'},online:{title:'Online preparation',eyebrow:'MORE TOOLS',description:'Check cards, assign storage, and prepare your listing files.',empty:'Get a batch ready for online listing.',copy:'Import your cards and check their details.<br>Storage and inventory choices come at the finish.',foot:'Creates files for manual listing. Nothing is published automatically.'}};
 let state={mode:'labels',stage:'review',labelLayout:'side',printerDpi:203,receipt:null,receipts:[],settings:{},dirty:false,busy:false,page:1,pageSize:40,offer:'cash',editing:null,admin:false,configured:false,pickupQueue:[],watcher:{state:'off',folder:''}};
 let saveTimer,toastTimer,pollTimer;let adminClosing=Promise.resolve();let polling=false,adminFocusPickup=false;let manualRequestId=null;let priceResearchOrigin='manual',priceResearchRequest=0;let pricingResults={},priceResearchResult=null,priceResearchKey=null,priceResearchTimer;let researchPage=1,researchPane='cards',autoConsidering=new Set();let creditAccount=null,creditTrade=null,creditCustomerRequest=null,creditEntryRequest=null,creditSearchTimer;
-async function api(path,body,signal){const r=await fetch(path,{signal,method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});let data;try{data=await r.json()}catch{throw Error('The station is not responding. Use Start Roca to reopen the station.')}if(!r.ok){if(data.adminRequired){state.admin=false}throw Error((data.errors||['The request could not complete.']).join('\n'))}return data}
+async function api(path,body,signal){const r=await fetch(path,{signal,method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});let data;try{data=await r.json()}catch{throw Error('The station is not responding. Open Stock & Sleeve from your desktop icon to return.')}if(!r.ok){if(data.adminRequired){state.admin=false}throw Error((data.errors||['The request could not complete.']).join('\n'))}return data}
 function toast(message,error=false){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').className='toast'+(error?' error':'');$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,error?8000:4500)}
 function notice(message,error=false){$('notice').textContent=message;$('notice').className='notice'+(error?' error':'');$('notice').hidden=!message}
 async function confirmAction(title,text,label='Confirm'){const d=$('confirmDialog');$('confirmTitle').textContent=title;$('confirmText').textContent=text;$('confirmOkay').textContent=label;d.showModal();return new Promise(resolve=>{let settled=false;const finish=value=>{if(settled)return;settled=true;d.close();resolve(value)};$('confirmOkay').onclick=()=>finish(true);$('confirmCancel').onclick=()=>finish(false);d.oncancel=e=>{e.preventDefault();finish(false)}})}
 function included(){return(state.receipt?.cards||[]).filter(c=>c.include)}
-function frozen(){return !!(state.receipt?.purchase||state.receipt?.inventory_status==='received'||['needs_attention','committing'].includes(state.receipt?.inventory_status))}
+function frozen(){return !!(state.receipt?.purchase||state.receipt?.inventory_status==='received'||['needs_attention','committing'].includes(state.receipt?.inventory_status)||window.sharedTradeLocked?.(state.receipt))}
 function priceLocked(){return state.receipt?.inventory_status==='received'||locked()}
-function locked(){return ['needs_attention','committing'].includes(state.receipt?.inventory_status)}
+function locked(){return ['needs_attention','committing'].includes(state.receipt?.inventory_status)||!!window.sharedTradeLocked?.(state.receipt)}
 function markDirty(){if(!state.receipt)return;state.dirty=true;$('saveState').textContent='Unsaved changes';clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveReceipt().catch(e=>toast(e.message,true)),1200)}
 let saving=null;
 async function saveReceipt(){clearTimeout(saveTimer);if(saving){await saving;if(state.dirty)return saveReceipt();return}if(!state.dirty||!state.receipt)return;const receipt=structuredClone(state.receipt);state.dirty=false;$('saveState').textContent='Saving…';saving=(async()=>{try{const data=await api('/api/receipts/'+receipt.id,receipt);if(state.receipt?.id===receipt.id){if(!state.dirty)state.receipt=data.receipt;else state.receipt.revision=data.receipt.revision}$('saveState').textContent=state.dirty?'Unsaved changes':'All changes saved'}catch(e){state.dirty=true;$('saveState').textContent='Save needs attention';throw e}finally{saving=null}})();await saving}
+async function quitStation(){
+ if(state.busy||window.stationStopping)return;
+ await busyWork(async()=>{
+  await saveReceipt();
+  if(!await confirmAction('Quit Stock & Sleeve?','Your saved work stays on this computer. Folder pickup stops, and any inventory or shared-credit operation already running will finish first.','Save & quit'))return;
+  await saveReceipt();
+  const runtime=await api('/api/runtime');
+  const response=await fetch('/api/quit',{method:'POST',headers:{'Content-Type':'application/json','X-SS-User-Action':'quit'},body:JSON.stringify({instance:runtime.instance})});
+  const result=await response.json();if(!response.ok)throw Error((result.errors||['The app could not quit.']).join('\n'));
+  window.stationStopping=true;clearInterval(pollTimer);clearTimeout(saveTimer);clearTimeout(priceResearchTimer);window.dispatchEvent(new Event('station-stopping'));
+  const dialog=document.createElement('dialog');dialog.id='quitStatusDialog';dialog.className='modal confirm-modal';
+  const title=document.createElement('h2');title.textContent='Finishing your work…';
+  const detail=document.createElement('p');detail.textContent='Wait while accepted operations finish. Your saved batches and settings are kept.';
+  dialog.append(title,detail);dialog.addEventListener('cancel',e=>e.preventDefault());document.body.append(dialog);dialog.showModal();
+  for(let check=0;check<60;check++){
+   await new Promise(resolve=>setTimeout(resolve,500));
+   try{await fetch('/api/runtime',{cache:'no-store',signal:AbortSignal.timeout(1500)})}
+   catch(error){if(error.name==='AbortError'||error.name==='TimeoutError')continue;title.textContent='Stock & Sleeve has stopped.';detail.textContent='You can close this window. Open Stock & Sleeve from your desktop icon when you’re ready to return.';return}
+  }
+  title.textContent='Still finishing current work.';detail.textContent='The app will stop when the accepted operation finishes. You can close this window; wait before reopening or updating the app.';
+ });
+}
 async function busyWork(work){if(state.busy)return;state.busy=true;renderActions();document.body.style.cursor='progress';try{await work()}catch(e){toast(e.message,true)}finally{state.busy=false;document.body.style.cursor='';renderActions()}}
 function setMode(mode){
  state.mode=mode;document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
@@ -91,7 +113,7 @@ async function openNextPickup(){
  await openReceipt(next.id);return true;
 }
 async function pollStation(){
- if(polling||state.busy||saving)return;polling=true;
+ if(window.stationStopping||polling||state.busy||saving)return;polling=true;
  try{
   await refreshReceipts();if(state.mode==='credit'&&creditAccount&&!document.querySelector('dialog[open]'))await loadCreditAccount(creditAccount.customer.id);
   if(!state.receipt&&!state.dirty&&modes[state.mode]&&!document.querySelector('dialog[open]')&&$('cardDrawer').hidden)await openNextPickup();
@@ -101,6 +123,7 @@ async function pollStation(){
 async function setupPickup(){adminFocusPickup=true;await openAdmin()}
 
 async function importFile(file){
+ if(window.reviewCsvImport)return window.reviewCsvImport(file);
  if(!file||state.busy)return;if(!file.name.toLowerCase().endsWith('.csv'))return toast('Choose a CSV export from Roca.',true);if(file.size>20_000_000)return toast('The CSV exceeds the 20 MB limit.',true);
  await busyWork(async()=>{try{
   await saveReceipt();const csv=await file.text();const payload={csv,fileName:file.name,mode:modes[state.mode]?state.mode:'labels'};let data=await api('/api/import',payload);
@@ -109,7 +132,7 @@ async function importFile(file){
   data.receipt=await acknowledgePickup(data.receipt);adoptReceipt(data.receipt);await refreshReceipts();toast(data.duplicate?'Opened the saved batch. No stock changed.':'Cards imported. Check them before continuing.');
  }finally{$('csvFile').value=''}});
 }
-function receiptStatus(r){return r.inventory_status==='received'?'IN SQUARE':r.inventory_status==='needs_attention'?'NEEDS ATTENTION':r.inventory_status==='committing'?'ADDING TO SQUARE':r.prepared?'FILES READY':r.files?.pdf?'LABELS READY':r.purchase?'BUY RECORDED':r.cards?.some(c=>c.include)&&r.cards.filter(c=>c.include).every(c=>c.reviewed&&!c.price_missing)?'CHECKED':'IN PROGRESS'}
+function receiptStatus(r){return r.inventory_status==='received'?'IN SQUARE':r.inventory_status==='needs_attention'?'NEEDS ATTENTION':r.inventory_status==='committing'?'ADDING TO SQUARE':r.shared_trade?.state==='confirmed'?'SHARED CREDIT ISSUED':(r.shared_trade&&!['confirmed','cancelled'].includes(r.shared_trade.state))?'SHARED TRADE PENDING':r.prepared?'FILES READY':r.files?.pdf?'LABELS READY':r.purchase?'BUY RECORDED':r.all_reviewed||(r.cards?.some(c=>c.include)&&r.cards.filter(c=>c.include).every(c=>c.reviewed&&!c.price_missing))?'CHECKED':'IN PROGRESS'}
 function renderReceipt(){
  renderIntakeSummary();
  $('addManualItem').disabled=state.busy||frozen();
@@ -160,12 +183,14 @@ function renderStats(){$('receiptStatus').textContent=receiptStatus(state.receip
 function filteredCards(){if(!state.receipt)return[];const q=$('cardSearch').value.trim().toLowerCase(),filter=$('reviewFilter').value;return state.receipt.cards.filter(c=>(!q||[c.card_name,c.card_set,c.card_num,c.condition,c.printing,c.sku].join(' ').toLowerCase().includes(q))&&(filter!=='pending'||!c.reviewed)&&(filter!=='included'||c.include)&&(filter!=='excluded'||!c.include))}
 function renderTable(){if(!state.receipt)return;const all=filteredCards(),pages=Math.max(1,Math.ceil(all.length/state.pageSize));state.page=Math.min(state.page,pages);const start=(state.page-1)*state.pageSize,cards=all.slice(start,start+state.pageSize);$('tableCount').textContent=state.receipt.cards.length.toLocaleString();$('cardRows').innerHTML=cards.map(c=>`<tr class="${c.include?'':'excluded'}"><td class="check-cell"><input type="checkbox" data-include="${c.row_id}" ${c.include?'checked':''} ${frozen()?'disabled':''} aria-label="Include ${escapeHTML(c.card_name)}"></td><td><div class="card-name" title="${escapeHTML(c.card_name)}">${escapeHTML(c.card_name)}</div><div class="card-meta">${c.game?escapeHTML(c.game_label||intakeGames[c.game]||c.game)+' · ':''}${escapeHTML(c.card_set||'Set not supplied')} · #${escapeHTML(c.card_num||'—')}${c.storage_location?' · '+escapeHTML(c.storage_location):''}</div></td><td><span class="condition-tag">${escapeHTML(c.condition)}</span><div class="finish-text">${escapeHTML(c.printing)}</div></td><td class="price-cell">${c.price_missing?'<strong class="credit-debit">Price required</strong>':usd(c.final_price)}${c.intake_value!==undefined?`<small class="intake-value">Intake ${usd(c.intake_value)}</small>`:""}${priceCellResearch(c)}</td><td>${c.qty}</td><td><label class="row-checked"><input type="checkbox" data-review="${c.row_id}" ${c.reviewed?'checked':''} ${priceLocked()||c.price_missing?'disabled':''} aria-label="Checked ${escapeHTML(c.card_name)}"><span>${c.reviewed?'Checked':'Check'}</span></label></td><td><button class="table-edit" data-edit="${c.row_id}" aria-label="Edit ${escapeHTML(c.card_name)}">${icon('edit')}<span>Edit</span></button></td></tr>`).join('');$('noMatches').hidden=!!cards.length;$('pageSummary').textContent=all.length?`Showing ${start+1}–${Math.min(start+state.pageSize,all.length)} of ${all.length.toLocaleString()} rows`:'No matching rows';$('pageNumber').textContent=`${state.page} / ${pages}`;$('previousPage').disabled=state.page<=1;$('nextPage').disabled=state.page>=pages;$('includePage').checked=cards.length>0&&cards.every(c=>c.include)}
 function renderActions(){
+ window.renderSharedTrade?.();
  const r=state.receipt;$('newReceipt').disabled=state.busy;$('addManualItem').disabled=state.busy||frozen();$('openNextPickup').disabled=state.busy;if(!r)return;
  const reviewed=included().length>0&&included().every(c=>c.reviewed&&!c.price_missing),buying=state.mode==='trade'&&!r.purchase,received=r.inventory_status==='received';
  document.querySelectorAll('[data-intent]').forEach(b=>b.disabled=state.busy||received||locked());
  for(const id of ['saveReceipt','deleteReceipt','moveReceipt','receiptTitle','receiptNotes'])$(id).disabled=state.busy||locked();
  $('backToReview').disabled=$('doneReview').disabled=$('nextBatch').disabled=state.busy;
- $('cashPercent').disabled=$('creditPercent').disabled=$('cashOffer').disabled=$('creditOffer').disabled=state.busy||!!r.purchase;
+ $('cashPercent').disabled=$('creditPercent').disabled=$('cashOffer').disabled=$('creditOffer').disabled=state.busy||!!r.purchase||locked();
+ $('customerReference').disabled=state.busy||locked();$('minPrice').disabled=locked();
  $('reviewContinue').disabled=state.busy||!included().length||(state.mode!=='bulk'&&!reviewed)||locked();
  $('reviewContinue').innerHTML=(state.mode==='bulk'?'Continue with selected cards':'Continue')+icon('arrow-right');
  $('reviewNextHint').textContent=state.mode==='bulk'?'Continue with the included cards. Nothing is added to Square.':reviewed?'All included cards checked. Choose how to finish next.':'Check the included cards to continue.';
@@ -220,7 +245,18 @@ async function primaryAction(){
   await createLabels();
  });
 }
-function openCard(id){const c=state.receipt.cards.find(c=>c.row_id===id);if(!c)return;state.editing=id;const map={editName:'card_name',editSet:'card_set',editNumber:'card_num',editCondition:'condition',editLanguage:'language',editFinish:'printing',editQty:'qty',editPrice:'final_price',editLocation:'storage_location',editSku:'sku_override',...intakeEditMap};for(const [id,key]of Object.entries(map)){$(id).value=c[key]??'';$(id).disabled=(id==='editPrice'?priceLocked():frozen()&&id!=='editLocation')}intakeOpenCard(c);$('editReviewed').checked=c.price_missing?false:c.reviewed;intakePriceState();$('splitCopy').disabled=frozen()||c.qty<=1;$('splitCopy').hidden=frozen()||c.qty<=1;$('drawerMessage').textContent=[frozen()?'Identity is locked. Before receiving, the retail label price can still be updated; the agreed buy stays fixed.':'',c.pricing_notice?c.pricing_notice.reasons.join(' ')+' Review the research, or mark checked to keep your chosen price.':''].filter(Boolean).join(' ');$('cardDrawer').hidden=$('drawerBackdrop').hidden=false;$('editName').focus()}
+function openCard(id){
+ const c=state.receipt.cards.find(c=>c.row_id===id);if(!c)return;state.editing=id;
+ $('cardForm').querySelectorAll('input,select,textarea').forEach(input=>input.disabled=false);
+ const map={editName:'card_name',editSet:'card_set',editNumber:'card_num',editCondition:'condition',editLanguage:'language',editFinish:'printing',editQty:'qty',editPrice:'final_price',editLocation:'storage_location',editSku:'sku_override',...intakeEditMap};
+ for(const [id,key]of Object.entries(map)){$(id).value=c[key]??'';$(id).disabled=(id==='editPrice'?priceLocked():frozen()&&id!=='editLocation')}
+ intakeOpenCard(c);$('editReviewed').checked=c.price_missing?false:c.reviewed;intakePriceState();$('editGameLabel').disabled=frozen();
+ if(locked())$('cardForm').querySelectorAll('input,select,textarea').forEach(input=>input.disabled=true);
+ $('cardForm').querySelector('button[type=submit]').disabled=locked();$('compareCardPrices').disabled=false;
+ $('splitCopy').disabled=frozen()||c.qty<=1;$('splitCopy').hidden=frozen()||c.qty<=1;
+ $('drawerMessage').textContent=[locked()?'A saved operation has locked this batch. Card details are read-only until it is resolved.':frozen()?'Identity is locked. Before receiving, the retail label price can still be updated; the agreed buy stays fixed.':'',c.pricing_notice?c.pricing_notice.reasons.join(' ')+' Review the research, or mark checked to keep your chosen price.':''].filter(Boolean).join(' ');
+ $('cardDrawer').hidden=$('drawerBackdrop').hidden=false;(locked()?$('compareCardPrices'):$('editName')).focus();
+}
 function priceCellResearch(c){const r=pricingResults[c.row_id];if(!r)return '';const profile=state.mode==='trade'&&!state.receipt.purchase?'intake':'retail',value=r[profile+'_price'];return `<button type="button" class="price-suggestion" data-price-research="${c.row_id}">${value!==null&&value!==undefined?'Review '+usd(value):['queued','running'].includes(r.status)?'Researching…':'View research'}</button>`}
 function renderPricingSummary(){if(!$('pricingSummary'))return;const rows=Object.values(pricingResults),pending=rows.filter(r=>['queued','running'].includes(r.status)).length,suggestions=rows.filter(r=>r.retail_price!==undefined&&r.retail_price!==null).length;$('pricingCount').textContent=rows.length?`${rows.length-pending} / ${rows.length}`:'';$('pricingSummary').textContent=!state.settings.pricingEnabled?'Automatic research is off in Admin.':!state.receipt?.pricing_game?'Choose the game to research this batch.':pending?`Researching ${pending.toLocaleString()} rows. You can keep checking cards while research runs.`:suggestions?`${suggestions.toLocaleString()} rows have a price suggestion. Review each before applying.`:state.settings.pricingCompleteOnly?'Full-source pricing is not available in this preview. Open a card to see coverage.':'Review source coverage and cards needing an exact match. Open Price research to review source coverage.'}
 async function refreshPricing(){
@@ -239,10 +275,25 @@ async function refreshPricing(){
  }catch(e){if(state.receipt?.id===id)toast(e.name==='TimeoutError'?'Price update timed out. Reopen this batch before editing.':e.message,true)}
  finally{document.body.inert=false;state.busy=false;renderActions()}
 }
+let priceResearchManualLinks=null;
+function paintManualResearchLinks(){
+ if(!priceResearchManualLinks)return;
+ const section=document.createElement('article');section.className='source-evidence';
+ const title=document.createElement('strong');title.textContent='Check marketplace searches';section.append(title);
+ const note=document.createElement('p');note.textContent='Search links are research aids. Confirm the game, variant, condition and grade yourself; opening a search does not verify a price.';section.append(note);
+ const destinations={ebay_sold:['eBay sold','www.ebay.com'],ebay_listings:['eBay listings','www.ebay.com'],pricecharting:['PriceCharting','www.pricecharting.com'],tcgplayer:['TCGplayer','www.tcgplayer.com']};
+ for(const [key,[label,host]] of Object.entries(destinations)){
+  try{const url=new URL(priceResearchManualLinks.links[key]);if(url.protocol!=='https:'||url.hostname!==host||url.username||url.password)continue;
+   const link=document.createElement('a');link.className='button secondary small';link.textContent='Search '+label;link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';section.append(link,document.createTextNode(' '));
+  }catch{}
+ }
+ if(priceResearchManualLinks.gradeNeedsReview){const warning=document.createElement('p');warning.textContent='The supplied grade needs review. Confirm the grader, grade and tier before comparing.';section.append(warning)}
+ $('priceResearchLinks').append(section);
+}
 async function openPriceResearch(origin){
  priceResearchOrigin=origin;const p=origin==='manual'?'manual':'edit';
  if(!$(p+'Name').value.trim())return toast('Enter the item name before researching.',true);
- try{if(origin==='edit'){editCardFromForm();await saveReceipt()}
+ try{if(origin==='edit'&&!locked()){editCardFromForm({researchOnly:true});await saveReceipt()}
  const sourceCard=origin==='edit'?state.receipt.cards.find(card=>card.row_id===state.editing):null;intakeSetGame($('priceResearchGame'),origin==='manual'?intakeSelectedGame('manualGame'):(sourceCard?.game||state.receipt?.pricing_game||state.settings.pricingGame||'pokemon'),sourceCard?.game_label||$('manualGameLabel').value);
  $('priceResearchGame').disabled=origin==='edit'||!!state.receipt?.pricing_game;$('priceResearchProfile').value=origin==='edit'&&state.mode==='trade'&&!state.receipt.purchase?'intake':'retail';
  $('priceResearchProfile').querySelector('[value="intake"]').disabled=origin==='manual'||!!state.receipt?.purchase;
@@ -250,12 +301,19 @@ async function openPriceResearch(origin){
  }catch(e){toast(e.message,true)}
 }
 async function renderPriceResearch(){
- const request=++priceResearchRequest,p=priceResearchOrigin==='manual'?'manual':'edit';clearTimeout(priceResearchTimer);priceResearchResult=null;
+ const request=++priceResearchRequest,p=priceResearchOrigin==='manual'?'manual':'edit';clearTimeout(priceResearchTimer);priceResearchResult=null;priceResearchManualLinks=null;
  $('approveSuggestedPrice').disabled=true;$('priceProposal').hidden=true;$('priceResearchLinks').replaceChildren();$('priceResearchHint').textContent='';
- $('priceResearchName').textContent=$(p+'Name').value;$('priceResearchDetails').textContent=['Set','Number','Condition','Finish','Language'].map(k=>$(p+k).value).filter(Boolean).join(' · ');
+ const saved=priceResearchOrigin==='edit'&&locked()?state.receipt.cards.find(card=>card.row_id===state.editing):null;
+ const card=saved?Object.fromEntries(['card_name','card_set','card_num','condition','printing','language','game_label',...Object.keys(intakeMetadata)].map(key=>[key,saved[key]??''])):{game:$('priceResearchGame').value,card_name:$(p+'Name').value,card_set:$(p+'Set').value,card_num:$(p+'Number').value,condition:$(p+'Condition').value,printing:$(p+'Finish').value,language:$(p+'Language').value,...intakeExtraFields(p)};
+ if(saved){card.game=saved.game||state.receipt.pricing_game||state.settings.pricingGame;$('priceResearchHint').textContent='Read-only research for the saved card. Resolve the pending operation before approving price changes.'}
+ $('priceResearchName').textContent=card.card_name;$('priceResearchDetails').textContent=['card_set','card_num','condition','printing','language'].map(key=>card[key]).filter(Boolean).join(' · ');
  $('priceResearchMessage').textContent='Researching this exact card…';
- try{const data=await api('/api/pricing/research',{game:$('priceResearchGame').value,card_name:$(p+'Name').value,card_set:$(p+'Set').value,card_num:$(p+'Number').value,condition:$(p+'Condition').value,printing:$(p+'Finish').value,language:$(p+'Language').value,...intakeExtraFields(p)});
- if(request!==priceResearchRequest)return;priceResearchKey=data.key;await pollPriceResearch(request);
+ try{
+ const [research,links]=await Promise.allSettled([api('/api/pricing/research',card),api('/api/pricing/links',card)]);
+ if(request!==priceResearchRequest||!$('priceResearchDialog').open)return;
+ if(links.status==='fulfilled')priceResearchManualLinks=links.value;
+ if(research.status==='rejected'){paintManualResearchLinks();throw research.reason}
+ priceResearchKey=research.value.key;await pollPriceResearch(request);
  }catch(e){if(request===priceResearchRequest)$('priceResearchMessage').textContent=e.message}
 }
 async function pollPriceResearch(request){
@@ -263,14 +321,17 @@ async function pollPriceResearch(request){
 }
 function paintPriceResearch(data){
  if(!data)return;const profile=$('priceResearchProfile').value,p=priceResearchOrigin==='manual'?'manual':'edit';
- const card=state.receipt?.cards.find(c=>c.row_id===state.editing),current=profile==='intake'?(card?.intake_value??Number($(p+'Price').value)):Number($(p+'Price').value),suggestion=data[profile+'_price'];
+ const card=state.receipt?.cards.find(c=>c.row_id===state.editing),labelPrice=priceResearchOrigin==='edit'&&locked()?card.final_price:Number($(p+'Price').value),current=profile==='intake'?(card?.intake_value??labelPrice):labelPrice,suggestion=data[profile+'_price'];
  $('priceResearchMessage').textContent=[data.message,...(data.flags||[])].filter(Boolean).join(' ');$('priceProposal').hidden=suggestion===null||suggestion===undefined;
  $('currentPriceLabel').textContent=profile==='intake'?'Current intake value':'Current label price';$('priceCurrent').textContent=usd(current);$('priceSuggested').textContent=usd(suggestion);
  $('priceResearchHint').textContent=profile==='intake'?`${state.settings.intakeValuePercent??90}% value setting. Your cash/store-credit buying percentages apply after this; the label price stays separate.`:`${state.settings.retailValuePercent??100}% retail setting. Approval changes the label price. An accepted purchase amount stays fixed.`;
+ if(priceResearchOrigin==='edit'&&locked())$('priceResearchHint').textContent='Read-only research for the saved card. Resolve the pending operation before approving price changes.';
  $('priceResearchLinks').innerHTML=Object.entries(data.sources||{}).map(([key,s])=>`<article class="source-evidence"><div><strong>${escapeHTML(s.label||key)}</strong><span class="evidence-status">${escapeHTML({reference:'Market reference',not_connected:'Not connected',not_applicable:'Excluded',unavailable:'Unavailable',needs_identity:'Check match'}[s.status]||s.status)}</span></div>${(s.market||s.low||s.median)?`<p class="evidence-price">${usd(s.market||s.low||s.median)} <small>${s.market?'market reference':s.low?'lowest listing reference':'verified source median'}${s.low_listing?' · low asking '+usd(s.low_listing):''}</small></p>`:''}${s.product_name?`<p>${escapeHTML(s.product_name)} · ${escapeHTML(s.set_name)} · ${escapeHTML(s.finish)}</p>`:''}<p>${escapeHTML(s.message||((s.count!==undefined)?`${s.count} qualifying record(s).`:''))}</p>${s.downloaded_at?`<small>Downloaded ${escapeHTML(new Date(s.downloaded_at).toLocaleString())}${s.source_updated_at?' · snapshot '+escapeHTML(s.source_updated_at):' · source update time not supplied'}</small>`:''}</article>`).join('');
+ paintManualResearchLinks();
  $('approveSuggestedPrice').disabled=suggestion===null||suggestion===undefined||(priceResearchOrigin==='edit'&&priceLocked());$('approveSuggestedPrice').textContent='Approve '+(profile==='intake'?'intake value':'label price');
 }
 async function approveSuggestedPrice(){
+ if(priceResearchOrigin==='edit'&&priceLocked())return;
  const data=priceResearchResult,profile=$('priceResearchProfile').value;if(!data||data[profile+'_price']===null||data[profile+'_price']===undefined)return;
  $('approveSuggestedPrice').disabled=true;
  try{const latest=await api('/api/pricing/jobs/'+data.key);if(latest.checked_at!==data.checked_at||latest[profile+'_price']!==data[profile+'_price']||latest[profile+'_price']===null)throw Error('This suggestion changed or expired. Close and reopen research before approving.');if(priceResearchOrigin==='manual'){$('manualPrice').value=Number(data.retail_price).toFixed(2);$('priceResearchDialog').close();toast('Suggested label price applied. Save the item when ready.');return}
@@ -308,7 +369,7 @@ async function saveManualItem(e){
 }
 function closeCard(){$('cardDrawer').hidden=$('drawerBackdrop').hidden=true;state.editing=null}
 async function splitOneCopy(){
- if(state.busy)return;$('cardForm').inert=true;
+ if(state.busy||locked())return;$('cardForm').inert=true;
  try{await busyWork(async()=>{
   editCardFromForm();const card=state.receipt.cards.find(c=>c.row_id===state.editing);
   if(card.qty<2)throw Error('At least two copies are needed to separate one.');
@@ -317,7 +378,15 @@ async function splitOneCopy(){
   toast('One copy separated. Check its condition, finish and price.');
  })}finally{$('cardForm').inert=false}
 }
-function editCardFromForm(){const c=state.receipt.cards.find(c=>c.row_id===state.editing);if(!c)return;const previous={...c};Object.assign(c,{card_name:$('editName').value.trim(),card_set:$('editSet').value.trim(),card_num:$('editNumber').value.trim(),condition:$('editCondition').value.trim(),language:$('editLanguage').value.trim(),printing:$('editFinish').value.trim(),qty:Number($('editQty').value),final_price:Number($('editPrice').value),storage_location:$('editLocation').value.trim(),sku_override:$('editSku').value.trim(),...intakeExtraFields('edit'),reviewed:$('editReviewed').checked});if((c.price_missing&&!$('editPrice').value.trim())||!c.card_name||!c.condition||!c.printing||!Number.isInteger(c.qty)||c.qty<1||!Number.isFinite(c.final_price)||c.final_price<0){Object.assign(c,previous);throw Error('Enter a name, condition, finish, whole-number quantity and valid price.')}markDirty()}
+function editCardFromForm({researchOnly=false}={}){
+ if(locked())throw Error('This saved operation has locked the batch. Card details are read-only until it is resolved.');
+ const c=state.receipt.cards.find(c=>c.row_id===state.editing);if(!c)return;
+ const previous={...c},blankPrice=!$('editPrice').value.trim();
+ Object.assign(c,{card_name:$('editName').value.trim(),card_set:$('editSet').value.trim(),card_num:$('editNumber').value.trim(),condition:$('editCondition').value.trim(),language:$('editLanguage').value.trim(),printing:$('editFinish').value.trim(),qty:Number($('editQty').value),final_price:researchOnly&&blankPrice?previous.final_price:Number($('editPrice').value),storage_location:$('editLocation').value.trim(),sku_override:$('editSku').value.trim(),...intakeExtraFields('edit'),reviewed:researchOnly&&blankPrice?false:$('editReviewed').checked});
+ if(researchOnly&&blankPrice)c.price_confirmed=previous.price_confirmed;
+ if((blankPrice&&!researchOnly)||!c.card_name||!c.condition||!c.printing||!Number.isInteger(c.qty)||c.qty<1||!Number.isFinite(c.final_price)||c.final_price<0){Object.assign(c,previous);throw Error('Enter a name, condition, finish, whole-number quantity and valid price.')}
+ markDirty();
+}
 async function loadActivity(){try{const data=await api('/api/activity');const pending=data.tasks.filter(t=>t.status==='pending');$('taskDot').hidden=!pending.length;$('taskList').innerHTML=data.tasks.length?data.tasks.map(t=>`<article class="task-card ${t.status==='pulled'?'pulled':''}"><div><strong>${t.qty} × ${escapeHTML(t.card_name)}</strong><p>${escapeHTML(t.storage_location)} · ${escapeHTML(t.channel)} · Order ${escapeHTML(t.order_reference)}</p><small>${escapeHTML(t.notes||'')}</small></div>${t.status==='pending'?`<button class="button secondary small" data-complete="${t.id}">Confirm pulled</button>`:'<span class="pill">PULLED</span>'}</article>`).join(''):'<div class="card-table-panel list-empty">No pull tasks yet. Record an online order when a card needs to leave the shop floor.</div>';$('eventList').innerHTML=data.events.length?data.events.map(e=>`<article class="event-row"><span class="event-icon">${icon(e.kind==='labels'?'printer':e.kind==='received'?'check-circle':'activity')}</span><div><a href="#" data-open="${escapeHTML(e.receipt_id)}">${escapeHTML(e.receipt_id)}</a><p>${escapeHTML(e.detail)}</p></div><time>${new Date(e.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></article>`).join(''):'<div class="list-empty">Your receipt history will appear here.</div>'}catch(e){toast(e.message,true)}}
 async function openAdmin(){try{await adminClosing;const auth=await api('/api/auth');state.admin=auth.authenticated;state.configured=auth.configured;$('adminMessage').textContent='';$('adminAuth').hidden=state.admin;$('adminSettings').hidden=!state.admin;$('adminTitle').textContent=state.admin?'Settings that keep work moving.':auth.configured?'Unlock your workspace settings.':'Set up your admin password.';$('authDescription').textContent=auth.configured?'Your saved Square connection stays available to operators. Only admins can change it.':'Choose a password of at least 12 characters. You’ll use it to manage credentials and workflow defaults.';$('confirmPasswordLabel').hidden=auth.configured;$('confirmPassword').required=!auth.configured;$('adminPassword').autocomplete=auth.configured?'current-password':'new-password';$('authSubmit').innerHTML=(auth.configured?'Unlock Admin':'Create admin password')+icon('unlock');$('adminPassword').value=$('confirmPassword').value='';$('adminDialog').showModal();if(state.admin)await loadAdmin();else $('adminPassword').focus()}catch(e){toast(e.message,true)}}
 async function loadAdmin(){$('adminTitle').textContent='Settings that keep work moving.';const settings=await api('/api/admin/settings');$('squareToken').value='';$('squareToken').placeholder=settings.tokenSaved?'Saved token · leave blank to keep':'Enter a Square token';$('tokenStatus').textContent=settings.tokenSaved?'Token saved securely. Enter a replacement only when needed.':'No token saved yet.';$('squareEnvironment').value=settings.squareEnvironment;$('squareLocation').replaceChildren(new Option(settings.squareLocationId?'Saved receiving store · '+settings.squareLocationId:'Test connection to load stores',settings.squareLocationId||''));$('watchFolder').value=settings.watchFolder;$('watchMode').value=settings.watchMode;$('defaultCash').value=settings.cashPercent;$('defaultCredit').value=settings.creditPercent;$('defaultMinimum').value=settings.minPrice;$('defaultDpi').value=settings.printerDpi;$('defaultLayout').value=settings.labelLayout;$('pricingAutoCorrect').checked=settings.pricingAutoCorrect;$('pricingAlertPercent').value=settings.pricingAlertPercent;$('pricingAlertDollars').value=settings.pricingAlertDollars;$('pricingEnabled').checked=settings.pricingEnabled;$('pricingCompleteOnly').checked=settings.pricingCompleteOnly;$('defaultPricingGame').value=settings.pricingGame;$('intakeValuePercent').value=settings.intakeValuePercent;$('retailValuePercent').value=settings.retailValuePercent;$('squareConnectionMessage').textContent='';$('adminAuth').hidden=true;$('adminSettings').hidden=false;if(adminFocusPickup){adminFocusPickup=false;$('pickupSettings').scrollIntoView({block:'start'});$('watchFolder').focus({preventScroll:true})}}
@@ -336,6 +405,7 @@ function renderResearchTable(){
 function renderTradeSummary(){
  const r=state.receipt,p=r?.purchase;$('acceptedBuy').hidden=!p;if(!p)return;
  const credit=p.type==='credit',tracked=r.tracked_credit;
+ if(p.scope==='hosted'){$('acceptedBuy').innerHTML='<div><span class="section-kicker">CONFIRMED SHARED TRADE CREDIT</span><strong class="trade-approved-amount">'+usd(p.amount)+'</strong><p>Shared credit issued once. No local wallet credit was created.</p></div><div class="trade-facts"><span><small>Hosted receipt</small>'+escapeHTML(p.hosted_trade_id)+'</span><span><small>Store</small>'+escapeHTML(p.store)+'</span><span><small>Policy</small>Tax policy unreviewed · Square checkout disabled</span></div>';return}
  $('acceptedBuy').innerHTML=`<div><span class="section-kicker">APPROVED TRADE · ${credit?'STORE CREDIT':'CASH'}</span><strong class="trade-approved-amount">${usd(p.amount)}</strong><p>Buy recorded: ${usd(p.amount)} ${credit?'store credit':'cash'}.</p></div><div class="trade-facts"><span><small>Customer / reference</small>${escapeHTML(r.customer_reference||'Not supplied')}</span><span><small>Approved</small>${escapeHTML(new Date(p.at).toLocaleString())}</span><span><small>Intake value</small>${usd(p.intake_total??r.cards.filter(c=>c.include).reduce((n,c)=>n+c.qty*(c.intake_value??c.final_price),0))}</span><span><small>Status</small>${credit?(tracked?'Recorded in local credit tracker':'Credit agreement recorded; delivery handled separately'):'Payment handled separately'}</span></div>${credit&&state.settings.creditTracking&&!tracked?'<button class="button secondary" id="trackApprovedCredit">Track this approved credit</button>':''}`;
  const button=$('trackApprovedCredit');if(button)button.onclick=async()=>{creditTrade={id:r.id,amount:p.amount,title:r.title};await navigate('credit');toast('Choose a customer, then record the approved trade credit.')};
 }
@@ -356,189 +426,6 @@ function bindWorkflowExtensions(){
  $('creditCloseEntry').onclick=()=>{$('creditEntryDialog').close();$('creditAdminPassword').value=''};$('creditEntryKind').onchange=renderCreditEntry;$('creditEntryForm').onsubmit=async e=>{e.preventDefault();const form=$('creditEntryForm');form.inert=true;try{const data=await api('/api/credit/transaction',{requestId:creditEntryRequest,customerId:creditAccount.customer.id,version:creditAccount.customer.version,kind:$('creditEntryKind').value,amount:$('creditEntryAmount').value,receiptId:creditTrade?.id,reference:$('creditEntryReference').value,note:$('creditEntryNote').value,adminPassword:$('creditAdminPassword').value});const trade=$('creditEntryKind').value==='trade';creditAccount=data;if(trade)creditTrade=null;$('creditEntryDialog').close();$('creditAdminPassword').value='';renderCreditAccount();await loadCreditCustomers();toast('Credit tracker updated. Square was not changed.')}catch(err){$('creditEntryMessage').textContent=err.message;if(creditAccount)await loadCreditAccount(creditAccount.customer.id)}finally{form.inert=false}};
 }
 
-function bind(){bindWorkflowExtensions();document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>navigate(b.dataset.mode));$('newReceipt').onclick=startNewBatch;$('compareManualPrices').onclick=()=>openPriceResearch('manual');$('compareCardPrices').onclick=()=>openPriceResearch('edit');$('closePriceResearch').onclick=$('returnToItem').onclick=()=>$('priceResearchDialog').close();$('priceResearchGame').onchange=()=>{if(priceResearchOrigin==='manual')$('manualGame').value=$('priceResearchGame').value;renderPriceResearch()};$('priceResearchProfile').onchange=()=>paintPriceResearch(priceResearchResult);$('approveSuggestedPrice').onclick=approveSuggestedPrice;$('priceResearchDialog').addEventListener('close',()=>{++priceResearchRequest;clearTimeout(priceResearchTimer)});$('batchPricingGame').onchange=async()=>{await busyWork(async()=>{state.receipt.pricing_game=$('batchPricingGame').value;markDirty();await saveReceipt();pricingResults={};await refreshPricing();toast('Research started for this game. Open Price research to review source coverage.')})};$('researchBatch').onclick=async()=>{await busyWork(async()=>{await saveReceipt();await api('/api/receipts/'+state.receipt.id+'/research',{revision:state.receipt.revision});await refreshPricing();toast('Research queued. Open Price research to review source coverage.')})};$('addManualItem').onclick=openManualItem;$('manualItemForm').onsubmit=saveManualItem;$('closeManualItem').onclick=$('cancelManualItem').onclick=()=>{if(!state.busy)$('manualItemDialog').close()};$('manualItemDialog').addEventListener('cancel',e=>{if(state.busy)e.preventDefault()});$('emptyImport').onclick=()=>$('csvFile').click();$('setupPickup').onclick=setupPickup;$('openNextPickup').onclick=openNextPickup;$('useDownloads').onclick=async()=>{try{const data=await api('/api/admin/downloads-folder',{});$('watchFolder').value=data.folder;$('adminMessage').textContent='Downloads selected. Save settings to start pickup; then export a new CSV from Roca.'}catch(e){$('adminMessage').textContent=e.message}};$('deleteReceipt').onclick=deleteCurrentReceipt;$('reviewContinue').onclick=continueReview;$('backToReview').onclick=$('doneReview').onclick=showCards;$('nextBatch').onclick=startNewBatch;$('openHistory').onclick=openHistory;$('closeHistory').onclick=()=>$('historyDialog').close();$('historySearch').oninput=renderHistory;$('historyList').onclick=e=>{const b=e.target.closest('[data-open]');if(b)openReceipt(b.dataset.open)};$('labelLayout').onchange=()=>state.labelLayout=$('labelLayout').value;$('printerDpi').onchange=()=>state.printerDpi=Number($('printerDpi').value);$('csvFile').onchange=()=>importFile($('csvFile').files[0]);$('receiptPicker').onchange=e=>{if(e.target.value)openReceipt(e.target.value).catch(e=>toast(e.message,true));else startNewBatch()};$('receiptTitle').oninput=()=>{state.receipt.title=$('receiptTitle').value;markDirty()};$('receiptNotes').oninput=()=>{state.receipt.notes=$('receiptNotes').value;markDirty()};$('saveReceipt').onclick=()=>saveReceipt().then(()=>toast('Batch saved.')).catch(e=>toast(e.message,true));$('moveReceipt').onchange=async e=>{const mode=e.target.value;e.target.value='';if(mode)await busyWork(()=>moveReceipt(mode))};$('cardSearch').oninput=$('reviewFilter').onchange=()=>{state.page=1;renderTable()};$('previousPage').onclick=()=>{state.page--;renderTable()};$('nextPage').onclick=()=>{state.page++;renderTable()};$('cardRows').onclick=e=>{if(state.busy)return;const research=e.target.closest('[data-price-research]');if(research){openCard(research.dataset.priceResearch);openPriceResearch('edit');return}const b=e.target.closest('[data-edit]');if(b)openCard(b.dataset.edit)};$('cardRows').onchange=e=>{if(state.busy)return renderTable();const checked=e.target.dataset.review;if(checked){state.receipt.cards.find(c=>c.row_id===checked).reviewed=e.target.checked;markDirty();renderStats();renderTable();renderActions();return}const id=e.target.dataset.include;if(id){state.receipt.cards.find(c=>c.row_id===id).include=e.target.checked;markDirty();renderStats();renderActions()}};$('includePage').onchange=()=>{const cards=filteredCards().slice((state.page-1)*state.pageSize,state.page*state.pageSize);cards.forEach(c=>c.include=$('includePage').checked);markDirty();renderStats();renderTable();renderActions()};$('applyThreshold').onclick=()=>{const threshold=Number($('minPrice').value);if(!Number.isFinite(threshold)||threshold<0)return toast('Enter a valid threshold.',true);state.receipt.cards.forEach(c=>c.include=c.final_price>=threshold);markDirty();renderStats();renderTable();renderActions()};$('markReviewed').onclick=async()=>{if(included().some(c=>c.price_missing))return toast('Enter a selling price or explicitly confirm zero for every included card before marking checked.',true);if(await confirmAction('Have you checked every included card?','Confirm you have checked the identity, condition, finish, price and any pricing discrepancies for every included card. This does not receive inventory.','I checked these cards')){included().forEach(c=>c.reviewed=true);markDirty();renderStats();renderTable();renderActions()}};$('primaryAction').onclick=primaryAction;$('prepareOnly').onclick=prepareWithoutStock;$('labelsOnly').onclick=labelsWithoutStock;$('cashOffer').onclick=e=>{if(e.target.tagName!=='INPUT'){state.offer='cash';renderActions();$('cashOffer').classList.add('selected');$('creditOffer').classList.remove('selected')}};$('creditOffer').onclick=e=>{if(e.target.tagName!=='INPUT'){state.offer='credit';renderActions();$('creditOffer').classList.add('selected');$('cashOffer').classList.remove('selected')}};for(const [id,key]of [['cashPercent','cash_percent'],['creditPercent','credit_percent']])$(id).oninput=()=>{state.receipt[key]=Number($(id).value);markDirty();renderStats()};$('customerReference').oninput=()=>{state.receipt.customer_reference=$('customerReference').value;markDirty()};document.querySelectorAll('[data-intent]').forEach(b=>b.onclick=()=>{state.receipt.inventory_intent=b.dataset.intent;markDirty();renderReceipt()});for(const [id,key]of [['onlineChannel','channel'],['storageStrategy','storage_strategy'],['storageLocation','storage_location']])$(id).onchange=()=>{state.receipt[key]=$(id).value;markDirty()};$('closeDrawer').onclick=$('drawerBackdrop').onclick=closeCard;$('cardForm').onsubmit=async e=>{e.preventDefault();$('cardForm').inert=true;try{editCardFromForm();await saveReceipt();closeCard();renderReceipt();toast('Card saved.')}catch(err){$('drawerMessage').textContent=err.message}finally{$('cardForm').inert=false}};for(const id of ['editName','editSet','editNumber','editCondition','editLanguage','editFinish'])$(id).oninput=()=>{$('editReviewed').checked=false;if($('editSku').value)$('editSku').value='';$('priceReminder').textContent='Details changed. Confirm the price for this exact variant before marking reviewed.'};$('editPrice').oninput=()=>$('editReviewed').checked=false;$('splitCopy').onclick=splitOneCopy;$('openAdmin').onclick=openAdmin;$('closeAdmin').onclick=()=>{adminFocusPickup=false;$('adminDialog').close()};$('adminDialog').addEventListener('close',()=>{adminClosing=api('/api/auth/logout',{}).catch(()=>{});state.admin=false;$('squareToken').value='';$('adminPassword').value='';});$('authForm').onsubmit=async e=>{e.preventDefault();try{if(!state.configured&&$('adminPassword').value!==$('confirmPassword').value)throw Error('The passwords do not match.');await api('/api/auth/'+(state.configured?'login':'setup'),{password:$('adminPassword').value});$('adminPassword').value=$('confirmPassword').value='';state.admin=state.configured=true;notice('');$('adminMessage').textContent='';await loadAdmin()}catch(e){$('adminMessage').textContent=e.message;$('adminMessage').classList.add('error')}};$('lockAdmin').onclick=async()=>{await api('/api/auth/logout',{});state.admin=false;$('adminDialog').close();toast('Admin locked.')};$('squareEnvironment').onchange=$('squareToken').oninput=()=>{$('squareLocation').replaceChildren(new Option('Test connection to load stores',''));$('squareConnectionMessage').textContent='Connection changed. Test it before choosing a store.'};$('testSquare').onclick=async()=>{const button=$('testSquare');button.disabled=true;try{const result=await api(…2079 tokens truncated…turn []
-        try:
-            value=json.loads(raw)
-            if value.get('version')!=1 or value.get('origin')!=ORIGIN or not isinstance(value.get('operations'),list) or len(value['operations'])>50:raise ValueError()
-            rows=value['operations']
-            for row in rows:
-                if (row.get('kind') not in ('customer','adjust') or not isinstance(row.get('body'),dict)
-                    or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',row.get('request_key',''))
-                    or not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,49}',row.get('store',''))
-                    or row['body'].get('request_key')!=row['request_key']
-                    or row.get('fingerprint')!=self._fingerprint(row['body'])):raise ValueError()
-                if row['kind']=='adjust':self.customer_id(row.get('customer_id'))
-            return rows
-        except (ValueError,TypeError,AttributeError):
-            raise CloudError('The saved pending-action journal needs recovery. Contact support before changing shared balances.',status=409,pending=True) from None
-
-    def _save_pending(self,rows):
-        if rows:self.pending_vault.set(json.dumps({'version':1,'origin':ORIGIN,'operations':rows},separators=(',',':')))
-        elif self.pending_vault.path.exists():self.pending_vault.path.unlink()
-
-    def _finish_pending(self,store,key):
-        self._save_pending([row for row in self._pending() if (row['store'],row['request_key'])!=(store,key)])
-
-    def _mutate(self,kind,body,customer_id=None,*,expected_session_id=None):
-        # Persist the exact retry key/body before the network call. A crash or
-        # lost response must not turn one correction into two separate actions.
-        with self.lock:
-            saved=self._saved()
-            self._expected(saved,expected_session_id)
-            if not saved or saved['expires_at']<=self.clock():raise CloudError('Sign in to your store cloud account.',status=401)
-            key=body.get('request_key')
-            if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key):raise CloudError('A valid request key is required.')
-            rows=self._pending();existing=next((row for row in rows if row['store']==saved['store'] and row['request_key']==key),None)
-            fingerprint=self._fingerprint(body)
-            if existing and (existing['kind']!=kind or existing.get('customer_id')!=customer_id or existing['fingerprint']!=fingerprint):
-                raise CloudError('The pending action has different details. Recover that saved action before creating another.',status=409,pending=True)
-            if not existing:
-                if any(row['store']==saved['store'] for row in rows):raise CloudError('Resolve the saved pending action before changing shared credit again.',status=409,pending=True)
-                if len(rows)>=50:raise CloudError('Resolve the pending actions on this computer before continuing.',status=409,pending=True)
-                rows.append({'kind':kind,'customer_id':customer_id,'store':saved['store'],'request_key':key,
-                             'body':body,'fingerprint':fingerprint,'created_at':self.clock()})
-                self._save_pending(rows)
-            path='/api/credit/customers'+('/'+customer_id+'/adjust' if kind=='adjust' else '')
-            try:result=self._authenticated('POST',path,data=body)
-            except CloudError as error:
-                # A new action explicitly rejected by the service did not commit.
-                # An older uncertain action stays recoverable even after a role change.
-                if not existing and error.status<500 and not error.offline:self._finish_pending(saved['store'],key)
-                else:error.pending=True
-                raise
-            self._finish_pending(saved['store'],key)
-            return result
-
-    def pending(self,*,expected_session_id=None):
-        with self.lock:
-            saved=self._saved();rows=self._pending()
-            if saved and saved['expires_at']<=self.clock():self._clear();saved=None
-            if saved:self._expected(saved,expected_session_id)
-            if not saved:return {'pending':[],'hasOtherPending':bool(rows)}
-            visible=[{'requestKey':row['request_key'],'action':row['kind'],'customerId':row.get('customer_id'),
-                      'amount_cents':row['body'].get('amount_cents'),'entryKind':row['body'].get('kind'),
-                      'reference':row['body'].get('reference'),'createdAt':row['created_at']} for row in rows if row['store']==saved['store']]
-            return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows)}
-
-    def recover(self,key,*,retry=False,expected_session_id=None):
-        with self.lock:
-            saved=self._saved()
-            if saved and saved['expires_at']<=self.clock():self._clear();saved=None
-            self._expected(saved,expected_session_id)
-            if not saved:raise CloudError('Sign in to the store that owns the pending action.',status=401)
-            row=next((row for row in self._pending() if row['store']==saved['store'] and row['request_key']==key),None)
-            if row is None:raise CloudError('Pending action not found for this store.',status=404)
-            status=self._authenticated('GET','/api/credit/requests/'+quote(key,safe=''))
-            if status.get('found') is True:
-                self._finish_pending(saved['store'],key)
-                return {'resolved':True,'alreadyCompleted':True,'result':status.get('result')}
-            if status.get('found') is not False:raise CloudError('The server could not confirm the saved action. Keep it for recovery.',status=502,pending=True)
-            if not retry:return {'resolved':False,'alreadyCompleted':False,'message':'The server has no completed record yet. Retry the saved action using its original key.'}
-            result=self._mutate(row['kind'],row['body'],row.get('customer_id'))
-            return {'resolved':True,'alreadyCompleted':False,'result':result}
-
-    def _call(self,method,path,*,token=None,data=None):
-        headers={'Accept':'application/json'}
-        if token:headers['Authorization']='Bearer '+token
-        try:
-            response=self.transport.request(method,ORIGIN+path,headers=headers,json=data,
-                                            timeout=(5,20),allow_redirects=False)
-        except requests.RequestException:
-            raise CloudError('Cloud service is unavailable. Shared credit cannot be changed offline. Retry the same saved action when connected.',status=503,offline=True) from None
-        if 300<=response.status_code<400:
-            raise CloudError('The cloud service returned an unexpected redirect. Contact support.',status=502)
-        if len(response.content)>2_000_000:
-            raise CloudError('The cloud response was too large. Contact support.',status=502)
-        try:result=response.json()
-        except (ValueError,TypeError):
-            raise CloudError('The cloud service returned an unreadable response. Retry later.',status=502) from None
-        if not isinstance(result,dict):raise CloudError('The cloud service response was invalid.',status=502)
-        if not 200<=response.status_code<300:
-            message=result.get('error')
-            if not isinstance(message,str) or not 1<=len(message)<=500:message='The cloud action could not complete. Retry with the same request key.'
-            raise CloudError(message,status=response.status_code,offline=response.status_code>=500)
-        return result
-
-    def _authenticated(self,method,path,*,data=None,expected_session_id=None):
-        with self.lock:
-            saved=self._saved()
-            self._expected(saved,expected_session_id)
-            if not saved or saved['expires_at']<=self.clock():
-                self._clear()
-                raise CloudError('Sign in to your store cloud account.',status=401)
-            try:return self._call(method,path,token=saved['token'],data=data)
-            except CloudError as error:
-                if error.status==401:self._clear()
-                raise
-
-    def login(self,data):
-        slug=str(data.get('storeSlug','')).strip().lower()
-        email=data.get('email');password=data.get('password')
-        if not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,49}',slug):raise CloudError('Enter your store ID.')
-        if not isinstance(email,str) or len(email)>254 or not isinstance(password,str) or not 1<=len(password)<=128:
-            raise CloudError('Enter your staff email and password.')
-        with self.lock:
-            old=self._saved()
-            if old and old['expires_at']<=self.clock():self._clear();old=None
-            if old:raise CloudError('Sign out of the current cloud account before switching staff or stores.',status=409)
-            result=self._call('POST','/api/auth/login',data={'store_slug':slug,'email':email.strip(),'password':password})
-            token=result.get('access_token');expiry=result.get('expires_in')
-            if (not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{20,256}',token)
-                or isinstance(expiry,bool) or not isinstance(expiry,int) or not 0<expiry<=28800
-                or result.get('store')!=slug or result.get('role') not in ROLES):
-                raise CloudError('The cloud sign-in response could not be verified.',status=502)
-            # Passwords are sent once over HTTPS and never saved in local settings.
-            session_id=uuid.uuid4().hex
-            self.vault.set(json.dumps({'origin':ORIGIN,'token':token,'expires_at':self.clock()+expiry,
-                                       'store':slug,'role':result['role'],'session_id':session_id},separators=(',',':')))
-            return {'signedIn':True,'store':slug,'role':result['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':session_id}
-
-    def status(self):
-        with self.lock:
-            try:
-                saved=self._saved()
-                if not saved:return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN}
-                me=self._authenticated('GET','/api/me')
-                if me.get('store')!=saved['store'] or me.get('role') not in ROLES:
-                    self._clear();raise CloudError('The cloud account changed. Sign in again.',status=401)
-                return {'signedIn':True,'store':me['store'],'role':me['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id']}
-            except CloudError as error:
-                if error.status==401:return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN,'message':str(error)}
-                if error.offline and saved:return {'signedIn':False,'savedSession':True,'offline':True,'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id'],'message':str(error)}
-                raise
-
-    def logout(self,*,expected_session_id=None):
-        with self.lock:
-            try:saved=self._saved()
-            except CloudError:saved=None
-            if saved:self._expected(saved,expected_session_id)
-            self._clear()
-            if not saved:return {'signedIn':False,'serverRevoked':False,'message':'Signed out on this computer.'}
-            try:
-                self._call('POST','/api/auth/logout',token=saved['token'],data={})
-                return {'signedIn':False,'serverRevoked':True,'message':'Signed out and the server session was revoked.'}
-            except CloudError as error:
-                if error.status==401:return {'signedIn':False,'serverRevoked':True,'message':'Signed out; the server session has already ended.'}
-                return {'signedIn':False,'serverRevoked':False,'message':'Signed out on this computer. The server could not confirm revocation; that session expires within eight hours.'}
-
-    @staticmethod
-    def customer_id(value):
-        try:return str(uuid.UUID(str(value)))
-        except (ValueError,TypeError,AttributeError):raise CloudError('Select a shared-credit customer.') from None
-
-    def customers(self,query='',*,expected_session_id=None):
-        if not isinstance(query,str) or len(query)>200:raise CloudError('Keep customer searches under 200 characters.')
-        return self._authenticated('GET','/api/credit/customers?q='+quote(query,safe=''),expected_session_id=expected_session_id)
-
-    def account(self,ident,*,expected_session_id=None):
-        return self._authenticated('GET','/api/credit/customers/'+self.customer_id(ident),expected_session_id=expected_session_id)
-
-    def create_customer(self,data,*,expected_session_id=None):
-        fields={key:data.get(key) for key in ('request_key','display_name','contact','square_customer_id','permission_confirmed')}
-        return self._mutate('customer',fields,expected_session_id=expected_session_id)
-
-    def adjust(self,ident,data,*,expected_session_id=None):
-        if data.get('kind') not in ('opening','adjust_add','adjust_remove'):
-            raise CloudError('Use an opening balance or a manager correction. Trade issuance needs the accepted-trade workflow.')
-        fields={key:data.get(key) for key in ('request_key','amount_cents','kind','reference','reason','version')}
-        return self._mutate('adjust',fields,self.customer_id(ident),expected_session_id=expected_session_id)
+function bind(){$('quitApp').onclick=quitStation;bindWorkflowExtensions();document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>navigate(b.dataset.mode));$('newReceipt').onclick=startNewBatch;$('compareManualPrices').onclick=()=>openPriceResearch('manual');$('compareCardPrices').onclick=()=>openPriceResearch('edit');$('closePriceResearch').onclick=$('returnToItem').onclick=()=>$('priceResearchDialog').close();$('priceResearchGame').onchange=()=>{if(priceResearchOrigin==='manual')$('manualGame').value=$('priceResearchGame').value;renderPriceResearch()};$('priceResearchProfile').onchange=()=>paintPriceResearch(priceResearchResult);$('approveSuggestedPrice').onclick=approveSuggestedPrice;$('priceResearchDialog').addEventListener('close',()=>{++priceResearchRequest;clearTimeout(priceResearchTimer)});$('batchPricingGame').onchange=async()=>{await busyWork(async()=>{state.receipt.pricing_game=$('batchPricingGame').value;markDirty();await saveReceipt();pricingResults={};await refreshPricing();toast('Research started for this game. Open Price research to review source coverage.')})};$('researchBatch').onclick=async()=>{await busyWork(async()=>{await saveReceipt();await api('/api/receipts/'+state.receipt.id+'/research',{revision:state.receipt.revision});await refreshPricing();toast('Research queued. Open Price research to review source coverage.')})};$('addManualItem').onclick=openManualItem;$('manualItemForm').onsubmit=saveManualItem;$('closeManualItem').onclick=$('cancelManualItem').onclick=()=>{if(!state.busy)$('manualItemDialog').close()};$('manualItemDialog').addEventListener('cancel',e=>{if(state.busy)e.preventDefault()});$('emptyImport').onclick=()=>$('csvFile').click();$('setupPickup').onclick=setupPickup;$('openNextPickup').onclick=openNextPickup;$('useDownloads').onclick=async()=>{try{const data=await api('/api/admin/downloads-folder',{});$('watchFolder').value=data.folder;$('adminMessage').textContent='Downloads selected. Save settings to start pickup; then export a new CSV from Roca.'}catch(e){$('adminMessage').textContent=e.message}};$('deleteReceipt').onclick=deleteCurrentReceipt;$('reviewContinue').onclick=continueReview;$('backToReview').onclick=$('doneReview').onclick=showCards;$('nextBatch').onclick=startNewBatch;$('openHistory').onclick=openHistory;$('closeHistory').onclick=()=>$('historyDialog').close();$('historySearch').oninput=renderHistory;$('historyList').onclick=e=>{const b=e.target.closest('[data-open]');if(b)openReceipt(b.dataset.open)};$('labelLayout').onchange=()=>state.labelLayout=$('labelLayout').value;$('printerDpi').onchange=()=>state.printerDpi=Number($('printerDpi').value);$('csvFile').onchange=()=>importFile($('csvFile').files[0]);$('receiptPicker').onchange=e=>{if(e.target.value)openReceipt(e.target.value).catch(e=>toast(e.message,true));else startNewBatch()};$('receiptTitle').oninput=()=>{state.receipt.title=$('receiptTitle').value;markDirty()};$('receiptNotes').oninput=()=>{state.receipt.notes=$('receiptNotes').value;markDirty()};$('saveReceipt').onclick=()=>saveReceipt().then(()=>toast('Batch saved.')).catch(e=>toast(e.message,true));$('moveReceipt').onchange=async e=>{const mode=e.target.value;e.target.value='';if(mode)await busyWork(()=>moveReceipt(mode))};$('cardSearch').oninput=$('reviewFilter').onchange=()=>{state.page=1;renderTable()};$('previousPage').onclick=()=>{state.page--;renderTable()};$('nextPage').onclick=()=>{state.page++;renderTable()};$('cardRows').onclick=e=>{if(state.busy)return;const research=e.target.closest('[data-price-research]');if(research){openCard(research.dataset.priceResearch);openPriceResearch('edit');return}const b=e.target.closest('[data-edit]');if(b)openCard(b.dataset.edit)};$('cardRows').onchange=e=>{if(state.busy)return renderTable();const checked=e.target.dataset.review;if(checked){state.receipt.cards.find(c=>c.row_id===checked).reviewed=e.target.checked;markDirty();renderStats();renderTable();renderActions();return}const id=e.target.dataset.include;if(id){state.receipt.cards.find(c=>c.row_id===id).include=e.target.checked;markDirty();renderStats();renderActions()}};$('includePage').onchange=()=>{const cards=filteredCards().slice((state.page-1)*state.pageSize,state.page*state.pageSize);cards.forEach(c=>c.include=$('includePage').checked);markDirty();renderStats();renderTable();renderActions()};$('applyThreshold').onclick=()=>{const threshold=Number($('minPrice').value);if(!Number.isFinite(threshold)||threshold<0)return toast('Enter a valid threshold.',true);state.receipt.cards.forEach(c=>c.include=c.final_price>=threshold);markDirty();renderStats();renderTable();renderActions()};$('markReviewed').onclick=async()=>{if(included().some(c=>c.price_missing))return toast('Enter a selling price or explicitly confirm zero for every included card before marking checked.',true);if(await confirmAction('Have you checked every included card?','Confirm you have checked the identity, condition, finish, price and any pricing discrepancies for every included card. This does not receive inventory.','I checked these cards')){included().forEach(c=>c.reviewed=true);markDirty();renderStats();renderTable();renderActions()}};$('primaryAction').onclick=primaryAction;$('prepareOnly').onclick=prepareWithoutStock;$('labelsOnly').onclick=labelsWithoutStock;$('cashOffer').onclick=e=>{if(e.target.tagName!=='INPUT'){state.offer='cash';renderActions();$('cashOffer').classList.add('selected');$('creditOffer').classList.remove('selected')}};$('creditOffer').onclick=e=>{if(e.target.tagName!=='INPUT'){state.offer='credit';renderActions();$('creditOffer').classList.add('selected');$('cashOffer').classList.remove('selected')}};for(const [id,key]of [['cashPercent','cash_percent'],['creditPercent','credit_percent']])$(id).oninput=()=>{state.receipt[key]=Number($(id).value);markDirty();renderStats()};$('customerReference').oninput=()=>{state.receipt.customer_reference=$('customerReference').value;markDirty()};document.querySelectorAll('[data-intent]').forEach(b=>b.onclick=()=>{state.receipt.inventory_intent=b.dataset.intent;markDirty();renderReceipt()});for(const [id,key]of [['onlineChannel','channel'],['storageStrategy','storage_strategy'],['storageLocation','storage_location']])$(id).onchange=()=>{state.receipt[key]=$(id).value;markDirty()};$('closeDrawer').onclick=$('drawerBackdrop').onclick=closeCard;$('cardForm').onsubmit=async e=>{e.preventDefault();if(locked()){$('drawerMessage').textContent='This saved operation has locked the batch. Card details are read-only until it is resolved.';return}$('cardForm').inert=true;try{editCardFromForm();await saveReceipt();closeCard();renderReceipt();toast('Card saved.')}catch(err){$('drawerMessage').textContent=err.message}finally{$('cardForm').inert=false}};for(const id of ['editName','editSet','editNumber','editCondition','editLanguage','editFinish'])$(id).oninput=()=>{$('editReviewed').checked=false;if($('editSku').value)$('editSku').value='';$('priceReminder').textContent='Details changed. Confirm the price for this exact variant before marking reviewed.'};$('editPrice').oninput=()=>$('editReviewed').checked=false;$('splitCopy').onclick=splitOneCopy;$('openAdmin').onclick=openAdmin;$('closeAdmin').onclick=()=>{adminFocusPickup=false;$('adminDialog').close()};$('adminDialog').addEventListener('close',()=>{adminClosing=api('/api/auth/logout',{}).catch(()=>{});state.admin=false;$('squareToken').value='';$('adminPassword').value='';});$('authForm').onsubmit=async e=>{e.preventDefault();try{if(!state.configured&&$('adminPassword').value!==$('confirmPassword').value)throw Error('The passwords do not match.');await api('/api/auth/'+(state.configured?'login':'setup'),{password:$('adminPassword').value});$('adminPassword').value=$('confirmPassword').value='';state.admin=state.configured=true;notice('');$('adminMessage').textContent='';await loadAdmin()}catch(e){$('adminMessage').textContent=e.message;$('adminMessage').classList.add('error')}};$('lockAdmin').onclick=async()=>{await api('/api/auth/logout',{});state.admin=false;$('adminDialog').close();toast('Admin locked.')};$('squareEnvironment').onchange=$('squareToken').oninput=()=>{$('squareLocation').replaceChildren(new Option('Test connection to load stores',''));$('squareConnectionMessage').textContent='Connection changed. Test it before choosing a store.'};$('testSquare').onclick=async()=>{const button=$('testSquare');button.disabled=true;try{const result=await api('/api/admin/locations',{squareToken:$('squareToken').value,squareEnvironment:$('squareEnvironment').value});const previous=$('squareLocation').value;const active=result.locations.filter(l=>l.status==='ACTIVE');$('squareLocation').replaceChildren(new Option('Choose receiving store',''));active.forEach(l=>$('squareLocation').add(new Option(`${l.name} (${l.id})`,l.id)));if(active.some(l=>l.id===previous))$('squareLocation').value=previous;else if(active.length===1)$('squareLocation').value=active[0].id;$('squareConnectionMessage').textContent=active.length?`Connected to ${result.environment}. ${active.length} active store(s). Verify your store, then save settings.`:'Connected, but no active locations were returned. Activate the receiving location in Square.'}catch(e){$('squareConnectionMessage').textContent=e.message}finally{button.disabled=false}};$('adminForm').onsubmit=async e=>{e.preventDefault();try{const data={pricingAutoCorrect:$('pricingAutoCorrect').checked,pricingAlertPercent:Number($('pricingAlertPercent').value),pricingAlertDollars:Number($('pricingAlertDollars').value),pricingEnabled:$('pricingEnabled').checked,pricingCompleteOnly:$('pricingCompleteOnly').checked,pricingGame:$('defaultPricingGame').value,intakeValuePercent:Number($('intakeValuePercent').value),retailValuePercent:Number($('retailValuePercent').value),squareToken:$('squareToken').value,squareEnvironment:$('squareEnvironment').value,squareLocationId:$('squareLocation').value,watchFolder:$('watchFolder').value,watchMode:$('watchMode').value,cashPercent:Number($('defaultCash').value),creditPercent:Number($('defaultCredit').value),minPrice:Number($('defaultMinimum').value),printerDpi:Number($('defaultDpi').value),labelLayout:$('defaultLayout').value};await api('/api/admin/settings',data);$('squareToken').value='';await loadPublicSettings();await loadAdmin();$('adminMessage').textContent='Settings saved. Operators can use the connection without entering the token.';$('adminMessage').classList.remove('error');await refreshReceipts();toast('Admin settings saved.')}catch(e){$('adminMessage').textContent=e.message;$('adminMessage').classList.add('error')}};$('changePasswordForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/admin/password',{password:$('newAdminPassword').value});$('newAdminPassword').value='';$('adminDialog').close();state.admin=false;toast('Password changed. All admin sessions are locked.')}catch(e){$('adminMessage').textContent=e.message}};$('eventList').onclick=e=>{const b=e.target.closest('[data-open]');if(b){e.preventDefault();openReceipt(b.dataset.open)}};$('taskList').onclick=async e=>{const b=e.target.closest('[data-complete]');if(b&&await confirmAction('Confirm the cards were pulled?','Confirm the requested copies have been removed from the shop floor and placed with the order. This does not change inventory.','Confirm pulled')){try{await api('/api/tasks/'+b.dataset.complete+'/complete',{});await loadActivity();toast('Pull confirmed.')}catch(e){toast(e.message,true)}}};$('newTask').onclick=()=>$('taskDialog').showModal();$('closeTask').onclick=()=>$('taskDialog').close();$('taskForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/tasks',{channel:$('taskChannel').value,order_reference:$('taskOrder').value,card_name:$('taskCard').value,qty:Number($('taskQty').value),storage_location:$('taskLocation').value,notes:$('taskNotes').value});$('taskDialog').close();$('taskForm').reset();await loadActivity();toast('Order added to the pull queue.')}catch(e){$('taskMessage').textContent=e.message}};$('helpButton').onclick=()=>confirmAction('A few things to know.','Set up automatic pickup once in Admin. Press Export in Roca and save to that folder; your cards appear for review. Check your cards, then Continue. At the finish, choose Add to Square or labels only. Next batch starts fresh; Batch history reopens saved work. Printer settings are saved in Admin. Closing the window leaves Stock & Sleeve running. Use Quit app to stop it.','Got it');let dragDepth=0;document.addEventListener('dragenter',e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();dragDepth++;$('dropOverlay').hidden=false}});document.addEventListener('dragleave',()=>{dragDepth--;if(dragDepth<=0)$('dropOverlay').hidden=true});document.addEventListener('dragover',e=>e.preventDefault());document.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;$('dropOverlay').hidden=true;if(e.dataTransfer.files.length)importFile(e.dataTransfer.files[0])});window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue=''}});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('cardDrawer').hidden&&!document.querySelector('dialog[open]'))closeCard();if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveReceipt().then(()=>toast('Batch saved.')).catch(e=>toast(e.message,true))}})}
+async function init(){icons();bind();try{const version=await api('/api/version');if(version.version!=='2.6.0')throw Error('A different version is running. Stop it before opening Stock & Sleeve 2.6.0.');$('version').textContent=version.version;await loadPublicSettings();await refreshReceipts();setMode('labels');const auth=await api('/api/auth');state.configured=auth.configured;if(!auth.configured)notice('Welcome to Stock & Sleeve. Invited staff can open Shared credit. Set up local receiving in Admin; this is a private pilot.');await pollStation();pollTimer=setInterval(pollStation,3000)}catch(e){notice(e.message,true)}}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();

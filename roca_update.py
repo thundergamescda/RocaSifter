@@ -30,8 +30,8 @@ REQUIRED = {'roca_to_square.py', 'station_service.py', 'station_server.py', 'sta
             'station_desktop.py', 'station_runtime.py', 'roca_update.py', 'requirements.txt',
             'station.js', 'station.css', 'roca_square_label_app.html', 'Start Roca.vbs', 'Update Roca.vbs'}
 REQUIRED.update({'square_variations.py','station_pricing.py','store_pricing.py','station_edition.py','pricing_review.py',
-                 'station_paths.py','station_diagnostics.py','station_cloud.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py',
-                 'cloud.js','cloud.css','intake.js','product_brand.py','product_brand.json','preview.js'})
+                 'station_paths.py','station_diagnostics.py','station_cloud.py','station_shared_trade.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py',
+                 'cloud.js','cloud.css','intake.js','import.js','import.css','shared-trade.js','shared-trade.css','product_brand.py','product_brand.json','preview.js'})
 MAX_DOWNLOAD = 64 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
 

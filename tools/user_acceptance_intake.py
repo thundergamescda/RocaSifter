@@ -23,7 +23,7 @@ from station_service import StationService
 
 REPORT = ROOT / 'Testing' / '2.6.0'
 SOURCE_NAMES = ('roca_to_square.py', 'station_service.py', 'station_server.py', 'station.js',
-                'intake.js', 'station.css', 'roca_square_label_app.html', 'scanner_adapters.py',
+                'intake.js', 'import.js', 'import.css', 'station.css', 'roca_square_label_app.html', 'scanner_adapters.py',
                 'tools/user_acceptance_intake.py')
 GAMES = ('pokemon', 'magic', 'riftbound', 'onepiece', 'unionarena', 'gundam', 'sports')
 
@@ -191,8 +191,11 @@ def run():
                     content = ('Name,Game,Set,Number,Condition,Printing,Language,Market Price,Quantity\n'
                                'Fictional Unpriced A,Gundam,Fictional Set,001,NM,Normal,English,9.99,1\n'
                                'Fictional Unpriced B,Gundam,Fictional Set,002,NM,Normal,English,5.99,1\n')
+                    page.locator('#csvFile').set_input_files({'name': 'fictional-unpriced.csv', 'mimeType': 'text/csv', 'buffer': content.encode()})
+                    expect(page.locator('#importDialog')).to_be_visible()
+                    expect(page.locator('#importCommit')).to_be_enabled()
                     with page.expect_response(lambda response: response.url.endswith('/api/import')) as response_info:
-                        page.locator('#csvFile').set_input_files({'name': 'fictional-unpriced.csv', 'mimeType': 'text/csv', 'buffer': content.encode()})
+                        page.locator('#importCommit').click()
                     response = response_info.value
                     assert response.status == 200, response.text()
                     expect(page.locator('#cardRows .credit-debit')).to_have_count(2)

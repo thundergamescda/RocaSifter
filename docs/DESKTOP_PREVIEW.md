@@ -1,8 +1,11 @@
 # Desktop foundation preview
 
-This milestone packages the existing Standard receiving station with Python and
-its runtime dependencies. It retains Chrome as the desktop window. OAuth,
-online synchronization and automatic credit checkout are subsequent milestones.
+This milestone packages Stock & Sleeve with Python and its runtime dependencies
+and retains Chrome as the desktop window. Invited online shared-credit accounts,
+history and manager corrections are available in the pilot. Square OAuth needs
+sandbox configuration; accepted trades and automatic checkout still need final
+server/provider/device/tax acceptance. See `SHARED_PILOT_PACKAGE.md` for current
+isolated installer and release instructions.
 
 ## Build
 
@@ -23,7 +26,9 @@ Do not point the source updater at the packaged application.
 ## Data and launch
 
 Source launches keep data in the existing project folder. Packaged launches use
-`%LOCALAPPDATA%/Roca/Station` with station_data and outputs below it. Replacing
+an installed unique Pilot profile, or a build-ID-scoped
+`%LOCALAPPDATA%/StockAndSleeve/PilotDirect/<build_id>` for direct EXE launches,
+with station_data and outputs below it. Replacing
 the program folder therefore does not replace the user's receipts or vault.
 There is no automatic migration of existing business data. A packaged preview
 starts with a fresh profile; preserve the existing installation until a separate
@@ -32,7 +37,8 @@ stopped-station migration and rollback workflow has been tested.
 For an isolated pilot, set `ROCA_DATA_HOME` to an absolute folder outside the
 program resources. Use the same Windows account when migrating DPAPI credentials.
 Start with StockAndSleeve.exe and stop with `StockAndSleeve.exe --stop`. The existing
-station uses the same loopback port; stop it before trying an isolated preview.
+station can keep its existing port. Installed Pilot shortcuts use an available
+persisted port per installation; direct frozen launches default to 8877.
 Do not open the preview against business data for a packaging test.
 
 ## Readiness check

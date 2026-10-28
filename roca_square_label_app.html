@@ -19,7 +19,7 @@
   <div class="sidebar-bottom"><div id="watchStatus" class="watch-status"><span class="status-dot"></span><div>Roca exports<span id="watchText">Manual import</span></div></div><button class="nav-item" id="openAdmin"><i data-icon="lock"></i><span>Admin settings</span></button><div class="sidebar-footer"><span id="editionLabel">STANDARD</span> <span id="version">2.5.0</span></div></div>
 </aside>
 <div class="app-shell">
-<header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb">Process cards</strong></div><div class="topbar-right"><span id="squareBadge" class="connection-badge"><span class="status-dot"></span>Square setup needed</span><button class="icon-button" id="helpButton" aria-label="Workflow help"><i data-icon="help"></i></button></div></header>
+<header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb">Process cards</strong></div><div class="topbar-right"><span id="squareBadge" class="connection-badge"><span class="status-dot"></span>Square setup needed</span><button class="button secondary small" id="quitApp" type="button">Quit app</button><button class="icon-button" id="helpButton" aria-label="Workflow help"><i data-icon="help"></i></button></div></header>
 <main>
   <div id="notice" class="notice" role="status" hidden></div>
   <div class="page-heading"><div><div class="eyebrow" id="pageEyebrow">FROM SCAN TO SHELF</div><h1 id="pageTitle">Process cards</h1><p id="pageDescription">Check your cards. Create labels. Choose whether to add stock.</p></div><div class="heading-actions"><button class="button secondary" id="addManualItem"><i data-icon="plus"></i>Add item</button><button class="button secondary" id="newReceipt"><i data-icon="plus"></i>New batch</button></div></div>
@@ -71,6 +71,8 @@
 <div id="toast" class="toast" role="status" hidden></div>
 <script src="/station.js"></script>
 <script src="/intake.js"></script>
+<script src="/import.js"></script>
 <script src="/cloud.js"></script>
+<script src="/shared-trade.js"></script>
 <script src="/preview.js"></script>
 </body></html>

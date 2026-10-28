@@ -79,14 +79,28 @@ metadata and price gates. Core parse_roca_csv uses strict adapters but keeps
 legacy command-line quarter-dollar rounding and rejects missing sale prices.
 
 The service accepts intake_options with adapter, default_game, column_mapping,
-quantity_column, price_column and confirm_snapshot. UI/API callers must expose
-those deliberate mapping/confirmation choices before claiming custom-vendor
-onboarding is complete. Per-card source IDs are informational, never proof of
-exact pricing identity or permission to change marketplace data.
+quantity_column, price_column and confirm_snapshot. The desktop file picker and
+drag-and-drop route open import.js before creating a draft. The read-only
+POST /api/import/preview returns bounded raw examples and normalized rows,
+mapping fields, errors, warnings and quantity semantics. Operators can select
+the format, map custom source headers, choose a default game for rows without
+one, and explicitly select Add to Quantity or Total Quantity. Snapshot intake
+needs a separate acknowledgement; the receipt records that acknowledgement.
+Cancel creates no receipt. Errors block the entire file. Changed mappings
+invalidate a pending preview, so a late response cannot authorize stale choices.
+Previously saved files offer Open saved batch and retain the additional-physical-
+copies confirmation when importing again. Per-card source IDs are informational,
+never proof of exact pricing identity or permission to change marketplace data.
 
 Tests: test_scanner_adapters.py and test_intake_integration.py cover all named
 games, additional games, slab/serial distinctions, identifier namespaces,
 strict validation, price and stock-snapshot gates, atomic imports, receipt-save
 preservation and legacy SKU compatibility. The existing station/core/variation
-regression suite also passes against fictional responses. Real scanner exports,
-physical printer/scanner roundtrips and operator usability are still unproven.
+regression suite also passes against fictional responses. test_import_preview.py
+checks the read-only endpoint, mapping choices, bounded responses and atomic
+errors. Real headless Chrome walkthroughs in tools/user_acceptance_import.py and
+tools/user_acceptance_intake.py passed with source fingerprints unchanged, no
+external requests and no Square uploads. They demonstrate the implemented
+fictional workflows, not real scanner certification or usability for every
+operator. Real vendor exports and physical printer/scanner roundtrips remain
+release gates. Evidence is under Testing/2.6.0.

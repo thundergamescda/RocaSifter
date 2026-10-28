@@ -16,10 +16,11 @@ from square_variations import price_cents, resolution_key, card_identity
 from station_pricing import Research, DEFAULTS as PRICING_DEFAULTS, identity as price_identity
 from pricing_review import Identity
 from store_pricing import apply_label_rule, extreme, retail_label_price
-from scanner_adapters import (GAME_LABELS, IntakeValidationError, identity_key,
-                              normalize_game, normalize_manual_card, parse_csv_strict,
+from scanner_adapters import (ALIASES, GAME_LABELS, IntakeValidationError, identity_key,
+                              normalize_game, normalize_manual_card, parse_csv, parse_csv_strict,
                               spreadsheet_safe)
 import station_edition
+from station_shared_trade import SharedTrade, require_editable as require_shared_editable
 
 MODES = ('bulk', 'trade', 'labels', 'online')
 CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
@@ -57,6 +58,7 @@ class StationService:
         self.cloud = CloudClient(self.store.root)
         self.auth = AdminAuth(self.store)
         self.lock = threading.RLock()
+        self.shared_trades = SharedTrade(self)
         self.stop_event = threading.Event()
         edition_root = Path(core.SETTINGS_FILE).parent
         if not (edition_root / 'roca_edition.json').exists():
@@ -198,6 +200,42 @@ class StationService:
         return {'state': 'starting' if folder else 'off', 'folder': folder,
                 'message': 'Checking for new Roca exports.' if folder else 'Choose an export folder to enable automatic pickup.'}
 
+    def preview_import(self, content, intake_options=None):
+        """Read-only normalized preview and source columns; no receipt is created."""
+        if not isinstance(content, str):
+            raise StationError('Choose a UTF-8 CSV or TSV export.')
+        if intake_options is not None and not isinstance(intake_options, dict):
+            raise StationError('CSV mapping options must be an object.')
+        options = dict(intake_options or {})
+        if any(key not in ('adapter', 'default_game', 'column_mapping', 'quantity_column', 'price_column', 'confirm_snapshot') for key in options):
+            raise StationError('Choose supported CSV mapping options.')
+        confirm_snapshot = options.pop('confirm_snapshot', False)
+        if not isinstance(confirm_snapshot, bool):
+            raise StationError('Snapshot confirmation must be true or false.')
+        try:preview = parse_csv(content, **options)
+        except (TypeError, ValueError):
+            raise StationError('Check the CSV format and column mapping choices.') from None
+        errors = sum(issue.severity == 'error' for issue in preview.issues)
+        warnings = sum(issue.severity == 'warning' for issue in preview.issues)
+        source_hash = hashlib.sha256(content.lstrip('\ufeff').replace('\r\n', '\n').encode()).hexdigest()
+        existing_id = self.store.find_source(source_hash)
+        existing = self.store.receipt(existing_id) if existing_id else None
+        return {'preview': {'adapter': preview.adapter, 'columns': preview.columns,
+            'sample_rows': preview.sample_rows, 'row_count': len(preview.cards),
+            'rows': [{key: card.get(key) for key in ('card_name', 'game', 'game_label', 'card_set', 'card_num',
+                     'condition', 'printing', 'language', 'qty', 'final_price', 'market_price_cents', 'source_row')}
+                     for card in preview.cards[:15]],
+            'issues': [issue.__dict__ for issue in preview.issues[:50]],
+            'issue_count': len(preview.issues), 'error_count': errors, 'warning_count': warnings,
+            'can_import': preview.can_import, 'quantity_column': preview.quantity_column,
+            'quantity_semantics': preview.quantity_semantics,
+            'requires_quantity_confirmation': preview.requires_quantity_confirmation,
+            'unpriced_count': sum(card.get('price_cents') is None for card in preview.cards),
+            'default_batch_game': self.preferences().get('pricingGame', 'pokemon')},
+            'mapping_fields': [{'key': key, 'label': names[0]} for key, names in ALIASES.items()],
+            'games': GAME_LABELS,
+            'existing': {'id': existing['id'], 'title': existing['title'], 'deleted': bool(existing.get('deleted_at'))} if existing else None}
+
     def parse(self, content, intake_options=None, *, with_preview=False):
         if intake_options is not None and not isinstance(intake_options, dict):
             raise StationError('CSV mapping options must be an object.')
@@ -227,7 +265,8 @@ class StationService:
                             if issue.row == card['source_row'] and issue.severity == 'warning'])
             card['sku'] = card['sku_override'] or self.core.generate_card_sku(card)
             cards.append(card)
-        summary = preview.as_dict();summary.pop('cards', None)
+        summary = preview.as_dict();summary.pop('cards', None);summary.pop('sample_rows', None)
+        summary['quantity_snapshot_confirmed'] = bool(preview.requires_quantity_confirmation and confirm_snapshot)
         return (cards, summary) if with_preview else cards
 
     def import_csv(self, content, filename, mode='bulk', new_delivery=False, intake_source='manual', intake_options=None):
@@ -300,6 +339,7 @@ class StationService:
                     raise StationError('This item was already saved with different details. Reopen the batch to edit it.')
                 return receipt
             if receipt:
+                require_shared_editable(receipt)
                 if receipt.get('purchase') or receipt['inventory_status'] in ('received', 'committing', 'needs_attention'):
                     raise StationError('This batch is locked after purchase or receiving. Start a new batch for another item.')
                 if data.get('revision') != receipt['revision']:
@@ -347,6 +387,7 @@ class StationService:
             receipt = self.store.receipt(receipt_id)
             if receipt.get('deleted_at'):
                 return receipt
+            require_shared_editable(receipt)
             if receipt['revision'] != revision:
                 raise StationError('This receipt changed in another window. Reload it before deleting.')
             if receipt['inventory_status'] in ('committing', 'needs_attention'):
@@ -425,6 +466,7 @@ class StationService:
     def save_receipt(self, receipt_id, data):
         with self.lock:
             old = self.active_receipt(receipt_id)
+            require_shared_editable(old)
             if data.get('revision') != old['revision']:
                 raise StationError('This receipt changed in another window. Reload it before saving.')
             if old['inventory_status'] in ('committing', 'needs_attention'):
@@ -525,6 +567,7 @@ class StationService:
         """Apply supported small changes only from an idle UI with a current revision."""
         with self.lock:
             receipt=self.active_receipt(receipt_id)
+            require_shared_editable(receipt)
             if receipt['revision']!=revision:
                 raise StationError('This batch changed. Save or reload it before applying research.')
             if receipt['inventory_status'] in ('received','committing','needs_attention'):
@@ -574,6 +617,7 @@ class StationService:
         """Approval is tied to one saved identity, result and unchanged current value."""
         with self.lock:
             receipt = self.active_receipt(receipt_id)
+            require_shared_editable(receipt)
             if receipt['revision'] != data.get('revision'):
                 raise StationError('This batch changed. Reopen the price suggestion before approving.')
             if receipt['inventory_status'] in ('received', 'committing', 'needs_attention'):
@@ -611,6 +655,7 @@ class StationService:
             return receipt
 
     def approved_cards(self, receipt):
+        require_shared_editable(receipt)
         cards = [self.validate_card(c) for c in receipt['cards'] if c.get('include', True)]
         if not cards:
             raise StationError('Include at least one card.')
@@ -625,6 +670,7 @@ class StationService:
     def accept_buy(self, receipt_id, offer_type):
         with self.lock:
             receipt = self.active_receipt(receipt_id)
+            require_shared_editable(receipt)
             if receipt['purchase']:
                 return receipt
             if receipt['mode'] != 'trade' or offer_type not in ('cash', 'credit'):
@@ -699,6 +745,7 @@ class StationService:
         # Single receiving lane prevents parallel receipt commits, including repeated clicks.
         with self.lock:
             receipt = self.active_receipt(receipt_id)
+            require_shared_editable(receipt)
             if receipt['inventory_status'] == 'received':
                 return receipt
             if receipt['mode'] == 'bulk':

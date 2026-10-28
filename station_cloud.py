@@ -66,12 +66,16 @@ class CloudClient:
             if value.get('version')!=1 or value.get('origin')!=ORIGIN or not isinstance(value.get('operations'),list) or len(value['operations'])>50:raise ValueError()
             rows=value['operations']
             for row in rows:
-                if (row.get('kind') not in ('customer','adjust') or not isinstance(row.get('body'),dict)
+                if (row.get('kind') not in ('customer','adjust','trade_create','trade_accept','trade_void') or not isinstance(row.get('body'),dict)
                     or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',row.get('request_key',''))
                     or not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,49}',row.get('store',''))
                     or row['body'].get('request_key')!=row['request_key']
                     or row.get('fingerprint')!=self._fingerprint(row['body'])):raise ValueError()
                 if row['kind']=='adjust':self.customer_id(row.get('customer_id'))
+                if row['kind'].startswith('trade_'):
+                    if not isinstance(row.get('receipt_id'),str) or not re.fullmatch(r'R-[A-Za-z0-9-]{1,100}',row['receipt_id']):raise ValueError()
+                    if row['kind']!='trade_create':self.customer_id(row.get('trade_id'))
+                    if 'result' in row and (not isinstance(row['result'],dict) or row.get('result_fingerprint')!=self._fingerprint(row['result'])):raise ValueError()
             return rows
         except (ValueError,TypeError,AttributeError):
             raise CloudError('The saved pending-action journal needs recovery. Contact support before changing shared balances.',status=409,pending=True) from None
@@ -83,7 +87,7 @@ class CloudClient:
     def _finish_pending(self,store,key):
         self._save_pending([row for row in self._pending() if (row['store'],row['request_key'])!=(store,key)])
 
-    def _mutate(self,kind,body,customer_id=None,*,expected_session_id=None):
+    def _mutate(self,kind,body,customer_id=None,*,expected_session_id=None,trade_id=None,receipt_id=None):
         # Persist the exact retry key/body before the network call. A crash or
         # lost response must not turn one correction into two separate actions.
         with self.lock:
@@ -94,23 +98,30 @@ class CloudClient:
             if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key):raise CloudError('A valid request key is required.')
             rows=self._pending();existing=next((row for row in rows if row['store']==saved['store'] and row['request_key']==key),None)
             fingerprint=self._fingerprint(body)
-            if existing and (existing['kind']!=kind or existing.get('customer_id')!=customer_id or existing['fingerprint']!=fingerprint):
+            if existing and (existing['kind']!=kind or existing.get('customer_id')!=customer_id or existing['fingerprint']!=fingerprint
+                             or existing.get('trade_id')!=trade_id or existing.get('receipt_id')!=receipt_id):
                 raise CloudError('The pending action has different details. Recover that saved action before creating another.',status=409,pending=True)
             if not existing:
                 if any(row['store']==saved['store'] for row in rows):raise CloudError('Resolve the saved pending action before changing shared credit again.',status=409,pending=True)
                 if len(rows)>=50:raise CloudError('Resolve the pending actions on this computer before continuing.',status=409,pending=True)
                 rows.append({'kind':kind,'customer_id':customer_id,'store':saved['store'],'request_key':key,
-                             'body':body,'fingerprint':fingerprint,'created_at':self.clock()})
+                             'body':body,'fingerprint':fingerprint,'created_at':self.clock(),
+                             **({'trade_id':trade_id,'receipt_id':receipt_id} if kind.startswith('trade_') else {})})
                 self._save_pending(rows)
-            path='/api/credit/customers'+('/'+customer_id+'/adjust' if kind=='adjust' else '')
+            if existing and kind.startswith('trade_') and 'result' in existing:return existing['result']
+            path=('/api/trades'+('' if kind=='trade_create' else '/'+trade_id+'/'+kind.removeprefix('trade_')) if kind.startswith('trade_')
+                  else '/api/credit/customers'+('/'+customer_id+'/adjust' if kind=='adjust' else ''))
             try:result=self._authenticated('POST',path,data=body)
             except CloudError as error:
                 # A new action explicitly rejected by the service did not commit.
                 # An older uncertain action stays recoverable even after a role change.
-                if not existing and error.status<500 and not error.offline:self._finish_pending(saved['store'],key)
+                if not kind.startswith('trade_') and not existing and error.status<500 and not error.offline:self._finish_pending(saved['store'],key)
                 else:error.pending=True
                 raise
-            self._finish_pending(saved['store'],key)
+            if kind.startswith('trade_'):
+                rows=self._pending();row=next(row for row in rows if row['store']==saved['store'] and row['request_key']==key)
+                row['result']=result;row['result_fingerprint']=self._fingerprint(result);self._save_pending(rows)
+            else:self._finish_pending(saved['store'],key)
             return result
 
     def pending(self,*,expected_session_id=None):
@@ -121,7 +132,8 @@ class CloudClient:
             if not saved:return {'pending':[],'hasOtherPending':bool(rows)}
             visible=[{'requestKey':row['request_key'],'action':row['kind'],'customerId':row.get('customer_id'),
                       'amount_cents':row['body'].get('amount_cents'),'entryKind':row['body'].get('kind'),
-                      'reference':row['body'].get('reference'),'createdAt':row['created_at']} for row in rows if row['store']==saved['store']]
+                      'reference':row['body'].get('reference'),'createdAt':row['created_at'],
+                      'receiptId':row.get('receipt_id'),'tradeId':row.get('trade_id')} for row in rows if row['store']==saved['store']]
             return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows)}
 
     def recover(self,key,*,retry=False,expected_session_id=None):
@@ -132,6 +144,8 @@ class CloudClient:
             if not saved:raise CloudError('Sign in to the store that owns the pending action.',status=401)
             row=next((row for row in self._pending() if row['store']==saved['store'] and row['request_key']==key),None)
             if row is None:raise CloudError('Pending action not found for this store.',status=404)
+            if row['kind'].startswith('trade_'):
+                raise CloudError('Open the saved local trade to reconcile this action with its hosted receipt.',status=409,pending=True)
             status=self._authenticated('GET','/api/credit/requests/'+quote(key,safe=''))
             if status.get('found') is True:
                 self._finish_pending(saved['store'],key)
@@ -246,3 +260,31 @@ class CloudClient:
             raise CloudError('Use an opening balance or a manager correction. Trade issuance needs the accepted-trade workflow.')
         fields={key:data.get(key) for key in ('request_key','amount_cents','kind','reference','reason','version')}
         return self._mutate('adjust',fields,self.customer_id(ident),expected_session_id=expected_session_id)
+
+    def trade_get(self,ident,*,expected_session_id=None):
+        return self._authenticated('GET','/api/trades/'+self.customer_id(ident),expected_session_id=expected_session_id)
+
+    def trade_request(self,key,*,expected_session_id=None):
+        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key):raise CloudError('Invalid saved trade request.')
+        return self._authenticated('GET','/api/credit/requests/'+quote(key,safe=''),expected_session_id=expected_session_id)
+
+    def trade_create(self,body,receipt_id,*,expected_session_id=None):
+        return self._mutate('trade_create',body,expected_session_id=expected_session_id,receipt_id=receipt_id)
+
+    def trade_accept(self,ident,body,receipt_id,*,expected_session_id=None):
+        return self._mutate('trade_accept',body,expected_session_id=expected_session_id,trade_id=self.customer_id(ident),receipt_id=receipt_id)
+
+    def trade_void(self,ident,body,receipt_id,*,expected_session_id=None):
+        return self._mutate('trade_void',body,expected_session_id=expected_session_id,trade_id=self.customer_id(ident),receipt_id=receipt_id)
+
+    def trade_journal(self,key,*,expected_session_id=None):
+        with self.lock:
+            saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved:raise CloudError('Sign in to the store that owns this trade.',status=401)
+            return next((dict(row) for row in self._pending() if row['store']==saved['store'] and row['request_key']==key and row['kind'].startswith('trade_')),None)
+
+    def trade_finish(self,key,*,expected_session_id=None):
+        with self.lock:
+            saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved:raise CloudError('Sign in to the store that owns this trade.',status=401)
+            self._finish_pending(saved['store'],key)
