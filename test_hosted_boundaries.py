@@ -3,7 +3,8 @@ import base64
 import hashlib
 import hmac
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from hosted.database import Database
 import uuid
 from cryptography.fernet import Fernet
 from hosted.app import create_app
@@ -11,6 +12,20 @@ from hosted.security import ServiceError, amount, identifier, password_hash, pas
 
 
 class HostedSecurityTests(unittest.TestCase):
+    def test_pool_is_lazy_and_recreated_after_process_change(self):
+        with patch('hosted.database.ConnectionPool') as factory,patch('hosted.database.os.getpid',return_value=100) as pid:
+            first,second=Mock(),Mock();factory.side_effect=[first,second]
+            db=Database('fictional-private-url')
+            factory.assert_not_called()
+            self.assertIs(db.pool,first);self.assertIs(db.pool,first)
+            first.open.assert_called_once_with(wait=True,timeout=10)
+            self.assertEqual(factory.call_count,1)
+            pid.return_value=101
+            self.assertIs(db.pool,second)
+            self.assertEqual(factory.call_count,2)
+            first.close.assert_not_called()
+            db.close();second.close.assert_called_once()
+
     def test_password_hash_random_salt_and_validation(self):
         a=password_hash('valid-fixture-password');b=password_hash('valid-fixture-password')
         self.assertNotEqual(a,b);self.assertNotIn('valid-fixture-password',a)
