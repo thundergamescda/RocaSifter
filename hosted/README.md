@@ -13,7 +13,7 @@ Use the private database connection string in DATABASE_URL, never in source.
 
 Build: `pip install -r requirements-hosted.txt`
 
-Pre-deploy: `python -m hosted.manage migrate && python -m hosted.integration`
+Pre-deploy: `python -m hosted.manage migrate && python -m hosted.integration && python -m hosted.runtime_acceptance`
 
 Start: `gunicorn hosted.wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 60 --access-logfile - --access-logformat '%(m)s %(U)s %(s)s'`
 
@@ -46,6 +46,9 @@ Real PostgreSQL acceptance: `python -m hosted.integration` from a host on the
 private network. It creates and drops only an isolated ss_test_<uuid> schema,
 uses fictional accounts and makes no Square requests. Save the run output as
 deployment evidence. A skipped local database test is not a passing cloud test.
+The runtime acceptance step additionally launches the actual Gunicorn worker
+configuration on loopback, checks concurrent readiness against PostgreSQL and
+verifies unauthenticated account requests fail. It changes no merchant records.
 
 ## Remaining release work
 
