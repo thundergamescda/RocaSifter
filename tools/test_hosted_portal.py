@@ -1,6 +1,9 @@
 """Browser acceptance of the private pilot portal using fictional local responses."""
 from pathlib import Path
 import json
+import hashlib
+import traceback
+from datetime import datetime,timezone
 import sys
 import threading
 from unittest.mock import Mock
@@ -25,6 +28,10 @@ def run():
     server.app=app
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     results=[]
+    outcome={'started_utc':datetime.now(timezone.utc).isoformat(),'results':results,'passed':False,
+             'scope':'Local fictional responses; no PostgreSQL or Square calls.',
+             'source_sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in
+                             ('hosted/static/portal.js','hosted/static/portal.css','hosted/templates/portal.html')}}
     try:
         with sync_playwright() as pw:
             browser=pw.chromium.launch(channel='chrome',headless=True)
@@ -35,25 +42,30 @@ def run():
                 page.set_viewport_size({'width':width,'height':height})
                 page.goto(f'http://127.0.0.1:{server.server_port}/')
                 expect(page.get_by_role('heading',name='Sign in to your store')).to_be_visible()
-                expect(page.get_by_label('Email',exact=True)).to_be_visible()
-                expect(page.get_by_label('Password',exact=True)).to_be_visible()
+                expect(page.locator('#signin').get_by_label('Email',exact=True)).to_be_visible()
+                expect(page.locator('#signin').get_by_label('Password',exact=True)).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'Horizontal overflow'
                 page.screenshot(path=str(REPORT/f'hosted-portal-{width}.png'),full_page=True)
                 results.append(f'PASS sign-in layout and labels at {width}x{height}; no horizontal overflow')
-            page.get_by_label('Store ID',exact=True).fill('fictional-store')
-            page.get_by_label('Email',exact=True).fill('cashier@example.invalid')
-            page.get_by_label('Password',exact=True).fill('fictional-password')
+            page.locator('#signin').get_by_label('Store ID',exact=True).fill('fictional-store')
+            page.locator('#signin').get_by_label('Email',exact=True).fill('cashier@example.invalid')
+            page.locator('#signin').get_by_label('Password',exact=True).fill('fictional-password')
             page.get_by_role('button',name='Open store workspace').click()
-            expect(page.get_by_role('status').first).to_contain_text('Store, email or password is incorrect.')
+            expect(page.locator('#loginStatus')).to_contain_text('Store, email or password is incorrect.')
             expect(page.get_by_role('button',name='Open store workspace')).to_be_enabled()
             results.append('PASS failed sign-in shows a safe actionable message and enables retry')
             assert not errors,errors
             assert all(url.startswith(f'http://127.0.0.1:{server.server_port}/') for url in requests), 'Unexpected external request'
             results.append('PASS no JavaScript errors or third-party requests')
+            outcome['passed']=True
             browser.close()
+    except Exception:
+        outcome['failure']=traceback.format_exc()
+        raise
     finally:
         server.shutdown();server.server_close();thread.join(timeout=5)
-        (REPORT/'hosted-portal-acceptance.json').write_text(json.dumps({'results':results,'scope':'Local fictional responses; no PostgreSQL or Square calls.'},indent=2))
+        outcome['finished_utc']=datetime.now(timezone.utc).isoformat()
+        (REPORT/'hosted-portal-acceptance.json').write_text(json.dumps(outcome,indent=2),encoding='utf-8')
     print('\n'.join(results))
 
 

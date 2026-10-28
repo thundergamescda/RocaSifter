@@ -256,3 +256,101 @@ CREATE TRIGGER ss_lot_reservation_guard BEFORE UPDATE ON ss_credit_lot_reservati
     FOR EACH ROW EXECUTE FUNCTION ss_guard_credit_lot_reservation_update();
 -- No balance/lot backfill: incomplete historical origin evidence stays in review.
 INSERT INTO ss_schema_versions(version) VALUES (2) ON CONFLICT DO NOTHING;
+
+-- Version 3: accepted trades create credit only from locked server receipts.
+-- No historical receipts, credit balances, origin policies or lots are backfilled.
+ALTER TABLE ss_requests ADD COLUMN IF NOT EXISTS operation TEXT NOT NULL DEFAULT 'ledger';
+ALTER TABLE ss_tenants ADD COLUMN IF NOT EXISTS trade_cash_bps INTEGER NOT NULL DEFAULT 3500;
+ALTER TABLE ss_tenants ADD COLUMN IF NOT EXISTS trade_credit_bps INTEGER NOT NULL DEFAULT 5000;
+CREATE TABLE IF NOT EXISTS ss_trade_receipts (
+    id UUID NOT NULL, tenant_id UUID NOT NULL, customer_id UUID NOT NULL,
+    title TEXT NOT NULL, source_reference TEXT NOT NULL DEFAULT '',
+    creation_hash TEXT NOT NULL CHECK(length(creation_hash)=64),
+    state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','accepted_credit','accepted_cash','voided')),
+    version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0), currency TEXT NOT NULL DEFAULT 'USD' CHECK(currency='USD'),
+    cash_bps INTEGER NOT NULL CHECK(cash_bps BETWEEN 0 AND 10000),
+    credit_bps INTEGER NOT NULL CHECK(credit_bps BETWEEN 0 AND 10000),
+    cash_override_cents BIGINT CHECK(cash_override_cents BETWEEN 0 AND 100000000),
+    credit_override_cents BIGINT CHECK(credit_override_cents BETWEEN 0 AND 100000000),
+    override_reason TEXT NOT NULL DEFAULT '', intake_total_cents BIGINT NOT NULL CHECK(intake_total_cents BETWEEN 0 AND 100000000),
+    cash_offer_cents BIGINT NOT NULL CHECK(cash_offer_cents BETWEEN 0 AND 100000000),
+    credit_offer_cents BIGINT NOT NULL CHECK(credit_offer_cents BETWEEN 0 AND 100000000),
+    lines_hash TEXT NOT NULL CHECK(length(lines_hash)=64),
+    created_by UUID NOT NULL, updated_by UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    selected_offer TEXT CHECK(selected_offer IN ('credit','cash')), accepted_amount_cents BIGINT,
+    accepted_at TIMESTAMPTZ, accepted_by UUID, ledger_entry_id UUID,
+    receipt_hash TEXT, accepted_receipt JSONB CHECK(accepted_receipt IS NULL OR jsonb_typeof(accepted_receipt)='object'),
+    acceptance_result JSONB CHECK(acceptance_result IS NULL OR jsonb_typeof(acceptance_result)='object'),
+    voided_at TIMESTAMPTZ, voided_by UUID, void_reason TEXT,
+    PRIMARY KEY(tenant_id,id),
+    FOREIGN KEY(tenant_id,customer_id) REFERENCES ss_customers(tenant_id,id),
+    FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,updated_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,accepted_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,voided_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,ledger_entry_id) REFERENCES ss_credit_entries(tenant_id,id),
+    CHECK((state='draft' AND selected_offer IS NULL AND accepted_amount_cents IS NULL AND
+        accepted_at IS NULL AND accepted_by IS NULL AND ledger_entry_id IS NULL AND receipt_hash IS NULL AND
+        accepted_receipt IS NULL AND acceptance_result IS NULL AND voided_at IS NULL AND voided_by IS NULL) OR
+      (state IN ('accepted_credit','accepted_cash') AND accepted_amount_cents IS NOT NULL AND selected_offer IS NOT NULL AND accepted_amount_cents BETWEEN 1 AND 100000000 AND
+        accepted_at IS NOT NULL AND accepted_by IS NOT NULL AND receipt_hash IS NOT NULL AND length(receipt_hash)=64 AND
+        accepted_receipt IS NOT NULL AND acceptance_result IS NOT NULL AND voided_at IS NULL AND voided_by IS NULL AND
+        ((state='accepted_credit' AND selected_offer='credit' AND ledger_entry_id IS NOT NULL) OR
+         (state='accepted_cash' AND selected_offer='cash' AND ledger_entry_id IS NULL))) OR
+      (state='voided' AND voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL AND length(trim(void_reason))>0 AND
+        accepted_at IS NULL AND accepted_by IS NULL AND ledger_entry_id IS NULL AND selected_offer IS NULL))
+);
+CREATE INDEX IF NOT EXISTS ss_trade_receipts_recent ON ss_trade_receipts(tenant_id,updated_at DESC,id DESC);
+DROP INDEX IF EXISTS ss_trade_source_reference;
+CREATE UNIQUE INDEX ss_trade_source_reference ON ss_trade_receipts(tenant_id,source_reference)
+    WHERE source_reference<>'' AND state<>'voided';
+CREATE TABLE IF NOT EXISTS ss_trade_receipt_lines (
+    id UUID NOT NULL, tenant_id UUID NOT NULL, trade_id UUID NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(ordinal>=0), identity JSONB NOT NULL CHECK(jsonb_typeof(identity)='object'),
+    quantity BIGINT NOT NULL CHECK(quantity BETWEEN 1 AND 100000),
+    unit_intake_cents BIGINT NOT NULL CHECK(unit_intake_cents BETWEEN 0 AND 100000000),
+    included BOOLEAN NOT NULL DEFAULT TRUE, reviewed BOOLEAN NOT NULL DEFAULT FALSE,
+    line_total_cents BIGINT NOT NULL CHECK(line_total_cents=quantity*unit_intake_cents AND line_total_cents BETWEEN 0 AND 100000000),
+    PRIMARY KEY(tenant_id,trade_id,id), UNIQUE(tenant_id,trade_id,ordinal),
+    FOREIGN KEY(tenant_id,trade_id) REFERENCES ss_trade_receipts(tenant_id,id)
+);
+CREATE OR REPLACE FUNCTION ss_guard_final_trade_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.state<>'draft' THEN RAISE EXCEPTION 'Final trade receipt evidence is immutable'; END IF;
+    IF TG_OP='DELETE' THEN RAISE EXCEPTION 'Trade receipts must be retained; void a draft instead'; END IF;
+    IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.id IS DISTINCT FROM OLD.id OR
+       NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM OLD.created_at OR
+       NEW.source_reference IS DISTINCT FROM OLD.source_reference OR NEW.creation_hash IS DISTINCT FROM OLD.creation_hash THEN
+        RAISE EXCEPTION 'Trade receipt identity is immutable';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_final_trade_receipt_guard ON ss_trade_receipts;
+CREATE TRIGGER ss_final_trade_receipt_guard BEFORE UPDATE OR DELETE ON ss_trade_receipts
+    FOR EACH ROW EXECUTE FUNCTION ss_guard_final_trade_receipt();
+CREATE OR REPLACE FUNCTION ss_guard_trade_receipt_lines() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE owner_state TEXT;
+BEGIN
+    IF TG_OP='INSERT' THEN
+        SELECT state INTO owner_state FROM ss_trade_receipts WHERE tenant_id=NEW.tenant_id AND id=NEW.trade_id FOR UPDATE;
+    ELSE
+        SELECT state INTO owner_state FROM ss_trade_receipts WHERE tenant_id=OLD.tenant_id AND id=OLD.trade_id FOR UPDATE;
+    END IF;
+    IF owner_state IS DISTINCT FROM 'draft' THEN RAISE EXCEPTION 'Final trade line evidence is immutable'; END IF;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+    IF TG_OP='UPDATE' AND (NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.trade_id IS DISTINCT FROM OLD.trade_id OR NEW.id IS DISTINCT FROM OLD.id) THEN
+        RAISE EXCEPTION 'Trade line identity is immutable';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_trade_line_guard ON ss_trade_receipt_lines;
+CREATE TRIGGER ss_trade_line_guard BEFORE INSERT OR UPDATE OR DELETE ON ss_trade_receipt_lines
+    FOR EACH ROW EXECUTE FUNCTION ss_guard_trade_receipt_lines();
+DO $$ BEGIN
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_credit_origin_policies'::regclass AND conname='ss_policies_no_unreviewed_trade') THEN
+        ALTER TABLE ss_credit_origin_policies ADD CONSTRAINT ss_policies_no_unreviewed_trade
+        CHECK(NOT approved OR lower(trim(origin_code)) NOT IN ('trade_unreviewed','accepted_trade_unreviewed','trade_unknown'));
+    END IF;
+END $$;
+INSERT INTO ss_schema_versions(version) VALUES (3) ON CONFLICT DO NOTHING;

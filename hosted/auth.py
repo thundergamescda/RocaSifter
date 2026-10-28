@@ -84,6 +84,13 @@ class Auth:
     def logout(self,token):
         with self.database.transaction() as db:db.execute('DELETE FROM ss_sessions WHERE token_hash=%s',(digest(token),))
 
+    def list_staff(self,actor):
+        if actor['role']!='owner':raise ServiceError('Only the store owner can manage staff.',403)
+        with self.database.transaction() as db:
+            rows=db.execute('''SELECT id,email,role,enabled,created_at FROM ss_staff
+                               WHERE tenant_id=%s ORDER BY created_at,id''',(actor['tenant_id'],)).fetchall()
+        return [dict(row)|{'id':str(row['id']),'created_at':row['created_at'].isoformat()} for row in rows]
+
     def invite(self,actor,data):
         if actor['role']!='owner':raise ServiceError('Only the store owner can invite staff.',403)
         email=email_address(data.get('email'));role=data.get('role')

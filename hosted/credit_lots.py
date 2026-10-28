@@ -7,7 +7,8 @@ transaction; customer locking serializes every balance/lot/hold mutation.
 import uuid
 from .security import ServiceError
 
-UNKNOWN_ORIGINS = frozenset(('unknown', 'legacy_unknown', 'opening_unknown', 'adjustment_unknown'))
+UNKNOWN_ORIGINS = frozenset(('unknown', 'legacy_unknown', 'opening_unknown', 'adjustment_unknown',
+                            'trade_unreviewed', 'accepted_trade_unreviewed', 'trade_unknown'))
 TAX_BASES = frozenset(('MODIFY_TAX_BASIS', 'DO_NOT_MODIFY_TAX_BASIS'))
 
 

@@ -31,8 +31,9 @@ class Ledger:
         if old and old['body_hash']!=hashed:raise ServiceError('Request key was reused with different details.',409)
         return hashed,old['result'] if old else None
 
-    def _finish(self,db,tenant,key,hashed,result):
-        db.execute('INSERT INTO ss_requests(tenant_id,key,body_hash,result) VALUES (%s,%s,%s,%s)',(tenant,key,hashed,Jsonb(result)))
+    def _finish(self,db,tenant,key,hashed,result,*,operation='ledger'):
+        if operation not in ('ledger','trade'):raise ValueError('Unsupported request operation.')
+        db.execute('INSERT INTO ss_requests(tenant_id,key,body_hash,result,operation) VALUES (%s,%s,%s,%s,%s)',(tenant,key,hashed,Jsonb(result),operation))
         return result
 
     def customers(self,actor,query=''):
@@ -54,7 +55,8 @@ class Ledger:
             # Same lock as _begin_request: wait for an in-flight ledger commit
             # before telling a desktop whether its uncertain action completed.
             db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(str(actor['tenant_id'])+':'+key,))
-            row=db.execute('SELECT result FROM ss_requests WHERE tenant_id=%s AND key=%s',(actor['tenant_id'],key)).fetchone()
+            row=db.execute('SELECT result,operation FROM ss_requests WHERE tenant_id=%s AND key=%s',(actor['tenant_id'],key)).fetchone()
+            if row and row['operation']=='trade':require_role(actor,'owner','manager','buyer')
             return {'found':bool(row),'result':row['result'] if row else None}
 
     def create_customer(self,actor,data):
@@ -76,7 +78,7 @@ class Ledger:
     def adjust(self,actor,customer_id,data):
         require_role(actor,'owner','manager')
         value=amount(data.get('amount_cents'));kind=data.get('kind')
-        if kind=='trade_credit':raise ServiceError('Trade credit must come from a verified accepted trade. Hosted trade issuance is not enabled yet.',409)
+        if kind=='trade_credit':raise ServiceError('Trade credit must come from an explicitly accepted hosted trade receipt; it cannot be entered as a manual adjustment.',409)
         if kind not in ('opening','adjust_add','adjust_remove'):raise ServiceError('Select a supported credit entry.')
         reason=str(data.get('reason','')).strip();reference=str(data.get('reference','')).strip()
         if not 3<=len(reason)<=1000 or not 1<=len(reference)<=200:raise ServiceError('A reason and reference are required.')

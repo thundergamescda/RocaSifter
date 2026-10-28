@@ -14,6 +14,7 @@ from .database import Database
 from .ledger import Ledger
 from .security import ServiceError
 from .square import Square
+from .trades import Trades
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -40,7 +41,8 @@ def create_app(config=None,*,database=None,square_transport=None):
     auth=Auth(db,app.config['BOOTSTRAP_TOKEN']) if db else None
     ledger=Ledger(db) if db else None
     square=Square(db,app.config,square_transport) if db else None
-    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square)
+    trades=Trades(db) if db else None
+    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades)
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -150,6 +152,10 @@ def create_app(config=None,*,database=None,square_transport=None):
     @authenticated
     def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot')
 
+    @app.get('/api/staff')
+    @authenticated
+    def staff_list():return jsonify(staff=auth.list_staff(g.actor))
+
     @app.post('/api/staff/invites')
     @authenticated
     def invite():return jsonify(auth.invite(g.actor,body())),201
@@ -190,6 +196,33 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/square/status')
     @authenticated
     def square_status():return jsonify(square.status(g.actor))
+
+    @app.get('/api/trades')
+    @authenticated
+    def trade_list():
+        try:limit=int(request.args.get('limit','50'))
+        except ValueError:raise ServiceError('Trade page size is invalid.') from None
+        return jsonify(trades.list(g.actor,request.args.get('q',''),limit=limit,cursor=request.args.get('cursor')))
+
+    @app.post('/api/trades')
+    @authenticated
+    def trade_create():return jsonify(trades.create(g.actor,body())),201
+
+    @app.get('/api/trades/<uuid:trade_id>')
+    @authenticated
+    def trade_get(trade_id):return jsonify(trades.get(g.actor,trade_id))
+
+    @app.put('/api/trades/<uuid:trade_id>')
+    @authenticated
+    def trade_update(trade_id):return jsonify(trades.update(g.actor,trade_id,body()))
+
+    @app.post('/api/trades/<uuid:trade_id>/accept')
+    @authenticated
+    def trade_accept(trade_id):return jsonify(trades.accept(g.actor,trade_id,body()))
+
+    @app.post('/api/trades/<uuid:trade_id>/void')
+    @authenticated
+    def trade_void(trade_id):return jsonify(trades.void(g.actor,trade_id,body()))
 
     @app.post('/api/square/connect')
     @authenticated

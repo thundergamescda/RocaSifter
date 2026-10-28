@@ -11,7 +11,8 @@ Region Oregon, paid Starter web compute. Existing database is
 stock-and-sleeve-db in the same region; its public inbound access is blocked.
 Use the private database connection string in DATABASE_URL, never in source.
 
-Build: `pip install -r requirements-hosted.txt`
+Build: `python tools/install_hosted_dependencies.py` (updates pinned pip tooling
+before installing the hosted requirements).
 
 Pre-deploy: `python -m hosted.manage migrate && python -m hosted.integration && python -m unittest -v test_hosted_settlement_postgres test_hosted_reconciliation_postgres && python -m hosted.runtime_acceptance`
 
