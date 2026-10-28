@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, unquote
 from station_service import StationService
 from station_store import StationError
+from station_cloud import CloudError
 
 
 def make_handler(core):
@@ -72,6 +73,10 @@ def make_handler(core):
                     return self.send_json(control.status() if control else {'errors':['No background launcher.']},200 if control else 404)
                 if path=='/api/settings':
                     return self.send_json(self.station.public_settings())
+                if path=='/api/cloud/session':
+                    return self.send_json(self.station.cloud.status())
+                if path=='/api/cloud/pending':
+                    return self.send_json(self.station.cloud.pending(expected_session_id=self.headers.get('X-SS-Local-Session','')))
                 if path=='/api/auth':
                     return self.send_json({'configured':self.station.auth.configured(),'authenticated':self.station.auth.authorized(self.session())})
                 if path=='/api/admin/settings':
@@ -103,7 +108,7 @@ def make_handler(core):
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css','/preview.js'):
+                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js'):
                     filename=Path(core.APP_DIR)/path[1:]
                 elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
@@ -122,6 +127,8 @@ def make_handler(core):
                 if filename.suffix in ('.csv','.zpl'):
                     self.send_header('Content-Disposition',f'attachment; filename="{filename.name}"')
                 self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content)
+            except CloudError as exc:
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed},exc.status)
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -147,10 +154,16 @@ def make_handler(core):
                     return self.send_json({'status':'stopping'},202)
                 if control and control.stopping.is_set():
                     return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
+                if self.path.startswith('/api/cloud/'):
+                    # The cloud client serializes its own staff session. A provider
+                    # timeout must not hold the lock used to save local receipts.
+                    return self.dispatch_post(data)
                 with self.station.lock:
                     if control and control.stopping.is_set():
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
                     return self.dispatch_post(data)
+            except CloudError as exc:
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed},exc.status)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -172,6 +185,17 @@ def make_handler(core):
             if path=='/api/auth/logout':
                 service.auth.logout(self.session())
                 return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
+            if path.startswith('/api/cloud/'):
+                expected=data.get('sessionId','')
+                if not isinstance(expected,str):expected=''
+                if path=='/api/cloud/login':return self.send_json(service.cloud.login(data))
+                if path=='/api/cloud/logout':return self.send_json(service.cloud.logout(expected_session_id=expected))
+                if path=='/api/cloud/search':return self.send_json(service.cloud.customers(data.get('query',''),expected_session_id=expected))
+                if path=='/api/cloud/account':return self.send_json(service.cloud.account(data.get('customerId'),expected_session_id=expected))
+                if path=='/api/cloud/customer':return self.send_json(service.cloud.create_customer(data,expected_session_id=expected))
+                if path=='/api/cloud/adjust':return self.send_json(service.cloud.adjust(data.get('customerId'),data,expected_session_id=expected))
+                if path=='/api/cloud/recover':return self.send_json(service.cloud.recover(data.get('requestKey'),retry=data.get('retry') is True,expected_session_id=expected))
+                return self.send_json({'errors':['Cloud action not found.']},404)
             if path.startswith('/api/admin/'):
                 if not self.admin_required():
                     return
@@ -195,7 +219,7 @@ def make_handler(core):
                     return self.send_json({'status':'ok'},cookie='roca_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
             if path=='/api/import':
                 return self.send_json(service.import_csv(str(data.get('csv','')),str(data.get('fileName','Roca export.csv')),
-                    str(data.get('mode','bulk')),data.get('newDelivery') is True))
+                    str(data.get('mode','bulk')),data.get('newDelivery') is True,intake_options=data.get('intakeOptions')))
             if path=='/api/manual-items':
                 return self.send_json({'receipt':service.add_manual_item(data)})
             if path.startswith('/api/credit/'):
@@ -216,18 +240,20 @@ def make_handler(core):
                 if not service.preferences().get('pricingEnabled', True):
                     raise StationError('Price research is paused. Enable it in Admin to continue.')
                 card = {key:str(data.get(key, '')).strip()[:500] for key in
-                        ('game', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language')}
-                if not card['card_name'] or card['game'] not in ('pokemon', 'magic'):
+                        ('game', 'game_label', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language',
+                         'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')}
+                if not card['card_name'] or not card['game']:
                     raise StationError('Enter a name and choose the game before researching.')
                 return self.send_json({'key': service.pricing.enqueue(card, force=data.get('force') is True)})
             if path=='/api/pricing/links':
                 from pricing_review import lookup_links, grading
                 card = {key:str(data.get(key,'')).strip()[:500] for key in
-                        ('game','card_name','card_set','card_num','printing','condition','language')}
+                        ('game','game_label','card_name','card_set','card_num','printing','condition','language',
+                         'grader','grade','grade_qualifier','cert_number','serial_number','year','manufacturer','team','player')}
                 if not card['card_name']:
                     raise StationError('Enter the item name before comparing prices.')
-                if card['game'] not in ('pokemon','magic'):
-                    raise StationError('Choose Pokémon or Magic for this search.')
+                if not card['game']:
+                    raise StationError('Choose the game before researching this item.')
                 tier = grading(card)
                 return self.send_json({'links':lookup_links(card), 'title':card['card_name'],
                                        'details':' · '.join(card[k] for k in ('card_set','card_num','condition','printing','language') if card[k]),

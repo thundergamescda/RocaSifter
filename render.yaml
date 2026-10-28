@@ -8,7 +8,7 @@ services:
     branch: stock-and-sleeve-2-6-local-preview
     autoDeployTrigger: off
     buildCommand: pip install -r requirements-hosted.txt
-    preDeployCommand: python -m hosted.manage migrate && python -m hosted.integration && python -m hosted.runtime_acceptance
+    preDeployCommand: python -m hosted.manage migrate && python -m hosted.integration && python -m unittest -v test_hosted_settlement_postgres test_hosted_reconciliation_postgres && python -m hosted.runtime_acceptance
     startCommand: gunicorn hosted.wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 60 --access-logfile - --access-logformat '%(m)s %(U)s %(s)s'
     healthCheckPath: /readyz
     envVars:

@@ -156,7 +156,7 @@ def create_app(config=None,*,database=None,square_transport=None):
 
     @app.post('/api/staff/accept-invite')
     def accept_invite():
-        require_db();return jsonify(auth.accept_invite(body())),201
+        require_db();return jsonify(auth.accept_invite(body(),request.remote_addr or '')),201
 
     @app.post('/api/staff/<uuid:staff_id>/disable')
     @authenticated
@@ -165,7 +165,7 @@ def create_app(config=None,*,database=None,square_transport=None):
 
     @app.get('/api/credit/customers')
     @authenticated
-    def customers():return jsonify(customers=ledger.customers(g.actor))
+    def customers():return jsonify(customers=ledger.customers(g.actor,request.args.get('q','')))
 
     @app.post('/api/credit/customers')
     @authenticated
@@ -174,6 +174,10 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/credit/customers/<uuid:customer_id>')
     @authenticated
     def account(customer_id):return jsonify(ledger.account(g.actor,customer_id))
+
+    @app.get('/api/credit/requests/<key>')
+    @authenticated
+    def credit_request_status(key):return jsonify(ledger.request_status(g.actor,key))
 
     @app.post('/api/credit/customers/<uuid:customer_id>/adjust')
     @authenticated

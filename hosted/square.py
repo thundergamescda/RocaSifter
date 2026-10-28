@@ -9,7 +9,7 @@ from urllib.parse import urlencode, quote, urlsplit
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 from psycopg.types.json import Jsonb
 import requests
-from .security import ServiceError, digest, identifier, webhook_valid
+from .security import ServiceError, digest, provider_id, webhook_valid
 from .ledger import require_role
 from .database import audit
 
@@ -46,9 +46,20 @@ class Square:
     def status(self,actor):
         with self.database.transaction() as db:
             row=db.execute('SELECT merchant_id,environment,expires_at,revoked_at FROM ss_square_connections WHERE tenant_id=%s',(actor['tenant_id'],)).fetchone()
-        return {'oauth_configured':self.configured(),'connected':bool(row and not row['revoked_at']),
-                'merchant_id':row['merchant_id'] if row and not row['revoked_at'] else None,
-                'environment':self.environment,'scopes':list(self.SCOPES),'write_checkout_enabled':False}
+        if not row:
+            state='not_connected';message='This store has not connected Square.'
+        elif row['environment']!=self.environment:
+            state='environment_mismatch'
+            message='The saved Square connection uses a different environment. Resolve the saved store connection before authorizing this environment.'
+        elif row['revoked_at']:
+            state='revoked';message='Square authorization was revoked. The store owner must reconnect.'
+        else:
+            state='connected';message='A Square authorization is saved for this environment. Checkout is not enabled.'
+        connected=state=='connected'
+        return {'oauth_configured':self.configured(),'connected':connected,'connection_status':state,'message':message,
+                'merchant_id':row['merchant_id'] if connected else None,
+                'environment':self.environment,'saved_environment':row['environment'] if row else None,
+                'scopes':list(self.SCOPES),'write_checkout_enabled':False}
 
     def begin(self,actor):
         require_role(actor,'owner')
@@ -68,6 +79,10 @@ class Square:
             response.raise_for_status();result=response.json()
             if not all(isinstance(result.get(k),str) and result[k] for k in ('access_token','refresh_token','expires_at')):
                 raise ValueError()
+            if payload.get('grant_type')=='authorization_code' and 'merchant_id' not in result:
+                raise ValueError()
+            if 'merchant_id' in result:
+                result['merchant_id']=provider_id(result['merchant_id'],'Square merchant ID')
             expiry=datetime.fromisoformat(result['expires_at'].replace('Z','+00:00'))
             if expiry.tzinfo is None or expiry<=datetime.now(timezone.utc):raise ValueError()
             return result,expiry
@@ -85,7 +100,7 @@ class Square:
             db.execute('DELETE FROM ss_oauth_states WHERE state_hash=%s',(row['state_hash'],))
         if error or not code:raise ServiceError('Square authorization was declined. You can start again.')
         result,expiry=self._token({'grant_type':'authorization_code','code':code,'redirect_uri':self.redirect})
-        merchant=identifier(result.get('merchant_id'),'Square merchant ID')
+        merchant=provider_id(result.get('merchant_id'),'Square merchant ID')
         with self.database.transaction() as db:
             db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('square-tenant:'+str(actor['tenant_id']),))
             db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('square-merchant:'+merchant,))
@@ -118,7 +133,7 @@ class Square:
 
     def retrieve(self,tenant,kind,resource_id):
         if kind not in ('orders','payments','refunds','locations'):raise ServiceError('Unsupported Square read.')
-        if kind!='locations':identifier(resource_id,'Square resource ID')
+        if kind!='locations':resource_id=provider_id(resource_id,'Square resource ID')
         token=self.access_token(tenant)
         path='/v2/'+kind+('/'+quote(resource_id,safe='') if kind!='locations' else '')
         try:
@@ -131,9 +146,9 @@ class Square:
         if not key:raise ServiceError('Square event ingress is not configured.',503)
         if not webhook_valid(signature,self.webhook_url,raw,key):raise ServiceError('Event signature is invalid.',403)
         try:
-            payload=json.loads(raw);event_id=identifier(payload['event_id'],'Event ID')
-            merchant=identifier(payload['merchant_id'],'Merchant ID');kind=payload['type']
-            resource=merchant if kind=='oauth.authorization.revoked' else identifier(payload['data']['id'],'Resource ID')
+            payload=json.loads(raw);event_id=provider_id(payload['event_id'],'Event ID')
+            merchant=provider_id(payload['merchant_id'],'Merchant ID');kind=payload['type']
+            resource=merchant if kind=='oauth.authorization.revoked' else provider_id(payload['data']['id'],'Resource ID')
         except (ValueError,KeyError,TypeError):raise ServiceError('Event envelope is invalid.') from None
         if kind not in ('order.created','order.updated','payment.created','payment.updated','refund.created','refund.updated','oauth.authorization.revoked'):
             return {'accepted':True,'ignored':True}

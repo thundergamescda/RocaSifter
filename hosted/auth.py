@@ -97,15 +97,48 @@ class Auth:
             audit(db,actor['tenant_id'],actor['staff_id'],'staff-invited',digest(email),{'role':role})
         return {'invite_token':token,'expires_in':86400,'delivery':'Share privately with the intended staff member. Email delivery is not connected.'}
 
-    def accept_invite(self,data):
-        token=str(data.get('invite_token',''));email=email_address(data.get('email'))
+    def _invite_attempt(self,client_address):
+        # Separate namespace from sign-in counters, with a short transaction.
+        # Unknown/replayed invitations still consume this budget before lookup.
+        key=digest('invite-accept:'+str(client_address))
+        with self.database.transaction() as db:
+            db.execute("DELETE FROM ss_login_attempts WHERE window_start<now()-interval '1 day'")
+            db.execute('INSERT INTO ss_login_attempts(key_hash) VALUES (%s) ON CONFLICT DO NOTHING',(key,))
+            attempt=db.execute('SELECT * FROM ss_login_attempts WHERE key_hash=%s FOR UPDATE',(key,)).fetchone()
+            if attempt['window_start']<datetime.now(timezone.utc)-timedelta(minutes=15):
+                db.execute('UPDATE ss_login_attempts SET failures=1,window_start=now() WHERE key_hash=%s',(key,))
+                limited=False
+            elif attempt['failures']>=30:
+                limited=True
+            else:
+                db.execute('UPDATE ss_login_attempts SET failures=failures+1 WHERE key_hash=%s',(key,))
+                limited=False
+        if limited:raise ServiceError('Too many invitation attempts. Try again later.',429)
+
+    @staticmethod
+    def _live_invite(row,email):
+        return bool(row and row['email']==email and not row['used_at']
+                    and row['expires_at']>datetime.now(timezone.utc))
+
+    def accept_invite(self,data,client_address=''):
+        token=data.get('invite_token','');email=email_address(data.get('email'))
+        if not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',token):
+            raise ServiceError('The invitation is invalid, expired or already used.',403)
+        self._invite_attempt(client_address)
+        token_hash=digest(token)
+        # Authenticate the opaque invitation before spending password-hash CPU.
+        # Do not hold a database connection or row lock during the hash.
+        with self.database.transaction() as db:
+            row=db.execute('SELECT * FROM ss_invites WHERE token_hash=%s',(token_hash,)).fetchone()
+        if not self._live_invite(row,email):
+            raise ServiceError('The invitation is invalid, expired or already used.',403)
         hashed=password_hash(data.get('password'));staff=uuid.uuid4()
         with self.database.transaction() as db:
-            row=db.execute('SELECT * FROM ss_invites WHERE token_hash=%s FOR UPDATE',(digest(token),)).fetchone()
-            if not row or row['email']!=email or row['used_at'] or row['expires_at']<datetime.now(timezone.utc):
+            row=db.execute('SELECT * FROM ss_invites WHERE token_hash=%s FOR UPDATE',(token_hash,)).fetchone()
+            if not self._live_invite(row,email):
                 raise ServiceError('The invitation is invalid, expired or already used.',403)
             db.execute('INSERT INTO ss_staff(id,tenant_id,email,password_hash,role) VALUES (%s,%s,%s,%s,%s)',(staff,row['tenant_id'],email,hashed,row['role']))
-            db.execute('UPDATE ss_invites SET used_at=now() WHERE token_hash=%s',(digest(token),))
+            db.execute('UPDATE ss_invites SET used_at=now() WHERE token_hash=%s',(token_hash,))
             audit(db,row['tenant_id'],staff,'invite-accepted',staff)
         return {'staff_created':True}
 

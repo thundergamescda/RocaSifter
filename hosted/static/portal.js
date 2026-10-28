@@ -12,8 +12,8 @@ async function workspace(){
  const me=await api('/api/me');csrfToken=me.csrf_token;
  byId('storeName').textContent=me.store;byId('signin').hidden=true;byId('workspace').hidden=false;
  const square=await api('/api/square/status');
- byId('squareStatus').textContent=square.connected?'Connected to Square '+square.environment+'. Checkout is still in pilot testing.':square.oauth_configured?'Authorize this store to connect its Square account.':'Square application setup is required before store authorization can begin.';
- byId('connectSquare').disabled=!square.oauth_configured;
+ byId('squareStatus').textContent=square.message||(square.connected?'Connected to Square '+square.environment+'. Checkout is still in pilot testing.':square.oauth_configured?'Authorize this store to connect its Square account.':'Square application setup is required before store authorization can begin.');
+ byId('connectSquare').disabled=!square.oauth_configured||square.connection_status==='environment_mismatch';
  byId('connectSquare').textContent=square.connected?'Reconnect Square':'Connect Square';
 }
 byId('loginForm').onsubmit=async event=>{

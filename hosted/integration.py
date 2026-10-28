@@ -67,10 +67,12 @@ class PostgreSQLAcceptance(unittest.TestCase):
 
     def test_two_pool_connections_prevent_double_reservation(self):
         with self.database.transaction() as db:
-            db.execute('UPDATE ss_tenants SET credit_checkout_enabled=TRUE WHERE id=%s',(self.tenant,))
+            from .test_fixtures import approved_checkout_fixture
+            binding=approved_checkout_fixture(db,self.tenant,self.customer)
         def reserve(key):
             try:
-                return self.ledger.reserve(self.actor,self.customer,{'amount_cents':4000,'order_id':'order-'+key,'request_key':key})
+                order='order-'+key
+                return self.ledger.reserve(self.actor,self.customer,{'amount_cents':4000,'order_id':order,'request_key':key},checkout_binding=binding|{'order_id':order})
             except ServiceError:return None
         with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(reserve,['till-a','till-b']))
         self.assertEqual(sum(r is not None for r in results),1)
@@ -83,6 +85,27 @@ class PostgreSQLAcceptance(unittest.TestCase):
         cashier=self.actor|{'role':'cashier'}
         with self.assertRaises(ServiceError):
             self.ledger.adjust(cashier,self.customer,{'amount_cents':100,'kind':'adjust_add','reference':'TEST','reason':'Unauthorized','request_key':'unauthorized','version':1})
+
+    def test_customer_search_finds_matches_beyond_first_hundred_and_stays_tenant_scoped(self):
+        target=uuid.uuid4()
+        with self.database.transaction() as db:
+            for index in range(115):
+                db.execute("INSERT INTO ss_customers(id,tenant_id,display_name,privacy_basis) VALUES (%s,%s,%s,'fixture')",
+                           (uuid.uuid4(),self.tenant,f'Fixture {index:03d}'))
+            db.execute("INSERT INTO ss_customers(id,tenant_id,display_name,contact,privacy_basis) VALUES (%s,%s,%s,%s,'fixture')",
+                       (target,self.tenant,'Zebra fictional customer','literal %_ reference'))
+        self.assertEqual(len(self.ledger.customers(self.actor)),100)
+        matches=self.ledger.customers(self.actor,'ZEBRA')
+        self.assertEqual([c['id'] for c in matches],[target])
+        self.assertEqual(len(self.ledger.customers(self.actor,'%_')),1)
+        self.assertEqual(self.ledger.customers(self.actor|{'tenant_id':uuid.uuid4()},'ZEBRA'),[])
+        with self.assertRaises(ServiceError):self.ledger.customers(self.actor,'x'*201)
+
+    def test_unverified_trade_amount_cannot_be_issued_through_adjustment(self):
+        with self.assertRaises(ServiceError):
+            self.ledger.adjust(self.actor,self.customer,{'request_key':'unverified-trade','amount_cents':500,'kind':'trade_credit',
+                'reference':'client-declared-trade','reason':'Not an accepted hosted receipt','version':1})
+        self.assertEqual(self.ledger.account(self.actor,self.customer)['customer']['balance_cents'],5000)
 
     def test_login_invite_expiry_replay_and_session_revocation(self):
         token,info=self.auth.login({'store_slug':self.slug,'email':'owner@example.invalid','password':'fixture-password-1234'},'fixture-address')

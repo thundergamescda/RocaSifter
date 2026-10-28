@@ -13,7 +13,7 @@ Use the private database connection string in DATABASE_URL, never in source.
 
 Build: `pip install -r requirements-hosted.txt`
 
-Pre-deploy: `python -m hosted.manage migrate && python -m hosted.integration && python -m hosted.runtime_acceptance`
+Pre-deploy: `python -m hosted.manage migrate && python -m hosted.integration && python -m unittest -v test_hosted_settlement_postgres test_hosted_reconciliation_postgres && python -m hosted.runtime_acceptance`
 
 Start: `gunicorn hosted.wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 60 --access-logfile - --access-logformat '%(m)s %(U)s %(s)s'`
 
@@ -54,7 +54,11 @@ verifies unauthenticated account requests fail. It changes no merchant records.
 
 MFA, staff recovery, email verification/delivery, audited owner transfer,
 processor agreements and retention/deletion operations remain release gates.
-The event endpoint validates signatures and stores minimal durable jobs; a
-reconciliation worker and automatic checkout integration are not yet deployed.
+The event endpoint validates signatures and stores minimal durable jobs. A
+leased reconciliation worker, immutable checkout bindings and origin-preserving
+credit lots are implemented. The worker is disabled by default. Automatic
+checkout remains gated; versionless/native Register workflows, unclassified
+legacy balances and unproven return paths require review. No existing balance
+is automatically assigned a tax origin by migrations.
 RLS/role hardening and tenant escape tests must supplement application scoping.
 No analytics trackers, data-sale pipeline or AI training on merchant data exist.

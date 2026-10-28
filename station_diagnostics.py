@@ -9,7 +9,7 @@ from station_paths import resolve_paths
 def readiness(paths=None):
     paths = paths or resolve_paths()
     checks = []
-    for name in ('roca_square_label_app.html', 'station.js', 'station.css', 'roca_edition.json', 'product_brand.json'):
+    for name in ('roca_square_label_app.html', 'station.js', 'station.css', 'preview.js', 'cloud.js', 'cloud.css', 'intake.js', 'roca_edition.json', 'product_brand.json'):
         checks.append({'name': name, 'ready': (paths.resources / name).is_file()})
     for module in ('requests', 'reportlab', 'sqlite3'):
         checks.append({'name': module, 'ready': importlib.util.find_spec(module) is not None})

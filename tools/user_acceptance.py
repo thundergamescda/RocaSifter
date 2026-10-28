@@ -65,7 +65,7 @@ def run():
                 expect(page.locator('.credit-balance-header strong')).to_have_text('$30.00')
                 passed('Insufficient-balance operation is rejected without a debit')
                 page.locator('#previewConnections').click()
-                expect(page.locator('#previewStatus')).to_contain_text('Automatic Square redemption and shared balances are not connected')
+                expect(page.locator('#previewStatus')).to_contain_text('Square checkout and automatic trade issuance remain disabled')
                 page.locator('#loadCleanupPreview').click()
                 expect(page.locator('#cleanupPreviewResult')).to_contain_text('Unlock Admin')
                 passed('Cleanup requires manager authentication and accurately labels live-feature limits')

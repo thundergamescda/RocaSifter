@@ -3,7 +3,7 @@
 Sources must supply their own identity, dates, price basis and provenance. A search
 query or requested card is never evidence that a result describes that variant.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
@@ -12,6 +12,7 @@ import re
 from statistics import median
 import unicodedata
 from urllib.parse import urlsplit, urlencode
+from scanner_adapters import GAME_LABELS, normalize_game
 
 
 REQUIRED_SOURCES = ('tcg_market', 'tcg_sales', 'tcg_listings', 'ebay_sold', 'ebay_listings', 'pricecharting')
@@ -59,7 +60,9 @@ def language(value):
 
 def game(value):
     value = text(value)
-    return {'pokémon': 'pokemon', 'pokemon tcg': 'pokemon', 'pokémon tcg': 'pokemon'}.get(value, value)
+    if value == 'conflicting games':
+        return value
+    return normalize_game(value)[0]
 
 
 def grading(card):
@@ -72,6 +75,8 @@ def grading(card):
     else:
         parsed = ('', '', '')
     explicit = (text(card.get('grader')), text(card.get('grade')), text(card.get('grade_qualifier')))
+    if explicit[0] == 'psa' and explicit[2] == 'gem mint':
+        explicit = (explicit[0], explicit[1], '')
     if any(explicit):
         if not explicit[0] or not re.fullmatch(r'10|[1-9](?:\.5)?', explicit[1]):
             return ('?', '?', '?')
@@ -104,22 +109,44 @@ class Identity:
     grader: str = ''
     grade: str = ''
     grade_qualifier: str = ''
+    # Certificate is a physical-item cache boundary. Different certificates can
+    # still be same-grader/grade/tier sale comparables, so equality excludes it.
+    cert_number: str = field(default='', compare=False)
+    serial_number: str = ''
+    year: str = ''
+    manufacturer: str = ''
+    team: str = ''
+    player: str = ''
+    custom_game_label: str = ''
+    ambiguous_grading: str = ''
 
     @classmethod
     def from_card(cls, card):
         grader, grade, qualifier = grading(card)
-        return cls(game(card.get('game')), text(card.get('card_name')), text(card.get('card_set')),
+        selected_game = game(card.get('game'))
+        _, label = normalize_game(card.get('game_label') or card.get('game'))
+        ambiguous = json.dumps([text(card.get(key)) for key in ('condition', 'grader', 'grade', 'grade_qualifier')]) if grader == '?' else ''
+        return cls(selected_game, text(card.get('card_name')), text(card.get('card_set')),
                    number(card.get('card_num')), finish(card.get('printing')),
                    'graded' if grader else condition(card.get('condition')), language(card.get('language')),
-                   grader, grade, qualifier)
+                   grader, grade, qualifier, str(card.get('cert_number') or '').strip(),
+                   text(card.get('serial_number')), text(card.get('year')), text(card.get('manufacturer')),
+                   text(card.get('team')), text(card.get('player')),
+                   text(label) if selected_game.startswith('other:') else '', ambiguous)
 
     @property
     def complete(self):
-        return all((self.game, self.name, self.card_set, self.number, self.finish, self.condition, self.language)) and self.grader != '?'
+        return (all((self.game, self.name, self.card_set, self.number, self.finish, self.condition, self.language))
+                and self.game != 'conflicting games' and self.grader != '?'
+                and (not self.cert_number or self.is_graded))
 
     @property
     def is_graded(self):
         return bool(self.grader and self.grade and self.grader != '?')
+
+    @property
+    def has_specialized_variant(self):
+        return self.game == 'sports' or any((self.serial_number, self.year, self.manufacturer, self.team, self.player))
 
     @property
     def cache_key(self):
@@ -129,9 +156,13 @@ class Identity:
 def lookup_links(card):
     """Direct search links are navigation aids, never evidence of a checked price."""
     target = Identity.from_card(card)
-    product_line = 'magic' if target.game in ('magic','mtg','magic the gathering','magic: the gathering') else 'pokemon'
-    prefix = 'Magic The Gathering' if product_line == 'magic' else 'Pokemon'
-    base = prefix + ' ' + ' '.join(str(card.get(k) or '').strip() for k in ('card_name','card_set','card_num','printing','language')).strip()
+    product_line = target.game if target.game in ('magic', 'pokemon') else 'all'
+    _, supplied_label = normalize_game(card.get('game_label') or card.get('game'))
+    prefix = {'magic': 'Magic The Gathering', 'pokemon': 'Pokemon'}.get(target.game,
+              GAME_LABELS.get(target.game) or supplied_label)
+    details = [str(card.get(k) or '').strip() for k in
+               ('card_name', 'card_set', 'card_num', 'printing', 'language', 'year', 'manufacturer', 'team', 'player', 'serial_number')]
+    base = ' '.join(part for part in [prefix, *details] if part)
     slab = target.is_graded or target.grader == '?' or bool(re.match(r'^(psa|bgs|cgc|sgc|tag|ace)\b',text(card.get('condition'))))
     descriptor = ' '.join((target.grader, target.grade_qualifier, target.grade)) if target.is_graded else str(card.get('condition') or '')
     ebay_query = base + ' ' + descriptor + ' -proxy -replica -lot -digital'
@@ -140,9 +171,11 @@ def lookup_links(card):
     return {
         'ebay_sold':'https://www.ebay.com/sch/i.html?' + urlencode({'_nkw':ebay_query,'LH_Sold':'1','LH_Complete':'1'}),
         'ebay_listings':'https://www.ebay.com/sch/i.html?' + urlencode({'_nkw':ebay_query,'LH_BIN':'1'}),
-        'pricecharting':'https://www.pricecharting.com/search-products?' + urlencode({'type':'prices','q':base,'go':'Go'}),
-        'tcgplayer':f'https://www.tcgplayer.com/search/{product_line}/product?' + urlencode({'productLineName':product_line,'q':base,'view':'grid'}),
-        'tcgplayer_role':'raw_card_reference' if slab else 'condition_specific_comparison',
+        'pricecharting':'https://www.pricecharting.com/search-products?' + urlencode({'type':'prices','q':' '.join((base, descriptor)).strip(),'go':'Go'}),
+        'tcgplayer':f'https://www.tcgplayer.com/search/{product_line}/product?' + urlencode(
+            dict(q=base, view='grid', **({'productLineName':product_line} if product_line != 'all' else {}))),
+        'tcgplayer_role':'raw_card_reference' if slab or target.has_specialized_variant else
+            'manual_marketplace_search' if product_line == 'all' else 'condition_specific_comparison',
     }
 
 
@@ -169,7 +202,7 @@ def timestamp(value):
 
 def rejected_reason(target, evidence, current_time):
     if not target.complete or Identity.from_card(evidence.get('identity', {})) != target:
-        return 'Exact game, card, set, number, finish, condition and language were not verified.'
+        return 'Exact game, card, set, number, finish, condition, language, grade/tier and supplied serial/sports details were not verified.'
     if evidence.get('currency') != 'USD' or evidence.get('price_basis') != 'item':
         return 'Currency or item-price basis is not comparable.'
     if price(evidence.get('amount')) is None:

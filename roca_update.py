@@ -30,7 +30,8 @@ REQUIRED = {'roca_to_square.py', 'station_service.py', 'station_server.py', 'sta
             'station_desktop.py', 'station_runtime.py', 'roca_update.py', 'requirements.txt',
             'station.js', 'station.css', 'roca_square_label_app.html', 'Start Roca.vbs', 'Update Roca.vbs'}
 REQUIRED.update({'square_variations.py','station_pricing.py','store_pricing.py','station_edition.py','pricing_review.py',
-                 'station_paths.py','station_diagnostics.py','product_brand.py','product_brand.json','preview.js'})
+                 'station_paths.py','station_diagnostics.py','station_cloud.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py',
+                 'cloud.js','cloud.css','intake.js','product_brand.py','product_brand.json','preview.js'})
 MAX_DOWNLOAD = 64 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
 
@@ -85,6 +86,33 @@ def literal_setting(path, name, default=None):
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
             return ast.literal_eval(node.value)
     return default
+
+
+def station_port(path):
+    """Read the installed launcher port without importing or executing its source.
+
+    Older releases use a literal PORT. The desktop-profile release uses this
+    exact environment-backed expression; interpreting only that known shape
+    preserves the launcher's port override without evaluating arbitrary code.
+    """
+    value = 8765
+    allowed = ast.parse("int(os.environ.get('ROCA_STATION_PORT', '8765'))", mode='eval').body
+    for node in ast.parse(Path(path).read_text(encoding='utf-8-sig')).body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'PORT' for target in node.targets):
+            if ast.dump(node.value) == ast.dump(allowed):
+                try:
+                    value = int(os.environ.get('ROCA_STATION_PORT', '8765'))
+                except (ValueError, TypeError):
+                    raise UpdateError('The installed station has an invalid local port override.') from None
+            else:
+                try:
+                    value = ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    raise UpdateError('The installed station has an unsupported local port setting.') from None
+            break
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 65536:
+        raise UpdateError('The installed station has an invalid local port.')
+    return value
 
 
 def installation(root):
@@ -413,9 +441,7 @@ def perform_update(folder, report=lambda *_: None, restart=True, bundle=None):
             except (OSError, ValueError, KeyError, TypeError):
                 edition = None
             current_release = current_release and edition == release['edition']
-        port = literal_setting(root / 'roca_to_square.py', 'PORT', 8765)
-        if not isinstance(port, int) or not 0 < port < 65536:
-            raise UpdateError('The installed station has an invalid local port.')
+        port = station_port(root / 'roca_to_square.py')
         if not current_release:
             report(30, 'Finishing the current Roca session…')
             stop_existing_station(root, port, report)

@@ -29,6 +29,8 @@ def variant_sku(base_sku, cents):
 
 
 def card_identity(core, card):
+    if hasattr(core, 'generate_card_sku'):
+        return core.generate_card_sku(card)
     return core.generate_sku(card.get('card_name', card.get('cardName', '')),
         card.get('card_num', card.get('cardNum', '')), card.get('condition', 'Near Mint'),
         card.get('printing', 'Normal'), 0, card.get('language', 'English'), card.get('card_set', ''))

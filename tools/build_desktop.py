@@ -6,7 +6,7 @@ import sys
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS = ('roca_square_label_app.html', 'station.js', 'station.css', 'preview.js', 'roca_edition.json', 'product_brand.json',
+ASSETS = ('roca_square_label_app.html', 'station.js', 'station.css', 'preview.js', 'cloud.js', 'cloud.css', 'intake.js', 'roca_edition.json', 'product_brand.json',
           'assets/stock-and-sleeve.png', 'assets/stock-and-sleeve.ico')
 
 

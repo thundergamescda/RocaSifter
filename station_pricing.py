@@ -41,8 +41,28 @@ def cents(value):
     return float(Decimal(str(value)).quantize(Decimal('.01'), rounding=ROUND_HALF_UP))
 
 
+def reference_gate(card, *, market_only=True):
+    """A generic raw market reference cannot price an unsupported/specific item."""
+    target = Identity.from_card(card)
+    if not target.complete:
+        return 'needs_identity', 'Confirm the exact game, card identity, condition and any grading tier before price research.'
+    if target.game not in ('pokemon', 'magic'):
+        return 'unavailable', 'Automatic source access for this game is not connected. Research the exact game and item manually.'
+    if target.has_specialized_variant:
+        return 'unavailable', 'This item has sports or serial-specific details. Generic raw-card prices cannot establish its value; verify exact comparable variants manually.'
+    if target.is_graded:
+        return 'unavailable', 'Slab pricing needs verified same-grader/grade/tier evidence. Raw-card market references cannot price this slab.'
+    if market_only and (target.language != 'english' or target.condition != 'near mint'):
+        return 'needs_identity', 'This public market feed has no verified price for the supplied language or condition. Use exact comparable evidence.'
+    return None
+
+
 def proposals(result, preferences):
     """Only market/sold/guide anchors set prices; asking-price outliers never do."""
+    blocked = reference_gate(result.get('card', {}), market_only=not result.get('observations'))
+    if blocked:
+        return dict(result, status=blocked[0], intake_price=None, retail_price=None,
+                    auto_eligible=False, flags=[blocked[1]], message=blocked[1])
     if result.get('observations'):
         checked=timestamp(result.get('checked_at'));expiry=timestamp(result.get('valid_until'))
         clock=datetime.now(timezone.utc)
@@ -104,7 +124,8 @@ class Research:
                 # Force does not interrupt an active lookup or duplicate a batch's copies.
                 if prior['state'] in ('queued', 'running') or (fresh and not force):
                     return key
-            fields = ('game', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language')
+            fields = ('game', 'game_label', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language',
+                      'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')
             db.execute('INSERT OR REPLACE INTO price_jobs VALUES (?,?,?,?,?,NULL)',
                        (key, json.dumps({k: target.get(k, '') for k in fields}), 'queued', now(), None))
         self.wake.set()
@@ -129,7 +150,8 @@ class Research:
                     fresh = checked and datetime.now(timezone.utc) - checked < lifetime and (not expiry or expiry > datetime.now(timezone.utc))
                     if prior['state'] in ('queued', 'running') or (fresh and not force):
                         continue
-                fields = ('game', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language')
+                fields = ('game', 'game_label', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language',
+                          'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')
                 db.execute('INSERT OR REPLACE INTO price_jobs VALUES (?,?,?,?,?,NULL)',
                            (key, json.dumps({k: target.get(k, '') for k in fields}), 'queued', now(), None))
         self.wake.set()
@@ -203,8 +225,12 @@ class Research:
                   'message': 'No comparable price was retrieved.'}
         try:
             target = Identity.from_card(card)
-            if not target.complete or target.game not in ('pokemon', 'magic'):
+            if not target.complete:
                 result.update(status='needs_identity', message='Confirm the game, exact set, collector number, finish, condition and language.')
+            elif target.game not in ('pokemon', 'magic'):
+                result.update(status='unavailable', message='Automatic source access for this game is not connected. Use the exact game and item details to research and verify a price manually.')
+            elif any(card.get(key) for key in ('serial_number','year','manufacturer','team','player')):
+                result.update(status='unavailable', message='This item has sports or serial-specific details. Verify comparable variants manually before choosing its price.')
             elif target.is_graded:
                 result.update(status='unavailable', message='Slab pricing needs verified same-grader/grade sold or guide data. Raw-card prices are never used for slabs.')
                 result['sources']['tcgplayer'].update(status='not_applicable', message='Raw-card reference; excluded from slab valuation.')
@@ -314,6 +340,9 @@ class TCGCSV:
 
     def lookup(self, card):
         target = Identity.from_card(card)
+        blocked = reference_gate(card)
+        if blocked:
+            return {'status': blocked[0], 'message': blocked[1]}
         if target.language != 'english':
             return {'status': 'needs_identity', 'message': 'This public feed has no verified matching-language price.'}
         if target.condition != 'near mint':

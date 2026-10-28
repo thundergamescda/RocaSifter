@@ -41,7 +41,7 @@ class DesktopFoundationTests(unittest.TestCase):
     def test_readiness_does_not_create_store_or_read_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for name in ('station.js', 'station.css', 'roca_square_label_app.html', 'roca_edition.json', 'product_brand.json'):
+            for name in ('station.js', 'station.css', 'preview.js', 'cloud.js', 'cloud.css', 'intake.js', 'roca_square_label_app.html', 'roca_edition.json', 'product_brand.json'):
                 (root / name).write_text('fixture')
             data = root / 'uncreated'
             report = readiness(StationPaths(root, data, False))

@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import unicodedata
 
 
 class ServiceError(ValueError):
@@ -43,6 +44,19 @@ def email_address(value):
 
 def identifier(value,label='Identifier'):
     if not isinstance(value,str) or not 1<=len(value)<=150 or not re.fullmatch(r'[A-Za-z0-9_-]+',value):
+        raise ServiceError(label+' is invalid.')
+    return value
+
+
+def provider_id(value,label='Provider ID'):
+    """Keep provider-issued opaque IDs separate from our restricted request keys.
+
+    Symbols are part of the ID, not URLs or encoded instructions. Callers must
+    quote path segments themselves and must never URL-decode this value.
+    """
+    if not isinstance(value,str) or any(unicodedata.category(c) in ('Cc','Cs') for c in value):
+        raise ServiceError(label+' is invalid.')
+    if not 1<=len(value)<=255 or value!=value.strip() or value in ('.','..'):
         raise ServiceError(label+' is invalid.')
     return value
 

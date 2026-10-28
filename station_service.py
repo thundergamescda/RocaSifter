@@ -16,11 +16,16 @@ from square_variations import price_cents, resolution_key, card_identity
 from station_pricing import Research, DEFAULTS as PRICING_DEFAULTS, identity as price_identity
 from pricing_review import Identity
 from store_pricing import apply_label_rule, extreme, retail_label_price
+from scanner_adapters import (GAME_LABELS, IntakeValidationError, identity_key,
+                              normalize_game, normalize_manual_card, parse_csv_strict,
+                              spreadsheet_safe)
 import station_edition
 
 MODES = ('bulk', 'trade', 'labels', 'online')
 CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
-               'qty', 'final_price', 'include', 'reviewed', 'storage_location', 'sku_override')
+               'qty', 'final_price', 'include', 'reviewed', 'storage_location', 'sku_override',
+               'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number',
+               'serial_number', 'year', 'manufacturer', 'team', 'player', 'price_confirmed')
 
 
 def money(value):
@@ -48,6 +53,8 @@ class StationService:
         self.core = core
         self.store = Store(Path(core.SETTINGS_FILE).parent / 'station_data')
         self.vault = Vault(self.store.root)
+        from station_cloud import CloudClient
+        self.cloud = CloudClient(self.store.root)
         self.auth = AdminAuth(self.store)
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
@@ -127,8 +134,9 @@ class StationService:
         for key in ('pricingEnabled', 'pricingCompleteOnly', 'pricingAutoCorrect'):
             if not isinstance(pref[key], bool):
                 raise StationError('Pricing options must be true or false.')
-        if pref['pricingGame'] not in ('pokemon', 'magic'):
-            raise StationError('Choose a pricing game.')
+        selected_game,selected_label=normalize_game(pref['pricingGame'])
+        if not selected_game or len(selected_label)>100:raise StationError('Choose the game for intake and research.')
+        pref['pricingGame']=selected_game
         for key in ('intakeValuePercent', 'retailValuePercent'):
             pref[key] = money(pref[key])
             if not 1 <= pref[key] <= 150:
@@ -190,25 +198,39 @@ class StationService:
         return {'state': 'starting' if folder else 'off', 'folder': folder,
                 'message': 'Checking for new Roca exports.' if folder else 'Choose an export folder to enable automatic pickup.'}
 
-    def parse(self, content):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / 'scan.csv'
-            path.write_text(content, encoding='utf-8-sig')
-            cards = self.core.parse_roca_csv(str(path), target_bin='*', min_price=0)
-        if not cards:
-            raise StationError('No card rows found. Export a Roca CSV with a Card Name or Name column.')
-        for card in cards:
+    def parse(self, content, intake_options=None, *, with_preview=False):
+        if intake_options is not None and not isinstance(intake_options, dict):
+            raise StationError('CSV mapping options must be an object.')
+        options = dict(intake_options or {})
+        if any(key not in ('adapter', 'default_game', 'column_mapping', 'quantity_column', 'price_column', 'confirm_snapshot') for key in options):
+            raise StationError('Choose supported CSV mapping options.')
+        confirm_snapshot = options.pop('confirm_snapshot', False)
+        if not isinstance(confirm_snapshot, bool):
+            raise StationError('Snapshot confirmation must be true or false.')
+        try:
+            preview = parse_csv_strict(content, **options)
+        except (IntakeValidationError, TypeError) as error:
+            raise StationError(str(error)) from None
+        if preview.requires_quantity_confirmation and not confirm_snapshot:
+            raise StationError('This quantity column is a stock snapshot. Select a delivery quantity column, or explicitly confirm the snapshot intake before adding stock.')
+        cards = []
+        for index, original in enumerate(preview.cards, 1):
+            card = dict(original)
+            # Existing UI totals need a numeric placeholder, but this durable flag
+            # prevents review, labels, trade acceptance or inventory at that value.
+            missing_price = card['price_cents'] is None
             card.update(row_id=uuid.uuid4().hex, include=True, reviewed=False,
-                        storage_location='', sku_override='')
-            # An explicit CSV SKU must survive identity normalization until deliberately removed.
-            generated = self.core.generate_sku(card['card_name'], card['card_num'], card['condition'],
-                card['printing'], 0, card['language'], card.get('card_set', ''))
-            if str(card['sku']) != generated:
-                card['sku_override'] = str(card['sku'])
-        return cards
+                        price_missing=missing_price, price_confirmed=not missing_price,
+                        final_price=card['final_price'] if not missing_price else 0.0,
+                        raw_price=card['price_cents'] / 100 if not missing_price else None,
+                        seq=index, intake_warnings=[issue.message for issue in preview.issues
+                            if issue.row == card['source_row'] and issue.severity == 'warning'])
+            card['sku'] = card['sku_override'] or self.core.generate_card_sku(card)
+            cards.append(card)
+        summary = preview.as_dict();summary.pop('cards', None)
+        return (cards, summary) if with_preview else cards
 
-    def import_csv(self, content, filename, mode='bulk', new_delivery=False, intake_source='manual'):
+    def import_csv(self, content, filename, mode='bulk', new_delivery=False, intake_source='manual', intake_options=None):
         if mode not in MODES:
             raise StationError('Choose a workflow.')
         digest = hashlib.sha256(content.lstrip('\ufeff').replace('\r\n', '\n').encode()).hexdigest()
@@ -216,12 +238,15 @@ class StationService:
             existing = self.store.find_source(digest)
             if existing and not new_delivery:
                 return {'receipt': self.store.receipt(existing), 'duplicate': True}
-            cards = self.parse(content)
+            cards, intake_summary = self.parse(content, intake_options, with_preview=True)
+            games = {card['game'] for card in cards if card.get('game')}
+            batch_game = next(iter(games)) if len(games) == 1 else '' if games else self.preferences()['pricingGame']
             receipt = {'id': 'R-' + time.strftime('%Y%m%d') + '-' + uuid.uuid4().hex[:6].upper(),
                 'source_hash': digest, 'source_name': Path(filename).name[:200],
                 'title': Path(filename).stem[:100] or 'New receipt', 'created': now(), 'mode': mode,
                 'cards': cards, 'inventory_status': 'not_received', 'inventory_intent': None,
-                'pricing_game': self.preferences()['pricingGame'],
+                'pricing_game': batch_game, 'mixed_games': len(games) > 1,
+                'intake_summary': intake_summary,
                 'purchase': None, 'requires_purchase': mode == 'trade', 'customer_reference': '', 'notes': '', 'channel': 'tcgplayer',
                 'storage_strategy': 'bin', 'storage_location': '', 'prepared': False,
                 'intake_source': intake_source, 'pickup_pending': intake_source == 'folder',
@@ -248,17 +273,17 @@ class StationService:
         supplied = data.get('item')
         if not isinstance(supplied, dict):
             raise StationError('Enter the item details.')
-        # Reuse the same validation and SKU identity as scanned cards, without CSV price rounding.
-        card = {'card_name': '', 'card_num': '', 'card_set': '', 'condition': 'Near Mint',
-                'printing': 'Normal', 'language': 'English', 'qty': 1, 'final_price': '',
-                'storage_location': '', 'sku_override': ''}
-        card.update({key: supplied[key] for key in card if key in supplied})
-        card.update(row_id=uuid.uuid5(uuid.NAMESPACE_URL, 'roca-manual:' + request_id).hex,
-                    entry_source='manual', include=True, reviewed=False)
-        card = self.validate_card(card)
-        selected_game = data.get('game', self.preferences()['pricingGame'])
-        if selected_game not in ('pokemon', 'magic'):
+        selected_game, selected_label = normalize_game(data.get('game', self.preferences()['pricingGame']))
+        if not selected_game or len(selected_label) > 100:
             raise StationError('Choose the game for this item.')
+        try:
+            card = normalize_manual_card(dict(supplied, game=selected_game, game_label=selected_label), game=selected_label)
+        except IntakeValidationError as error:
+            raise StationError(str(error)) from None
+        card.update(row_id=uuid.uuid5(uuid.NAMESPACE_URL, 'roca-manual:' + request_id).hex,
+                    entry_source='manual', include=True, reviewed=False,
+                    price_missing=False, price_confirmed=True)
+        card = self.validate_card(card)
         payload_hash = hashlib.sha256(json.dumps(dict(card, game=selected_game), sort_keys=True).encode()).hexdigest()
         card['manual_payload_hash'] = payload_hash
         receipt_id = data.get('receiptId')
@@ -279,8 +304,9 @@ class StationService:
                     raise StationError('This batch is locked after purchase or receiving. Start a new batch for another item.')
                 if data.get('revision') != receipt['revision']:
                     raise StationError('This batch changed in another window. Reopen it before adding an item.')
-                if 'game' in data and selected_game != receipt.get('pricing_game', selected_game):
-                    raise StationError('Keep this batch to one game, or start a separate batch.')
+                if (receipt.get('pricing_game') and selected_game!=receipt['pricing_game']
+                        and any(not row.get('game') for row in receipt['cards'])):
+                    raise StationError('Review the game on each existing card before mixing games in this legacy batch.')
                 receipt['cards'].append(card)
                 # Existing documents describe the old contents; regenerate them after reviewing this item.
                 for key in ('pdf', 'zpl', 'listing', 'ticket'):
@@ -300,6 +326,10 @@ class StationService:
                     'cash_percent': self.preferences()['cashPercent'],
                     'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
             receipt.setdefault('pricing_game', selected_game)
+            explicit_games={row.get('game','') for row in receipt['cards']}
+            if '' not in explicit_games:
+                receipt['mixed_games']=len(explicit_games)>1
+                receipt['pricing_game']=next(iter(explicit_games)) if len(explicit_games)==1 else ''
             self.prepare_pricing(receipt)
             self.store.save_receipt(receipt, ('manual_item', f'Manual item added: {card["qty"]} x {card["card_name"]}. No stock changed.'))
             # A manual item starts in the same research queue as scanned cards.
@@ -335,23 +365,52 @@ class StationService:
 
     def validate_card(self, card):
         result = dict(card)
-        for key in ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language', 'storage_location', 'sku_override'):
-            result[key] = str(result.get(key, '')).strip()[:500]
+        for key in ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language', 'storage_location', 'sku_override',
+                    'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number',
+                    'year', 'manufacturer', 'team', 'player'):
+            result[key] = str(result.get(key, '') or '').strip()
+            if len(result[key]) > 500 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in result[key]):
+                raise StationError('Card identity fields must be at most 500 characters and contain no control characters.')
+        if result['game']:
+            game, label = normalize_game(result['game'])
+            result['game'] = game
+            result['game_label'] = result['game_label'] or label
+        if any(result[key] for key in ('grader', 'grade', 'grade_qualifier', 'cert_number')):
+            if not result['grader'] or not result['grade']:
+                raise StationError('A slab needs both grading company and grade; keep its certificate as text.')
+            labels = (' '.join((result['grader'], result['grade'])),
+                      ' '.join((result['grader'], result['grade'], result['grade_qualifier'])),
+                      ' '.join((result['grader'], result['grade_qualifier'], result['grade'])))
+            normalized = lambda value: ' '.join(value.casefold().split())
+            if normalized(result['condition']) not in {'graded', 'slab', *map(normalized, labels)}:
+                raise StationError('The slab condition conflicts with its grading fields. Update the displayed grade and condition together.')
+            result['condition'] = ' '.join(part for part in (result['grader'], result['grade'], result['grade_qualifier']) if part)
+            result['item_type'] = 'slab'
         if not result['card_name'] or not result['condition'] or not result['printing']:
             raise StationError('Each card needs a name, condition, and finish / treatment.')
         quantity = str(result.get('qty', ''))
         if not quantity.isdecimal() or not 1 <= int(quantity) <= 100_000:
             raise StationError('Card quantity must be a whole number from 1 to 100,000.')
         result['qty'] = int(quantity)
+        if result['cert_number'] and result['qty'] != 1:
+            raise StationError('A certified slab must have one copy per certificate; enter each slab separately.')
         result['final_price'] = money(result.get('final_price', 0))
+        if 'price_confirmed' in result and not isinstance(result['price_confirmed'], bool):
+            raise StationError('Price confirmation must be true or false.')
+        if result.get('price_missing'):
+            if result['final_price'] > 0 or result.get('price_confirmed') is True:
+                result['price_missing'] = False
+                result['price_confirmed'] = True
+            elif result.get('reviewed'):
+                raise StationError('Enter a selling price for every included card. Explicitly confirm a zero price before marking it reviewed.')
         for key in ('include', 'reviewed'):
             if not isinstance(result.get(key), bool):
                 raise StationError('Review and inclusion flags must be true or false.')
         override = result['sku_override']
         if override and not (override.isascii() and override.isdigit() and len(override) == 12):
             raise StationError('An existing Square SKU must be exactly 12 digits.')
-        result['sku'] = override or self.core.generate_sku(result['card_name'], result['card_num'],
-            result['condition'], result['printing'], 0, result['language'], result['card_set'])
+        result['sku'] = override or self.core.generate_card_sku(result)
+        result['intake_identity'] = identity_key(result)
         resolution = result.get('square_sku_resolution')
         if isinstance(resolution, dict):
             if (resolution.get('source_sku') == result['sku'] and resolution.get('price_cents') == price_cents(result)
@@ -378,11 +437,16 @@ class StationService:
                 raise StationError('Already received stock cannot become a new trade-in purchase.')
             old['mode'] = mode
             if 'pricing_game' in data:
-                if data['pricing_game'] not in ('pokemon', 'magic'):
+                selected_game, selected_label = normalize_game(data['pricing_game'])
+                per_card_games = {card.get('game', '') for card in old['cards']}
+                mixed_selection = not selected_game and data['pricing_game'] == '' and '' not in per_card_games
+                if (not selected_game and not mixed_selection) or len(selected_label) > 100:
                     raise StationError('Choose a game for this batch.')
-                if (old.get('purchase') or old['inventory_status'] == 'received') and data['pricing_game'] != old.get('pricing_game', ''):
+                if selected_game and any(game and game != selected_game for game in per_card_games):
+                    raise StationError('This batch has explicit card games. Correct the per-card game or keep the batch game consistent.')
+                if (old.get('purchase') or old['inventory_status'] == 'received') and selected_game != old.get('pricing_game', ''):
                     raise StationError('The game is locked after purchase or receiving.')
-                old['pricing_game'] = data['pricing_game']
+                old['pricing_game'] = selected_game
             if mode == 'trade':
                 old['requires_purchase'] = True
             for key in ('title', 'notes', 'customer_reference', 'storage_location'):
@@ -410,6 +474,8 @@ class StationService:
                         raise StationError('The original split row was not found.')
                     merged = dict(base)
                     merged.update({key: incoming[key] for key in CARD_FIELDS if key in incoming})
+                    if base.get('game') and not merged.get('game'):
+                        raise StationError('Choose the game for this card. An explicit game cannot be removed from its identity.')
                     merged['row_id'] = incoming.get('row_id') or uuid.uuid4().hex
                     if merged.get('final_price')!=base.get('final_price'):
                         merged['operator_price']=True
@@ -418,7 +484,8 @@ class StationService:
                         merged['pricing_acknowledged']=dict(base['pricing_notice'],at=now(),kept_price=merged['final_price'])
                         merged.pop('pricing_notice',None)
                         merged['operator_price']=True
-                    if Identity.from_card(price_identity(merged, old.get('pricing_game', ''))) != Identity.from_card(price_identity(base, old.get('pricing_game', ''))):
+                    if (Identity.from_card(price_identity(merged, old.get('pricing_game', ''))) != Identity.from_card(price_identity(base, old.get('pricing_game', '')))
+                            or identity_key(merged) != identity_key(base)):
                         merged.pop('intake_value', None)
                         merged.pop('price_approval', None)
                     rows.append(self.validate_card(merged))
@@ -430,6 +497,10 @@ class StationService:
                     if len(rows) != len(old['cards']) or any(frozen(a) != frozen(b) for a, b in zip(rows, old['cards'])):
                         raise StationError('Purchased or received cards are locked. Create a separate correction receipt.')
                 old['cards'] = rows
+                explicit_games = {card.get('game', '') for card in rows}
+                if '' not in explicit_games:
+                    old['mixed_games'] = len(explicit_games) > 1
+                    old['pricing_game'] = next(iter(explicit_games)) if len(explicit_games) == 1 else ''
             if prior_game != old.get('pricing_game', ''):
                 for card in old['cards']:
                     card.pop('intake_value', None)
@@ -543,6 +614,8 @@ class StationService:
         cards = [self.validate_card(c) for c in receipt['cards'] if c.get('include', True)]
         if not cards:
             raise StationError('Include at least one card.')
+        if any(c.get('price_missing') for c in cards):
+            raise StationError('Enter or explicitly confirm a selling price for every included card before labels or inventory.')
         if any(not c['reviewed'] for c in cards):
             raise StationError('Review the identity, condition, finish and price of every included card first.')
         if receipt.get('requires_purchase') and not receipt['purchase']:
@@ -557,7 +630,7 @@ class StationService:
             if receipt['mode'] != 'trade' or offer_type not in ('cash', 'credit'):
                 raise StationError('Choose a cash or store-credit offer on a trade-in receipt.')
             included = [c for c in receipt['cards'] if c.get('include', True)]
-            if not included or any(not c['reviewed'] for c in included):
+            if not included or any(not c['reviewed'] or c.get('price_missing') for c in included):
                 raise StationError('Review all included cards before recording the accepted offer.')
             retail = sum(Decimal(str(c.get('intake_value', c['final_price']))) * c['qty'] for c in included)
             percent = Decimal(str(receipt[offer_type + '_percent']))
@@ -728,7 +801,7 @@ class StationService:
                     values = [self.core.barcode_value(c),c['card_name'],c['card_set'],c['card_num'],c['condition'],c['printing'],
                               c['language'],c['qty'],f'{c["final_price"]:.2f}',c['storage_location'] or receipt['storage_location'],receipt['channel']]
                     # Spreadsheet exports must not interpret card names as formulas.
-                    writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=','+','-','@')) else v for v in values])
+                    writer.writerow([spreadsheet_safe(v) if isinstance(v, str) else v for v in values])
             ticket = prefix+'.pdf'
             self.ticket(root/ticket, receipt, cards)
             receipt['files'].update(listing=prefix+'.csv', ticket=ticket)
