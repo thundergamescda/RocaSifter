@@ -114,8 +114,13 @@ def create_app(config=None,*,database=None,square_transport=None):
         ready=False
         if db:
             try:ready=db.ready()
-            except Exception:pass
+            except Exception as error:
+                # Provider logs may show error class; never log DSN or SQL parameters.
+                app.logger.warning('readiness_database_failed type=%s',type(error).__name__)
         configured=bool(ready and app.config['APP_ENCRYPTION_KEYS'])
+        if not configured:
+            app.logger.warning('service_not_ready database_configured=%s database_ready=%s encryption_configured=%s',
+                               db is not None,ready,bool(app.config['APP_ENCRYPTION_KEYS']))
         return jsonify(database_ready=ready,service_ready=configured,mode='pilot',commercial_release=False),200 if configured else 503
 
     @app.get('/')
