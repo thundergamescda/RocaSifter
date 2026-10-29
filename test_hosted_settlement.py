@@ -6,13 +6,19 @@ from hosted.settlement import ReservationTerms, RedemptionTerms, plan_order, pla
 
 
 def terms():
-    return ReservationTerms('sale-1', 'customer-1', 'location-1', 'discount-credit', 2000, 'approved-fixture-policy')
+    return ReservationTerms('sale-1', 'customer-1', 'location-1', 'discount-credit', 2000, 'approved-fixture-policy',
+                            discount_catalog_version=123,discount_tax_basis='DO_NOT_MODIFY_TAX_BASIS')
+
+
+def catalog_discount():
+    return {'id':'discount-credit','type':'DISCOUNT','version':123,'is_deleted':False,
+            'discount_data':{'discount_type':'VARIABLE_AMOUNT','modify_tax_basis':'DO_NOT_MODIFY_TAX_BASIS'}}
 
 
 def order():
     return {'id': 'sale-1', 'customer_id': 'customer-1', 'location_id': 'location-1',
             'version': 3, 'state': 'COMPLETED', 'total_money': {'amount': 3000, 'currency': 'USD'},
-            'discounts': [{'uid': 'credit-uid', 'catalog_object_id': 'discount-credit',
+            'discounts': [{'uid': 'credit-uid', 'catalog_object_id': 'discount-credit','catalog_version':123,
                            'type': 'VARIABLE_AMOUNT', 'amount_money': {'amount': 2000, 'currency': 'USD'},
                            'applied_money': {'amount': 1500, 'currency': 'USD'}}]}
 
@@ -41,20 +47,57 @@ def payment_refunds():
 
 
 class OrderSettlementPlannerTests(unittest.TestCase):
+    def test_completed_credit_requires_exact_order_catalog_version(self):
+        for version in (None,True,0,124,'123'):
+            value=order();value['discounts'][0]['catalog_version']=version
+            with self.subTest(version=version):
+                self.assertEqual(plan_order(terms(),value,catalog_discount=catalog_discount()).action,'exception')
+
+    def test_completed_credit_and_zero_use_require_retrieved_catalog_proof(self):
+        for amount in (0,1500):
+            value=order();value['discounts'][0]['applied_money']['amount']=amount
+            self.assertEqual(plan_order(terms(),value).code,'catalog_discount_unverified')
+        self.assertEqual(plan_order(replace(terms(),discount_catalog_version=None),order()).code,'catalog_terms_missing')
+
+    def test_wrong_catalog_identity_version_object_type_and_deletion_fail_closed(self):
+        for patch in ({'id':'other'},{'version':124},{'version':True},{'type':'ITEM'},{'is_deleted':True},{'is_deleted':0}):
+            with self.subTest(patch=patch):
+                self.assertEqual(plan_order(terms(),order(),catalog_discount=catalog_discount()|patch).action,'exception')
+
+    def test_catalog_amount_type_and_explicit_tax_basis_must_match_approved_snapshot(self):
+        for patch in ({'discount_type':'FIXED_PERCENTAGE'},{'discount_type':'FIXED_AMOUNT'},
+                      {'modify_tax_basis':'MODIFY_TAX_BASIS'},{'modify_tax_basis':None},{'percentage':'5'}):
+            value=catalog_discount();value['discount_data'].update(patch)
+            with self.subTest(patch=patch):
+                self.assertEqual(plan_order(terms(),order(),catalog_discount=value).action,'exception')
+
+    def test_fixed_amount_catalog_currency_is_validated(self):
+        value=order();value['discounts'][0]['type']='FIXED_AMOUNT'
+        proof=catalog_discount();proof['discount_data'].update(discount_type='FIXED_AMOUNT',amount_money={'amount':2000,'currency':'USD'})
+        self.assertEqual(plan_order(terms(),value,catalog_discount=proof).action,'consume')
+        proof['discount_data']['amount_money']['currency']='CAD'
+        self.assertEqual(plan_order(terms(),value,catalog_discount=proof).code,'catalog_discount_currency_mismatch')
+
+    def test_open_and_canceled_orders_do_not_need_catalog_reads(self):
+        value=order();value['state']='OPEN'
+        self.assertEqual(plan_order(terms(),value).action,'pending')
+        value['state']='CANCELED';value.pop('discounts')
+        self.assertEqual(plan_order(terms(),value).action,'release')
+
     def test_applied_discount_not_declared_amount_or_order_total_is_consumed(self):
-        decision = plan_order(terms(), order())
+        decision = plan_order(terms(), order(),catalog_discount=catalog_discount())
         self.assertEqual((decision.action, decision.amount_cents), ('consume', 1500))
         self.assertEqual(decision.source_key, 'order:sale-1')
         self.assertEqual(decision.discount_uid, 'credit-uid')
 
     def test_name_match_does_not_authorize_a_different_catalog_discount(self):
         value = order();value['discounts'][0].update(name='Store Credit', catalog_object_id='untracked')
-        self.assertEqual(plan_order(terms(), value).code, 'tracked_discount_not_unique')
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).code, 'tracked_discount_not_unique')
 
     def test_other_discounts_do_not_change_tracked_credit(self):
         value = order();value['discounts'].append({'uid': 'coupon', 'catalog_object_id': 'sale-coupon',
                                                   'applied_money': {'amount': 800, 'currency': 'USD'}})
-        self.assertEqual(plan_order(terms(), value).amount_cents, 1500)
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).amount_cents, 1500)
 
     def test_duplicate_catalog_discount_or_uid_needs_review(self):
         for same_catalog in (True, False):
@@ -62,48 +105,48 @@ class OrderSettlementPlannerTests(unittest.TestCase):
                 value = order();extra = deepcopy(value['discounts'][0])
                 if not same_catalog:extra['catalog_object_id'] = 'other'
                 value['discounts'].append(extra)
-                self.assertEqual(plan_order(terms(), value).action, 'exception')
+                self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
 
     def test_order_customer_location_and_uid_binding(self):
         for key in ('id', 'customer_id', 'location_id'):
             value = order();value[key] = 'other'
-            with self.subTest(key=key):self.assertEqual(plan_order(terms(), value).action, 'exception')
-        self.assertEqual(plan_order(replace(terms(), discount_uid='another'), order()).code, 'discount_uid_mismatch')
+            with self.subTest(key=key):self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
+        self.assertEqual(plan_order(replace(terms(), discount_uid='another'), order(),catalog_discount=catalog_discount()).code, 'discount_uid_mismatch')
 
     def test_open_draft_and_stale_order_hold_credit(self):
         for state in ('OPEN', 'DRAFT'):
             value = order();value['state'] = state
-            self.assertEqual(plan_order(terms(), value).action, 'pending')
-        self.assertEqual(plan_order(replace(terms(), minimum_order_version=4), order()).code, 'stale_order_version')
+            self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'pending')
+        self.assertEqual(plan_order(replace(terms(), minimum_order_version=4), order(),catalog_discount=catalog_discount()).code, 'stale_order_version')
 
     def test_cancellation_releases_without_creating_a_redemption(self):
         value = order();value['state'] = 'CANCELED';value.pop('discounts');value.pop('total_money')
-        decision = plan_order(terms(), value)
+        decision = plan_order(terms(), value,catalog_discount=catalog_discount())
         self.assertEqual((decision.action, decision.amount_cents, decision.source_key), ('release', 0, None))
 
     def test_completed_zero_credit_releases_hold(self):
         value = order();value['discounts'][0]['applied_money']['amount'] = 0
-        self.assertEqual(plan_order(terms(), value).code, 'completed_without_credit_use')
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).code, 'completed_without_credit_use')
 
     def test_money_is_strict_positive_integer_cents_not_more_than_reservation(self):
         for invalid in (True, '1500', 1.5, -1, 2001, None):
             with self.subTest(value=invalid):
                 value = order();value['discounts'][0]['applied_money']['amount'] = invalid
-                self.assertEqual(plan_order(terms(), value).action, 'exception')
+                self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
 
     def test_currency_and_discount_type_fail_closed(self):
         value = order();value['discounts'][0]['applied_money']['currency'] = 'CAD'
-        self.assertEqual(plan_order(terms(), value).action, 'exception')
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
         value = order();value['total_money']['currency'] = 'CAD'
-        self.assertEqual(plan_order(terms(), value).action, 'exception')
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
         value = order();value['discounts'][0].update(type='FIXED_PERCENTAGE', percentage='50')
-        self.assertEqual(plan_order(terms(), value).code, 'unapproved_discount_type')
+        self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).code, 'unapproved_discount_type')
 
     def test_malformed_resources_and_unknown_state_never_authorize_consumption(self):
         resources = [None, [], {}, order() | {'state': 'UNKNOWN'}, order() | {'version': True},
                      order() | {'version': 0}, order() | {'discounts': {}}, order() | {'discounts': [None]}]
         for value in resources:
-            with self.subTest(value=value):self.assertEqual(plan_order(terms(), value).action, 'exception')
+            with self.subTest(value=value):self.assertEqual(plan_order(terms(), value,catalog_discount=catalog_discount()).action, 'exception')
 
     def test_terms_require_complete_approved_usd_bindings(self):
         for patch in ({'policy_reference': ''}, {'reserved_cents': True}, {'currency': 'CAD'},

@@ -354,3 +354,64 @@ DO $$ BEGIN
     END IF;
 END $$;
 INSERT INTO ss_schema_versions(version) VALUES (3) ON CONFLICT DO NOTHING;
+
+-- Version 4: optional staff MFA. No account is enrolled or inferred by migration.
+ALTER TABLE ss_sessions ADD COLUMN IF NOT EXISTS mfa_version BIGINT;
+ALTER TABLE ss_sessions ADD COLUMN IF NOT EXISTS mfa_authenticated_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS ss_staff_mfa (
+    tenant_id UUID NOT NULL, staff_id UUID NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE, version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0),
+    encrypted_seed TEXT, last_totp_step BIGINT NOT NULL DEFAULT -1 CHECK(last_totp_step>=-1),
+    pending_seed TEXT, pending_token_hash TEXT, pending_session_hash TEXT, pending_password_fingerprint TEXT, pending_expires_at TIMESTAMPTZ,
+    pending_attempts INTEGER NOT NULL DEFAULT 0 CHECK(pending_attempts BETWEEN 0 AND 5),
+    enabled_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY(tenant_id,staff_id), FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff(tenant_id,id),
+    CHECK(enabled=(encrypted_seed IS NOT NULL)),
+    CHECK((pending_seed IS NULL AND pending_token_hash IS NULL AND pending_session_hash IS NULL AND pending_password_fingerprint IS NULL AND pending_expires_at IS NULL)
+       OR (pending_seed IS NOT NULL AND pending_token_hash IS NOT NULL AND pending_session_hash IS NOT NULL AND pending_password_fingerprint IS NOT NULL AND pending_expires_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS ss_mfa_recovery_codes (
+    tenant_id UUID NOT NULL, staff_id UUID NOT NULL, mfa_version BIGINT NOT NULL,
+    code_hash TEXT NOT NULL CHECK(length(code_hash)=64), used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(tenant_id,staff_id,code_hash),
+    FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff_mfa(tenant_id,staff_id)
+);
+CREATE TABLE IF NOT EXISTS ss_mfa_challenges (
+    token_hash TEXT PRIMARY KEY CHECK(length(token_hash)=64), tenant_id UUID NOT NULL, staff_id UUID NOT NULL,
+    mfa_version BIGINT NOT NULL, password_fingerprint TEXT NOT NULL CHECK(length(password_fingerprint)=64),
+    client_hash TEXT NOT NULL CHECK(length(client_hash)=64), expires_at TIMESTAMPTZ NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 5), used_at TIMESTAMPTZ, cancelled_at TIMESTAMPTZ,
+    issued_session_hash TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff_mfa(tenant_id,staff_id)
+);
+CREATE INDEX IF NOT EXISTS ss_mfa_challenge_staff ON ss_mfa_challenges(tenant_id,staff_id,created_at);
+CREATE INDEX IF NOT EXISTS ss_mfa_challenge_age ON ss_mfa_challenges(expires_at);
+CREATE OR REPLACE FUNCTION ss_guard_mfa_session() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE staff_guard UUID;
+DECLARE enabled_mfa BOOLEAN;
+DECLARE current_version BIGINT;
+BEGIN
+    IF TG_OP='UPDATE' AND (NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.staff_id IS DISTINCT FROM OLD.staff_id OR
+       NEW.token_hash IS DISTINCT FROM OLD.token_hash OR NEW.created_at IS DISTINCT FROM OLD.created_at) THEN
+        RAISE EXCEPTION 'Session identity cannot be reassigned' USING ERRCODE='23514';
+    END IF;
+    -- UPDATE already owns a session row before this row trigger runs. Never
+    -- wait for staff in that reverse order: fail closed and retry instead.
+    BEGIN
+        SELECT id INTO staff_guard FROM ss_staff
+         WHERE tenant_id=NEW.tenant_id AND id=NEW.staff_id AND enabled=TRUE FOR UPDATE NOWAIT;
+    EXCEPTION WHEN lock_not_available THEN
+        RAISE EXCEPTION 'Account security changed concurrently; retry authentication' USING ERRCODE='40001';
+    END;
+    IF staff_guard IS NULL THEN RAISE EXCEPTION 'Enabled staff is required for a session' USING ERRCODE='23514'; END IF;
+    SELECT enabled,version INTO enabled_mfa,current_version FROM ss_staff_mfa
+     WHERE tenant_id=NEW.tenant_id AND staff_id=NEW.staff_id;
+    IF enabled_mfa=TRUE AND (NEW.mfa_version IS DISTINCT FROM current_version OR NEW.mfa_authenticated_at IS NULL) THEN
+        RAISE EXCEPTION 'Current second-factor proof is required for this session' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_session_mfa_guard ON ss_sessions;
+CREATE TRIGGER ss_session_mfa_guard BEFORE INSERT OR UPDATE ON ss_sessions
+    FOR EACH ROW EXECUTE FUNCTION ss_guard_mfa_session();
+INSERT INTO ss_schema_versions(version) VALUES (4) ON CONFLICT DO NOTHING;

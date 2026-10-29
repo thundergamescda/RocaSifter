@@ -14,7 +14,7 @@ def main():
     try:
         if args.command=='migrate':db.migrate()
         if not db.ready():raise SystemExit('Schema readiness failed.')
-        print('PostgreSQL schema version 3 is ready. No credential values printed.')
+        print('PostgreSQL schema version 4 is ready. No credential values printed.')
     finally:db.close()
 
 

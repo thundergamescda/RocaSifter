@@ -37,6 +37,12 @@ EVIDENCE_ALLOWLIST = frozenset({
     'shared-trade-focused-tests.log', 'shared-trade-user-acceptance.log', 'shared-trade-user-acceptance.json',
     'shared-trade-offer-review.png', 'shared-trade-confirmed.png',
     'shared-trade-pending-recovery.png', 'shared-trade-cancelled.png', 'shared-trade-user-acceptance.md',
+    'unit-summary.json', 'unit-tests.log', 'postgres-summary.json', 'postgres-tests.log',
+    'desktop-mfa-user-acceptance.json', 'desktop-mfa-user-acceptance.log',
+    'hosted-mfa-browser.json', 'hosted-mfa-browser.log',
+    'privacy-user-acceptance.json', 'privacy-user-acceptance.log',
+    'restore-drill.json', 'restore-drill.log', 'packaged-security-readiness.json',
+    'SECURITY_PILOT_README.md',
 })
 FORBIDDEN_PARTS = frozenset({
     '.git', '.venv', '__pycache__', 'station_data', 'outputs', 'backups',
@@ -229,12 +235,21 @@ AVAILABLE: reviewed intake/manual cards/slabs, game/scanner adapters, labels,
 pricing research and invited online shared customer-credit accounts/history and
 manager corrections. Shared credit requires internet and an invited staff login;
 uncertain writes remain in a protected recovery journal.
+SECURITY PILOT: optional authenticator MFA and one-use recovery codes require the
+matching hosted release/database and protected server encryption keys. Staff who
+enable MFA must use an MFA-capable desktop; older clients receive an upgrade
+message and cannot sign in with a password alone. Unenrolled pilot staff retain
+their existing sign-in flow. Installing this desktop does not deploy the server.
+The hosted workspace adds an owner-only customer export after recent sign-in and
+identity/authority/copy-handling checks. Its scope is explicitly linked hosted
+customer records; local desktop records, unlinked records, provider-held data and
+backups are excluded. Export does not delete records or complete offboarding.
 GATED: Square OAuth requires securely configured sandbox credentials and merchant
 consent. Checkout, tracked-discount automatic redemption and hosted accepted-trade
 issuance require final server/sandbox/device/tax/report acceptance; related source
 is under development. Do not use the pilot for production credit redemption.
 CLEANUP: conservative review/dry run; live deletion remains gated.
-Commercial privacy, full rights/offboarding, retention, restore, release signing,
+Commercial privacy, full rights/offboarding, retention, production restore, release signing,
 provider rights and Marketplace acceptance remain open release gates.
 
 No production credentials or merchant data belong in this package. Local records

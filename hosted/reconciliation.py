@@ -10,7 +10,7 @@ import time
 import uuid
 from .database import Database
 from .security import ServiceError
-from .settlement import Settlement, record_exception, _id
+from .settlement import Settlement, record_exception, _id, _decode_snapshot, plan_order
 from .square import Square
 
 
@@ -112,6 +112,7 @@ class Reconciler:
         raise ResourceError('unsupported_reconciliation_event')
 
     def _order(self, job, order):
+        catalog=None;catalog_error=None;terms=None
         with self.database.transaction() as db:
             reservation = db.execute('SELECT id FROM ss_reservations WHERE tenant_id=%s AND order_id=%s',
                                      (job['tenant_id'], order['id'])).fetchone()
@@ -122,8 +123,25 @@ class Reconciler:
                         any(isinstance(item, dict) and item.get('catalog_object_id') == store['discount_id'] for item in discounts)):
                     raise ResourceError('unreserved_credit_discount')
                 return {'state': 'ignored', 'code': 'order_has_no_credit_reservation'}
+            snapshot=db.execute('SELECT * FROM ss_reservation_terms WHERE tenant_id=%s AND reservation_id=%s',
+                                (job['tenant_id'],reservation['id'])).fetchone()
+            try:terms,_=_decode_snapshot(snapshot)
+            except ServiceError:pass # The atomic adapter persists the specific review condition.
+        if terms is not None and plan_order(terms,order).code=='catalog_discount_unverified':
+            self._heartbeat(job)
+            try:
+                response=self.square.retrieve(job['tenant_id'],'catalog',terms.discount_id,
+                                              catalog_version=terms.discount_catalog_version)
+                catalog=response.get('object',{}) if isinstance(response,dict) else {}
+                if not isinstance(catalog,dict):catalog={}
+            except ServiceError:
+                # A timeout/permission error is not evidence to spend or release.
+                # Keep the reservation in durable review; never fall back to the
+                # latest catalog version or an assumed default tax basis.
+                catalog_error='catalog_discount_unavailable'
         self._heartbeat(job)
-        return self.settlement.reconcile_order(job['tenant_id'], reservation['id'], order)
+        return self.settlement.reconcile_order(job['tenant_id'], reservation['id'], order,
+                                               catalog_discount=catalog,catalog_error=catalog_error)
 
     def _refund(self, job):
         refund = self._get(job, 'refunds', job['resource_id'])

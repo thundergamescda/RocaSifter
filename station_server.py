@@ -130,7 +130,7 @@ def make_handler(core):
                     self.send_header('Content-Disposition',f'attachment; filename="{filename.name}"')
                 self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart},exc.status)
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -179,7 +179,7 @@ def make_handler(core):
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
                     return self.dispatch_post(data)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart},exc.status)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -205,7 +205,10 @@ def make_handler(core):
                 expected=data.get('sessionId','')
                 if not isinstance(expected,str):expected=''
                 if path=='/api/cloud/login':return self.send_json(service.cloud.login(data))
-                if path=='/api/cloud/logout':return self.send_json(service.cloud.logout(expected_session_id=expected))
+                if path=='/api/cloud/mfa-verify':return self.send_json(service.cloud.verify_mfa(data))
+                if path=='/api/cloud/mfa-cancel':return self.send_json(service.cloud.cancel_mfa(data))
+                if path=='/api/cloud/mfa-clear-local':return self.send_json(service.cloud.clear_mfa_local(data))
+                if path=='/api/cloud/logout':return self.send_json(service.cloud.logout(expected_session_id=expected,expected_challenge_id=data.get('challengeId')))
                 if path=='/api/cloud/search':return self.send_json(service.cloud.customers(data.get('query',''),expected_session_id=expected))
                 if path=='/api/cloud/account':return self.send_json(service.cloud.account(data.get('customerId'),expected_session_id=expected))
                 if path=='/api/cloud/customer':return self.send_json(service.cloud.create_customer(data,expected_session_id=expected))

@@ -6,12 +6,14 @@ import secrets
 import uuid
 from .security import ServiceError, digest, email_address, password_hash, password_valid
 from .database import audit
+from .mfa import MFA, issue_session
 
 
 class Auth:
-    def __init__(self,database,bootstrap_token=''):
+    def __init__(self,database,bootstrap_token='',*,encryption_keys=''):
         self.database,self.bootstrap_token=database,bootstrap_token
         self.dummy_hash=password_hash('dummy-login-not-an-account')
+        self.mfa=MFA(database,encryption_keys)
 
     def bootstrap(self,data):
         if not self.bootstrap_token:raise ServiceError('Pilot onboarding is not enabled.',503)
@@ -63,21 +65,39 @@ class Auth:
                 failure=True
             else:
                 failure=False;db.execute('DELETE FROM ss_login_attempts WHERE key_hash=%s',(rate_key,))
-                token=secrets.token_urlsafe(32)
-                db.execute('DELETE FROM ss_sessions WHERE expires_at<now()')
-                db.execute("INSERT INTO ss_sessions(token_hash,tenant_id,staff_id,expires_at) VALUES (%s,%s,%s,now()+interval '8 hours')",
-                           (digest(token),staff['tenant_id'],staff['id']))
-                audit(db,staff['tenant_id'],staff['id'],'staff-login',staff['id'])
+                state=db.execute('SELECT enabled FROM ss_staff_mfa WHERE tenant_id=%s AND staff_id=%s',
+                                 (staff['tenant_id'],staff['id'])).fetchone()
+                enrolled=bool(state and state['enabled'])
         if failure:raise ServiceError('Store, email or password is incorrect.',401)
-        return token,{'store':slug,'store_name':staff['name'],'role':staff['role'],'expires_in':28800}
+        if enrolled:
+            # Independent committed budget: successful passwords, new challenges
+            # and cancellations cannot reset the second-factor guessing budget.
+            self.mfa._budget('mfa-issuance',client_address,staff['id'])
+        with self.database.transaction() as db:
+            current=self.mfa._locked_staff(db,staff['tenant_id'],staff['id'])
+            if current['password_hash']!=staff['password_hash']:
+                raise ServiceError('Your account changed. Sign in again.',401)
+            state=db.execute('SELECT enabled FROM ss_staff_mfa WHERE tenant_id=%s AND staff_id=%s',
+                             (staff['tenant_id'],staff['id'])).fetchone()
+            if state and state['enabled']:
+                if not enrolled:raise ServiceError('Your account security changed. Start sign-in again.',409)
+                if data.get('mfa_supported') is not True:
+                    raise ServiceError('This account requires two-step sign-in. Update the desktop app or use the current store portal.',426)
+                token,info=self.mfa.begin_challenge(db,current,client_address)
+            else:token,info=issue_session(db,current)
+        return token,info
 
     def resolve(self,token):
         if not token or len(token)>256:raise ServiceError('Sign in to your store.',401)
         with self.database.transaction() as db:
-            row=db.execute('''SELECT s.tenant_id,s.staff_id,u.role,t.slug FROM ss_sessions s
+            row=db.execute('''SELECT s.tenant_id,s.staff_id,u.role,t.slug,s.created_at AS session_created_at,
+                              s.mfa_authenticated_at,COALESCE(m.enabled,FALSE) AS mfa_enabled,
+                              COALESCE(m.enabled=TRUE AND s.mfa_version=m.version,FALSE) AS mfa_authenticated FROM ss_sessions s
                               JOIN ss_staff u ON u.id=s.staff_id AND u.tenant_id=s.tenant_id
                               JOIN ss_tenants t ON t.id=s.tenant_id
-                              WHERE s.token_hash=%s AND s.expires_at>now() AND u.enabled=TRUE''',(digest(token),)).fetchone()
+                              LEFT JOIN ss_staff_mfa m ON m.tenant_id=s.tenant_id AND m.staff_id=s.staff_id
+                              WHERE s.token_hash=%s AND s.expires_at>now() AND u.enabled=TRUE
+                              AND (COALESCE(m.enabled,FALSE)=FALSE OR s.mfa_version=m.version)''',(digest(token),)).fetchone()
         if not row:raise ServiceError('Your session expired. Sign in again.',401)
         return dict(row)|{'session_hash':digest(token)}
 

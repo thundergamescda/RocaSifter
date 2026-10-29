@@ -59,6 +59,24 @@ class SquareOpaqueIDTests(unittest.TestCase):
             with self.subTest(value=invalid),self.assertRaises(ServiceError):self.square.retrieve(self.tenant,'orders',invalid)
         self.square.access_token.assert_not_called();self.transport.get.assert_not_called()
 
+    def test_catalog_read_pins_exact_version_and_quotes_opaque_id(self):
+        self.square.access_token=Mock(return_value='fixture-access-token')
+        self.transport.get.return_value.json.return_value={'object':{'id':'fixture'}}
+        opaque='discount:/ID%2F?x#fragment'
+        self.square.retrieve(self.tenant,'catalog',opaque,catalog_version=123)
+        url=self.transport.get.call_args.args[0]
+        self.assertEqual(url,self.square.base+'/v2/catalog/object/'+quote(opaque,safe='')+'?catalog_version=123')
+        self.assertEqual(urlsplit(url).hostname,'connect.squareupsandbox.com')
+        self.transport.post.assert_not_called()
+
+    def test_catalog_latest_or_invalid_versions_are_rejected_before_any_provider_call(self):
+        self.square.access_token=Mock()
+        for version in (None,True,0,-1,2**63,'123'):
+            with self.subTest(version=version),self.assertRaises(ServiceError):
+                self.square.retrieve(self.tenant,'catalog','discount',catalog_version=version)
+        with self.assertRaises(ServiceError):self.square.retrieve(self.tenant,'orders','order',catalog_version=123)
+        self.square.access_token.assert_not_called();self.transport.get.assert_not_called()
+
     def test_signed_webhook_preserves_opaque_event_merchant_and_resource_ids(self):
         merchant='merchant:Case/+ID';event='event:'+('e'*180);resource='refund:Opaque/+id%2F'
         lookup=Mock();lookup.fetchone.return_value={'tenant_id':self.tenant,'revoked_at':None}

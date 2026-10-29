@@ -17,7 +17,7 @@ from hosted.security import ServiceError
 from hosted.settlement import Settlement
 from hosted.settlement import record_reservation_terms
 from hosted.test_fixtures import approved_checkout_fixture
-from test_hosted_settlement import terms, order, returned_order, payment_refunds
+from test_hosted_settlement import terms, order, returned_order, payment_refunds, catalog_discount
 
 
 class _PostgreSQLSettlementFixture(unittest.TestCase):
@@ -71,10 +71,41 @@ class _PostgreSQLSettlementFixture(unittest.TestCase):
         return customer, reservation['state'], entries
 
     def reconcile(self, value=None):
-        return self.settlement.reconcile_order(self.tenant, self.reservation, order() if value is None else value)
+        return self.settlement.reconcile_order(self.tenant, self.reservation, order() if value is None else value,
+                                                catalog_discount=catalog_discount())
 
 
 class PostgreSQLSettlementAcceptance(_PostgreSQLSettlementFixture):
+    def test_catalog_version_or_tax_mismatch_keeps_full_hold_and_no_debit(self):
+        value=order();value['discounts'][0]['catalog_version']=124
+        result=self.reconcile(value)
+        self.assertEqual(result['code'],'discount_catalog_version_mismatch')
+        proof=catalog_discount();proof['discount_data']['modify_tax_basis']='MODIFY_TAX_BASIS'
+        result=self.settlement.reconcile_order(self.tenant,self.reservation,order(),catalog_discount=proof)
+        self.assertEqual(result['code'],'catalog_tax_basis_mismatch')
+        customer,state,entries=self.snapshot()
+        self.assertEqual((customer['balance_cents'],state,entries),(5000,'exception',[]))
+        account=Ledger(self.database).account({'tenant_id':self.tenant},self.customer)['customer']
+        self.assertEqual(account['reserved_cents'],2000)
+        self.assertEqual(self.reconcile()['state'],'consumed')
+
+    def test_no_catalog_proof_cannot_consume_or_release_completed_zero_use(self):
+        for amount in (1500,0):
+            value=order();value['discounts'][0]['applied_money']['amount']=amount
+            result=self.settlement.reconcile_order(self.tenant,self.reservation,value)
+            self.assertEqual(result['code'],'catalog_discount_unverified')
+            self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[1]),(5000,'exception'))
+        self.assertEqual(self.reconcile(value)['state'],'released')
+
+    def test_successful_settlement_audits_minimal_catalog_proof_hash(self):
+        proof=catalog_discount();proof['metadata']={'private_note':'DO-NOT-PERSIST-CATALOG-METADATA'}
+        self.settlement.reconcile_order(self.tenant,self.reservation,order(),catalog_discount=proof)
+        with self.database.transaction() as db:
+            details=db.execute("SELECT details FROM ss_audit WHERE tenant_id=%s AND action='credit-reservation-consumed'",(self.tenant,)).fetchone()['details']
+        self.assertEqual((details['catalog_version'],details['discount_tax_basis']),(123,'DO_NOT_MODIFY_TAX_BASIS'))
+        self.assertEqual(len(details['catalog_proof_hash']),64)
+        self.assertNotIn('DO-NOT-PERSIST-CATALOG-METADATA',str(details))
+
     def test_partial_applied_amount_consumes_once_and_releases_unused_hold(self):
         first = self.reconcile(); second = self.reconcile()
         self.assertFalse(first['duplicate']); self.assertTrue(second['duplicate'])
@@ -176,7 +207,7 @@ class PostgreSQLSettlementAcceptance(_PostgreSQLSettlementFixture):
         valid = order();valid['id'] = 'sale-2';valid['discounts'][0]['applied_money']['amount'] = 3000
         def reconcile(index):
             if index == 0:return self.reconcile(bad)
-            return self.settlement.reconcile_order(self.tenant, second, valid)
+            return self.settlement.reconcile_order(self.tenant, second, valid,catalog_discount=catalog_discount())
         with ThreadPoolExecutor(max_workers=2) as workers:results = list(workers.map(reconcile, (0, 1)))
         self.assertEqual({result['state'] for result in results}, {'exception', 'consumed'})
         account = Ledger(self.database).account({'tenant_id': self.tenant}, self.customer)['customer']

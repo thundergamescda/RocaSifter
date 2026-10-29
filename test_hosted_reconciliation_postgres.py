@@ -36,8 +36,69 @@ class PostgreSQLReconciliationAcceptance(_PostgreSQLSettlementFixture):
     def test_minimal_order_job_fetches_provider_and_consumes_once(self):
         result = self.run_once()
         self.assertEqual((result['status'], self.job()['state'], self.snapshot()[0]['balance_cents']), ('done', 'done', 3500))
-        self.assertEqual(self.square.calls, [(self.tenant, 'orders', 'sale-1')])
+        self.assertEqual(self.square.calls, [(self.tenant, 'orders', 'sale-1'),(self.tenant,'catalog','discount-credit',123)])
         self.assertEqual(self.run_once()['status'], 'idle')
+
+    def test_completed_wrong_catalog_version_or_versionless_order_never_reads_catalog_or_spends(self):
+        for native in (False,True):
+            value=order()
+            if native:value.pop('version')
+            else:value['discounts'][0]['catalog_version']=124
+            self.square.resources[('orders','sale-1')]={'order':value}
+            self.square.calls=[]
+            with self.database.transaction() as db:
+                db.execute("UPDATE ss_square_jobs SET state='pending',available_at=now() WHERE event_id=%s",(self.event,))
+            self.assertEqual(self.run_once()['status'],'exception')
+            self.assertEqual(self.square.calls,[(self.tenant,'orders','sale-1')])
+            self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[1]),(5000,'exception'))
+
+    def test_catalog_unavailable_is_durable_review_with_full_held_balance(self):
+        original=self.square.retrieve
+        def unavailable(tenant,kind,ident,**kwargs):
+            if kind=='catalog':raise ServiceError('fictional-provider-message-not-for-log',502)
+            return original(tenant,kind,ident,**kwargs)
+        self.square.retrieve=unavailable
+        result=self.run_once()
+        self.assertEqual((result['status'],result['code']),('exception','catalog_discount_unavailable'))
+        self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[1],self.snapshot()[2]),(5000,'exception',[]))
+        with self.database.transaction() as db:
+            exception=db.execute("SELECT code FROM ss_reconciliation_exceptions WHERE tenant_id=%s AND reservation_id=%s",(self.tenant,self.reservation)).fetchone()
+        self.assertEqual(exception['code'],'catalog_discount_unavailable')
+
+    def test_catalog_wrong_type_tax_basis_or_missing_object_never_mutates_credit(self):
+        from test_hosted_settlement import catalog_discount
+        proof=catalog_discount();proof['discount_data']['modify_tax_basis']='MODIFY_TAX_BASIS'
+        for response in ({},{'object':catalog_discount()|{'type':'ITEM'}},{'object':proof}):
+            self.square.resources[('catalog','discount-credit',123)]=response
+            with self.database.transaction() as db:
+                db.execute("UPDATE ss_square_jobs SET state='pending',available_at=now() WHERE event_id=%s",(self.event,))
+            self.assertEqual(self.run_once()['status'],'exception')
+            self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[1],self.snapshot()[2]),(5000,'exception',[]))
+
+    def test_revocation_during_catalog_read_cancels_before_ledger_write(self):
+        original=self.square.retrieve
+        def revoke(tenant,kind,ident,**kwargs):
+            if kind=='catalog':
+                with self.database.transaction() as db:
+                    db.execute('UPDATE ss_square_connections SET revoked_at=now() WHERE tenant_id=%s',(self.tenant,))
+                    db.execute("UPDATE ss_square_jobs SET state='canceled' WHERE event_id=%s",(self.event,))
+            return original(tenant,kind,ident,**kwargs)
+        self.square.retrieve=revoke
+        self.assertEqual(self.run_once()['status'],'lease_lost')
+        self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[2]),(5000,[]))
+
+    def test_lease_replaced_during_catalog_read_cannot_spend_or_ack_new_owner(self):
+        original=self.square.retrieve
+        replacement=uuid.uuid4()
+        def replace_lease(tenant,kind,ident,**kwargs):
+            if kind=='catalog':
+                with self.database.transaction() as db:
+                    db.execute('UPDATE ss_square_jobs SET lease_token=%s WHERE event_id=%s',(replacement,self.event))
+            return original(tenant,kind,ident,**kwargs)
+        self.square.retrieve=replace_lease
+        self.assertEqual(self.run_once()['status'],'lease_lost')
+        self.assertEqual(self.job()['lease_token'],replacement)
+        self.assertEqual((self.snapshot()[0]['balance_cents'],self.snapshot()[2]),(5000,[]))
 
     def test_duplicate_events_for_same_order_do_not_duplicate_credit_consumption(self):
         self.add_job('duplicate-' + self.event)
@@ -123,11 +184,11 @@ class PostgreSQLReconciliationAcceptance(_PostgreSQLSettlementFixture):
 
     def test_retry_after_consumption_before_refund_restores_without_second_debit(self):
         self.prepare_refund();original = self.square.retrieve;failed = False
-        def fail_once(tenant, kind, ident):
+        def fail_once(tenant, kind, ident,**kwargs):
             nonlocal failed
             if kind == 'orders' and ident == 'return-order-1' and not failed:
                 failed = True;raise ServiceError('fixture interruption', 502)
-            return original(tenant, kind, ident)
+            return original(tenant, kind, ident,**kwargs)
         self.square.retrieve = fail_once
         self.assertEqual(self.run_once()['status'], 'pending')
         self.assertEqual(self.snapshot()[0]['balance_cents'], 3500)
@@ -143,11 +204,11 @@ class PostgreSQLReconciliationAcceptance(_PostgreSQLSettlementFixture):
 
     def test_authorization_revocation_during_read_cancels_job_before_ledger_write(self):
         original = self.square.retrieve
-        def revoke_during_read(tenant, kind, ident):
+        def revoke_during_read(tenant, kind, ident,**kwargs):
             with self.database.transaction() as db:
                 db.execute('UPDATE ss_square_connections SET revoked_at=now() WHERE tenant_id=%s', (self.tenant,))
                 db.execute("UPDATE ss_square_jobs SET state='canceled',last_error_code='authorization_revoked' WHERE event_id=%s", (self.event,))
-            return original(tenant, kind, ident)
+            return original(tenant, kind, ident,**kwargs)
         self.square.retrieve = revoke_during_read
         self.assertEqual(self.run_once()['status'], 'lease_lost')
         self.assertEqual((self.job()['state'], self.snapshot()[0]['balance_cents']), ('canceled', 5000))

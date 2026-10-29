@@ -49,6 +49,8 @@ class ReservationTerms:
     currency: str = 'USD'
     minimum_order_version: int = 1
     discount_uid: str | None = None
+    discount_catalog_version: int | None = None
+    discount_tax_basis: str | None = None
 
     def __post_init__(self):
         if not all(_id(value) for value in (self.order_id, self.square_customer_id, self.location_id, self.discount_id)):
@@ -61,6 +63,10 @@ class ReservationTerms:
             raise ValueError('A positive minimum order version is required.')
         if self.discount_uid is not None and not _id(self.discount_uid, 60):
             raise ValueError('The bound order discount UID is invalid.')
+        if self.discount_catalog_version is not None and (type(self.discount_catalog_version) is not int or not 1 <= self.discount_catalog_version < 2**63):
+            raise ValueError('A valid discount catalog version is required.')
+        if self.discount_tax_basis is not None and (not isinstance(self.discount_tax_basis,str) or self.discount_tax_basis not in TAX_BASES):
+            raise ValueError('An explicit supported catalog tax basis is required.')
 
 
 @dataclass(frozen=True)
@@ -102,7 +108,10 @@ def _decode_snapshot(row):
     try:
         terms = ReservationTerms(value['order_id'], value['square_customer_id'], value['location_id'],
                                  value['discount_id'], value['reserved_cents'], value['policy_reference'],
-                                 value['currency'], value['minimum_order_version'], value['discount_uid'])
+                                 value['currency'], value['minimum_order_version'], value['discount_uid'],
+                                 value['discount_catalog_version'], value['discount_tax_basis'])
+        if terms.discount_catalog_version is None or terms.discount_tax_basis is None:
+            raise ValueError()
         allocations = value['credit_origin_allocations']
         if not isinstance(allocations, list) or not allocations or sum(a['amount_cents'] for a in allocations) != terms.reserved_cents:
             raise ValueError()
@@ -163,7 +172,15 @@ def record_reservation_terms(db, tenant_id, reservation_id, checkout_binding, *,
     return value
 
 
-def plan_order(terms, order):
+def catalog_evidence(catalog):
+    """Minimal non-PII verification facts, used only after the planner validates."""
+    data=catalog['discount_data']
+    return {'id':catalog['id'],'version':catalog['version'],'type':catalog['type'],
+            'discount_type':data['discount_type'],'modify_tax_basis':data['modify_tax_basis'],
+            **({'amount_money':{key:data['amount_money'][key] for key in ('amount','currency')}} if data.get('amount_money') is not None else {})}
+
+
+def plan_order(terms, order, *, catalog_discount=None):
     """Plan consumption/release without mutating data or trusting discount names."""
     if not isinstance(terms, ReservationTerms):
         raise TypeError('Validated reservation terms are required.')
@@ -203,9 +220,33 @@ def plan_order(terms, order):
         return Decision('exception', 'discount_uid_mismatch', order_version=version)
     if discount.get('type') not in ('FIXED_AMOUNT', 'VARIABLE_AMOUNT') or discount.get('percentage') not in (None, ''):
         return Decision('exception', 'unapproved_discount_type', order_version=version)
+    if terms.discount_catalog_version is None or terms.discount_tax_basis is None:
+        return Decision('exception', 'catalog_terms_missing', order_version=version)
+    actual_version=discount.get('catalog_version')
+    if type(actual_version) is not int or not 1 <= actual_version < 2**63:
+        return Decision('exception', 'discount_catalog_version_missing', order_version=version)
+    if actual_version != terms.discount_catalog_version:
+        return Decision('exception', 'discount_catalog_version_mismatch', order_version=version)
     applied = _money(discount.get('applied_money'), terms.currency)
     if applied is None or applied > terms.reserved_cents:
         return Decision('exception', 'invalid_applied_credit', order_version=version)
+    if catalog_discount is None:
+        return Decision('exception', 'catalog_discount_unverified', order_version=version)
+    if (not isinstance(catalog_discount,dict) or catalog_discount.get('id') != terms.discount_id
+            or catalog_discount.get('type') != 'DISCOUNT' or type(catalog_discount.get('version')) is not int
+            or catalog_discount['version'] != actual_version):
+        return Decision('exception', 'catalog_discount_mismatch', order_version=version)
+    if catalog_discount.get('is_deleted') is not None and catalog_discount.get('is_deleted') is not False:
+        return Decision('exception', 'catalog_discount_deleted', order_version=version)
+    data=catalog_discount.get('discount_data')
+    if (not isinstance(data,dict) or data.get('discount_type') != discount['type']
+            or data.get('percentage') not in (None,'')):
+        return Decision('exception', 'catalog_discount_type_mismatch', order_version=version)
+    if data.get('modify_tax_basis') != terms.discount_tax_basis:
+        return Decision('exception', 'catalog_tax_basis_mismatch', order_version=version)
+    if ((data['discount_type']=='FIXED_AMOUNT' and _money(data.get('amount_money'),terms.currency) is None)
+            or (data.get('amount_money') is not None and _money(data['amount_money'],terms.currency) is None)):
+        return Decision('exception', 'catalog_discount_currency_mismatch', order_version=version)
     if applied == 0:
         return Decision('release', 'completed_without_credit_use', discount_uid=uid, order_version=version)
     return Decision('consume', 'verified_completed_order', applied, uid, version, 'order:' + terms.order_id)
@@ -337,7 +378,7 @@ class Settlement:
     def __init__(self, database):
         self.database = database
 
-    def reconcile_order(self, tenant_id, reservation_id, order, *, terms=None):
+    def reconcile_order(self, tenant_id, reservation_id, order, *, terms=None,catalog_discount=None,catalog_error=None):
         if terms is not None and not isinstance(terms, ReservationTerms):
             raise TypeError('Immutable reservation terms are required.')
         with self.database.transaction() as db:
@@ -371,7 +412,11 @@ class Settlement:
             previous_version = reservation.get('last_order_version') or 0
             if previous_version > terms.minimum_order_version:
                 terms = replace(terms, minimum_order_version=previous_version)
-            decision = plan_order(terms, order)
+            decision = plan_order(terms, order,catalog_discount=catalog_discount)
+            if catalog_error is not None:
+                if catalog_error != 'catalog_discount_unavailable':raise ValueError('Invalid catalog verification error.')
+                if decision.code=='catalog_discount_unverified' or decision.action in ('consume','release'):
+                    decision=replace(decision,action='exception',code=catalog_error,amount_cents=0,source_key=None)
             source = 'order:' + terms.order_id
             existing = db.execute('SELECT * FROM ss_credit_entries WHERE tenant_id=%s AND source_key=%s',
                                   (tenant_id, source)).fetchone()
@@ -419,7 +464,9 @@ class Settlement:
                 db.execute("UPDATE ss_reservations SET state='released',updated_at=now() WHERE tenant_id=%s AND id=%s", (tenant_id, reservation_id))
                 self._observe(db, tenant_id, reservation_id, order, decision)
                 self._resolve(db, tenant_id, reservation_id)
-                audit(db, tenant_id, None, 'credit-reservation-released', reservation_id, {'code': decision.code})
+                facts={'code':decision.code}
+                if decision.code=='completed_without_credit_use':facts['catalog_proof_hash']=evidence_hash(catalog_evidence(catalog_discount))
+                audit(db, tenant_id, None, 'credit-reservation-released', reservation_id, facts)
                 return self._result(dict(reservation) | {'state': 'released'}, decision)
             others = db.execute("SELECT COALESCE(SUM(amount_cents),0) AS amount FROM ss_reservations WHERE tenant_id=%s AND customer_id=%s AND id<>%s AND state IN ('reserved','exception')",
                                 (tenant_id, customer['id'], reservation_id)).fetchone()['amount']
@@ -442,6 +489,8 @@ class Settlement:
             self._resolve(db, tenant_id, reservation_id)
             audit(db, tenant_id, None, 'credit-reservation-consumed', reservation_id,
                   {'entry_id': entry, 'amount_cents': decision.amount_cents, 'discount_uid': decision.discount_uid,
+                   'catalog_version':terms.discount_catalog_version,'discount_tax_basis':terms.discount_tax_basis,
+                   'catalog_proof_hash':evidence_hash(catalog_evidence(catalog_discount)),
                    'order_version': decision.order_version, 'policy_reference': terms.policy_reference})
             return self._result(dict(reservation) | {'state': 'consumed'}, decision) | {'entry_id': entry, 'balance_cents': balance}
 

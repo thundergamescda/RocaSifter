@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer data export · Stock &amp; Sleeve</title>
+<link rel="icon" type="image/png" href="/static/brand-icon.png">
+<link rel="stylesheet" href="/static/privacy.css"><script src="/static/privacy.js" defer></script></head>
+<body><main id="privacyApp" data-browser-max-bytes="{{ browser_max_bytes }}">
+<header><a href="/" class="brand"><img src="/static/brand-icon.png" width="32" height="32" alt="">Stock &amp; Sleeve</a><a href="/">Back to workspace</a></header>
+<section class="intro"><span class="eyebrow">Owner workspace</span><h1>Customer data export</h1>
+<p>Prepare a private copy of one customer's linked hosted records. Verify identity and authority before downloading.</p>
+<p class="help">This sensitive action requires sign-in within the last 15 minutes. If prompted, sign out and sign in again in the workspace.</p>
+<p class="status" id="privacySession" role="status">Checking your owner session…</p><button id="privacyRefresh" type="button" class="quiet">Refresh owner session</button></section>
+<section class="scope"><h2>Know what this copy covers</h2>
+<p>It includes the selected hosted customer account, full linked credit history, lots, reservations, accepted trade copies, selected Square settlement/return evidence and relevant audit records from one snapshot.</p>
+<p>It does not inspect other accounts, local computers, scanner files, backups, support copies or records held by Square. It does not delete data or determine whether a legal request is fulfilled.</p>
+<p>This browser rejects exports larger than <strong id="privacyLimit"></strong> instead of downloading an incomplete copy. Downloaded copies need private review, delivery and disposal under your approved policy.</p></section>
+<section class="card" id="privacyWorkspace" hidden><div class="heading"><h2>Choose the verified customer</h2><span id="privacyStore" class="pill"></span></div>
+<label>Find a hosted customer<input id="privacySearch" type="search" maxlength="200" autocomplete="off" placeholder="Name, contact or Square reference"></label>
+<p class="help">Search is limited to your signed-in store. Review duplicate accounts separately.</p>
+<div id="privacyCustomers" class="customers" aria-live="polite"></div>
+<p class="status" id="privacySearchStatus" role="status"></p>
+<form id="privacyForm" hidden><div class="selection"><strong id="privacyCustomerName"></strong><code id="privacyCustomerId"></code><p>Complete the checks for this exact account before exporting.</p></div>
+<label>Type the selected customer ID again<input id="privacyConfirmId" autocomplete="off" required></label>
+<div class="columns"><label>Request purpose<select id="privacyPurpose" required><option value="">Choose a purpose</option><option value="customer_access">Customer access request</option><option value="customer_portability">Customer portability request</option><option value="correction_review">Review for an identity correction request</option></select></label>
+<label>How did you verify identity?<select id="privacyMethod" required><option value="">Choose a method</option><option value="existing_verified_channel">Existing independently verified contact channel</option><option value="in_person_known_customer">In person with a known customer/account match</option><option value="authorized_representative">Verified authorized representative</option></select></label></div>
+<label>Internal case reference<input id="privacyCase" minlength="3" maxlength="100" autocomplete="off" placeholder="REQUEST-2026-001" required></label>
+<p class="help">Use an internal reference, not a birth date, contact detail, payment number or identity-document number. The audit stores its hash. This records your verification; the app does not independently verify identity.</p>
+<fieldset><legend>Owner attestations</legend>
+<label class="check"><input type="checkbox" id="privacyIdentity" required><span>I verified the person's identity against this exact customer account.</span></label>
+<label class="check"><input type="checkbox" id="privacyAuthority" required><span>I have authority to prepare this copy for the stated request.</span></label>
+<label class="check"><input type="checkbox" id="privacyScope" required><span>I reviewed the hosted-only scope and will locate relevant records outside it separately.</span></label>
+<label class="check"><input type="checkbox" id="privacyCopies" required><span>I will review incidental third-party details, deliver privately to the verified recipient and handle the downloaded copy under the approved policy.</span></label>
+<label class="check" id="privacyAgentRow" hidden><input type="checkbox" id="privacyAgent"><span>I separately verified the representative's authority to receive this customer's data.</span></label>
+</fieldset>
+<div class="actions"><button id="privacyDownload" type="submit">Verify and download hosted copy</button><button id="privacyCancel" class="quiet" type="button" hidden>Cancel export</button></div>
+<p class="status" id="privacyProgress" role="status" aria-live="polite"></p>
+</form></section>
+<footer>Private pilot · Owner-only export · No deletion or data monetization</footer>
+</main></body></html>

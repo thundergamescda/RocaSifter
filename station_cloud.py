@@ -15,8 +15,8 @@ ROLES=('owner','manager','buyer','cashier')
 
 
 class CloudError(StationError):
-    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False):
-        super().__init__(message);self.status=status;self.offline=offline;self.pending=pending;self.session_changed=session_changed
+    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False,mfa_restart=False):
+        super().__init__(message);self.status=status;self.offline=offline;self.pending=pending;self.session_changed=session_changed;self.mfa_restart=mfa_restart
 
 
 class CloudClient:
@@ -29,6 +29,10 @@ class CloudClient:
         self.transport.trust_env=False
         self.clock=clock or time.time
         self.lock=threading.RLock()
+        # Verification is deliberately memory-only. Restarting cannot revive a
+        # password/MFA challenge or reuse a one-time proof from a disk journal.
+        self._mfa=None
+        self._mfa_completed=None
 
     def _saved(self):
         raw=self.vault.read()
@@ -91,6 +95,7 @@ class CloudClient:
         # Persist the exact retry key/body before the network call. A crash or
         # lost response must not turn one correction into two separate actions.
         with self.lock:
+            self._cancel_guard()
             saved=self._saved()
             self._expected(saved,expected_session_id)
             if not saved or saved['expires_at']<=self.clock():raise CloudError('Sign in to your store cloud account.',status=401)
@@ -179,6 +184,7 @@ class CloudClient:
 
     def _authenticated(self,method,path,*,data=None,expected_session_id=None):
         with self.lock:
+            self._cancel_guard()
             saved=self._saved()
             self._expected(saved,expected_session_id)
             if not saved or saved['expires_at']<=self.clock():
@@ -189,6 +195,44 @@ class CloudClient:
                 if error.status==401:self._clear()
                 raise
 
+    def _commit_login(self,result,slug,*,require_mfa=False):
+        token=result.get('access_token');expiry=result.get('expires_in')
+        if (result.get('mfa_required') or 'challenge_token' in result or not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{20,256}',token)
+            or isinstance(expiry,bool) or not isinstance(expiry,int) or not 0<expiry<=28800
+            or result.get('store')!=slug or result.get('role') not in ROLES
+            or (require_mfa and result.get('mfa_authenticated') is not True)
+            or (not require_mfa and result.get('mfa_authenticated') is True)):
+            raise CloudError('The cloud sign-in response could not be verified.',status=502,mfa_restart=True)
+        session_id=uuid.uuid4().hex
+        if require_mfa and self._mfa:self._mfa['issued_session_id']=session_id
+        self.vault.set(json.dumps({'origin':ORIGIN,'token':token,'expires_at':self.clock()+expiry,
+                                   'store':slug,'role':result['role'],'session_id':session_id,
+                                   'mfa_authenticated':require_mfa},separators=(',',':')))
+        return {'signedIn':True,'store':slug,'role':result['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':session_id}
+
+    def _mfa_public(self):
+        challenge=self._mfa
+        if not challenge:return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN}
+        if challenge['expires_at']<=self.clock():
+            if not challenge.get('uncertain') and not challenge.get('cancel_only'):
+                self._mfa=None
+                return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN,'message':'Verification expired. Sign in again.'}
+        return {'signedIn':False,'mfaRequired':True,'challengeId':challenge['nonce'],'store':challenge['store'],
+                'expiresIn':max(0,int(challenge['expires_at']-self.clock())),'methods':challenge['methods'],
+                'verificationExpired':challenge['expires_at']<=self.clock(),
+                'cancelRequired':bool(challenge.get('cancel_only')),
+                'mode':'pilot','portalUrl':ORIGIN}
+
+    def _cancel_remote_challenge(self,token):
+        try:
+            result=self._call('POST','/api/auth/mfa/cancel',data={'challenge_token':token})
+            return result.get('cancelled') is True
+        except CloudError:return False
+
+    def _cancel_guard(self):
+        if self._mfa and self._mfa.get('cancel_only'):
+            raise CloudError('Finish server cancellation, or explicitly clear this sign-in on this computer, before continuing.',status=409)
+
     def login(self,data):
         slug=str(data.get('storeSlug','')).strip().lower()
         email=data.get('email');password=data.get('password')
@@ -196,26 +240,113 @@ class CloudClient:
         if not isinstance(email,str) or len(email)>254 or not isinstance(password,str) or not 1<=len(password)<=128:
             raise CloudError('Enter your staff email and password.')
         with self.lock:
+            self._cancel_guard()
             old=self._saved()
             if old and old['expires_at']<=self.clock():self._clear();old=None
             if old:raise CloudError('Sign out of the current cloud account before switching staff or stores.',status=409)
-            result=self._call('POST','/api/auth/login',data={'store_slug':slug,'email':email.strip(),'password':password})
-            token=result.get('access_token');expiry=result.get('expires_in')
-            if (not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{20,256}',token)
-                or isinstance(expiry,bool) or not isinstance(expiry,int) or not 0<expiry<=28800
-                or result.get('store')!=slug or result.get('role') not in ROLES):
-                raise CloudError('The cloud sign-in response could not be verified.',status=502)
-            # Passwords are sent once over HTTPS and never saved in local settings.
-            session_id=uuid.uuid4().hex
-            self.vault.set(json.dumps({'origin':ORIGIN,'token':token,'expires_at':self.clock()+expiry,
-                                       'store':slug,'role':result['role'],'session_id':session_id},separators=(',',':')))
-            return {'signedIn':True,'store':slug,'role':result['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':session_id}
+            previous=self._mfa
+            if previous and not self._cancel_remote_challenge(previous['token']):
+                raise CloudError('The previous verification could not be cancelled on the server. Reconnect and cancel it before starting another sign-in.',status=503,offline=True)
+            self._mfa=None;self._mfa_completed=None
+            try:result=self._call('POST','/api/auth/login',data={'store_slug':slug,'email':email.strip(),'password':password,'mfa_supported':True})
+            except CloudError as error:
+                message=('The store, email or password could not be verified.' if error.status==401 else
+                         'Update Stock & Sleeve to complete your store’s sign-in verification.' if error.status==426 else
+                         'Too many sign-in attempts. Wait before trying again.' if error.status==429 else
+                         'Sign-in could not be confirmed. Reconnect and try again.' if error.offline else
+                         'Sign-in could not complete. Try again or contact your store owner.')
+                raise CloudError(message,status=error.status,offline=error.offline) from None
+            if result.get('mfa_required') is True:
+                challenge=result.get('challenge_token');expiry=result.get('expires_in');methods=result.get('methods')
+                if ('access_token' in result or 'csrf_token' in result or result.get('store')!=slug
+                    or not isinstance(challenge,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',challenge)
+                    or type(expiry) is not int or not 0<expiry<=300 or not isinstance(methods,list)
+                    or not methods or any(not isinstance(method,str) or method not in ('totp','recovery_code') for method in methods)
+                    or len(methods)!=len(set(methods))):
+                    raise CloudError('The verification request could not be confirmed. Sign in again.',status=502,mfa_restart=True)
+                self._mfa={'token':challenge,'store':slug,'nonce':uuid.uuid4().hex,'expires_at':self.clock()+expiry,'methods':methods}
+                return self._mfa_public()
+            return self._commit_login(result,slug)
+
+    def verify_mfa(self,data):
+        with self.lock:
+            challenge=self._mfa;nonce=data.get('challengeId')
+            if (not challenge or not isinstance(nonce,str) or not re.fullmatch(r'[a-f0-9]{32}',nonce)
+                or not hmac.compare_digest(challenge['nonce'],nonce)):
+                raise CloudError('This verification request changed. Refresh or sign in again.',status=409,mfa_restart=True)
+            self._cancel_guard()
+            if challenge['expires_at']<=self.clock():
+                if challenge.get('uncertain'):
+                    raise CloudError('Verification expired. Cancel sign-in to finish clearing the previous attempt, then sign in again.',status=401)
+                self._mfa=None
+                raise CloudError('Verification expired. Sign in again.',status=401,mfa_restart=True)
+            supplied=data.get('code')
+            if not isinstance(supplied,str) or len(supplied)>80:raise CloudError('Enter a current authenticator code or an unused recovery code.')
+            code=supplied.strip();recovery=code.replace('-','')
+            if not re.fullmatch(r'[0-9]{6}',code) and not re.fullmatch(r'[A-Fa-f0-9]{32}',recovery):
+                raise CloudError('Enter the six digits from your authenticator, or a complete unused recovery code.')
+            if len(recovery)==32:code=recovery.lower()
+            try:result=self._call('POST','/api/auth/mfa/challenge',data={'challenge_token':challenge['token'],'code':code})
+            except CloudError as error:
+                if error.status==401:
+                    raise CloudError('That code could not be verified. Try a current authenticator code or a different unused recovery code. You can cancel and sign in again.',status=401) from None
+                if error.status==429:
+                    self._mfa=None
+                    raise CloudError('Too many verification attempts. Wait before signing in again.',status=429,mfa_restart=True) from None
+                if error.offline or error.status>=500:
+                    challenge['uncertain']=True
+                    raise CloudError('Verification could not be confirmed. Cancel sign-in and try again when connected; a recovery code may already have been used.',status=error.status,offline=True) from None
+                raise CloudError('Verification could not complete. Cancel sign-in before trying again.',status=error.status) from None
+            challenge['uncertain']=True
+            try:session=self._commit_login(result,challenge['store'],require_mfa=True)
+            except CloudError:
+                if self._cancel_remote_challenge(challenge['token']):self._mfa=None;raise
+                raise CloudError('Verification could not be confirmed. Cancel sign-in when connected before trying again.',status=502,offline=True) from None
+            self._mfa=None
+            self._mfa_completed={'nonce':nonce,'session_id':session['sessionId'],'token':challenge['token'],
+                                 'store':challenge['store'],'expires_at':challenge['expires_at'],'methods':challenge['methods']}
+            return session
+
+    def cancel_mfa(self,data):
+        with self.lock:
+            nonce=data.get('challengeId');challenge=self._mfa;completed=self._mfa_completed
+            if not isinstance(nonce,str) or not re.fullmatch(r'[a-f0-9]{32}',nonce):raise CloudError('Refresh the sign-in page before cancelling verification.',status=409,mfa_restart=True)
+            if challenge and hmac.compare_digest(challenge['nonce'],nonce):
+                pending=challenge
+            elif completed and hmac.compare_digest(completed['nonce'],nonce):
+                saved=self._saved()
+                if saved and saved['session_id']!=completed['session_id']:raise CloudError('The signed-in workspace changed. Refresh before continuing.',status=409,session_changed=True)
+                pending=dict(completed,issued_session_id=completed['session_id'])
+            else:raise CloudError('This verification request changed. Refresh before continuing.',status=409,mfa_restart=True)
+            pending.update(cancel_only=True,uncertain=True);self._mfa=pending;self._mfa_completed=None
+            self._clear_cancelled_session(pending)
+            revoked=self._cancel_remote_challenge(pending['token'])
+            if revoked:
+                self._mfa=None
+                return {'signedIn':False,'serverRevoked':True,'message':'Verification cancelled. Sign in again when ready.'}
+            return self._mfa_public()|{'serverRevoked':False,'message':'Sign-in is cleared locally, but server cancellation was not confirmed. Retry when connected, or clear this sign-in on this computer. Any issued server session expires within eight hours.'}
+
+    def _clear_cancelled_session(self,pending):
+        if pending.get('issued_session_id'):
+            saved=self._saved()
+            if saved and saved['session_id']==pending['issued_session_id']:self._clear()
+
+    def clear_mfa_local(self,data):
+        with self.lock:
+            pending=self._mfa;nonce=data.get('challengeId')
+            if (not pending or not pending.get('cancel_only') or not isinstance(nonce,str)
+                or not re.fullmatch(r'[a-f0-9]{32}',nonce)
+                or not hmac.compare_digest(pending['nonce'],nonce)):
+                raise CloudError('Refresh the pending cancellation before clearing this sign-in.',status=409)
+            self._clear_cancelled_session(pending);self._mfa=None;self._mfa_completed=None
+            return {'signedIn':False,'serverRevoked':False,'message':'This sign-in was cleared on this computer. Server revocation was not confirmed; any issued session expires within eight hours. You can sign in again.'}
 
     def status(self):
         with self.lock:
+            if self._mfa and self._mfa.get('cancel_only'):return self._mfa_public()
             try:
                 saved=self._saved()
-                if not saved:return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN}
+                if not saved:return self._mfa_public()
                 me=self._authenticated('GET','/api/me')
                 if me.get('store')!=saved['store'] or me.get('role') not in ROLES:
                     self._clear();raise CloudError('The cloud account changed. Sign in again.',status=401)
@@ -225,12 +356,15 @@ class CloudClient:
                 if error.offline and saved:return {'signedIn':False,'savedSession':True,'offline':True,'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id'],'message':str(error)}
                 raise
 
-    def logout(self,*,expected_session_id=None):
+    def logout(self,*,expected_session_id=None,expected_challenge_id=None):
         with self.lock:
+            if expected_challenge_id:return self.cancel_mfa({'challengeId':expected_challenge_id})
+            if self._mfa:return self.cancel_mfa({'challengeId':self._mfa['nonce']})
             try:saved=self._saved()
             except CloudError:saved=None
             if saved:self._expected(saved,expected_session_id)
-            self._clear()
+            challenge=self._mfa;self._mfa=None;self._mfa_completed=None;self._clear()
+            if challenge:self._cancel_remote_challenge(challenge['token'])
             if not saved:return {'signedIn':False,'serverRevoked':False,'message':'Signed out on this computer.'}
             try:
                 self._call('POST','/api/auth/logout',token=saved['token'],data={})

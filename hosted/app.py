@@ -6,7 +6,7 @@ import logging
 import os
 from urllib.parse import urlsplit
 import uuid
-from flask import Flask, g, jsonify, request, make_response, render_template
+from flask import Flask, g, jsonify, request, make_response, render_template, Response, stream_with_context
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .auth import Auth
@@ -15,6 +15,7 @@ from .ledger import Ledger
 from .security import ServiceError
 from .square import Square
 from .trades import Trades
+from .privacy import Privacy, Limits as PrivacyLimits
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -38,11 +39,14 @@ def create_app(config=None,*,database=None,square_transport=None):
     app.config['TRUSTED_HOSTS']=[uri.hostname]
     app.wsgi_app=ProxyFix(app.wsgi_app,x_for=1,x_proto=1,x_host=0,x_port=0)
     db=database or (Database(app.config['DATABASE_URL']) if app.config['DATABASE_URL'] else None)
-    auth=Auth(db,app.config['BOOTSTRAP_TOKEN']) if db else None
+    auth=Auth(db,app.config['BOOTSTRAP_TOKEN'],encryption_keys=app.config['APP_ENCRYPTION_KEYS']) if db else None
     ledger=Ledger(db) if db else None
     square=Square(db,app.config,square_transport) if db else None
     trades=Trades(db) if db else None
-    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades)
+    privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
+                    proof_key=app.config['APP_ENCRYPTION_KEYS'].split(',')[0],
+                    limits=app.config.get('PRIVACY_EXPORT_LIMITS') or PrivacyLimits()) if db else None
+    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy)
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -136,9 +140,56 @@ def create_app(config=None,*,database=None,square_transport=None):
     def login():
         require_db()
         token,info=auth.login(body(),request.remote_addr or '')
+        return session_response(token,info)
+
+    def session_response(token,info):
+        if token is None:
+            # A password-only MFA challenge is not a signed-in session.
+            response=make_response(jsonify(info))
+            response.delete_cookie('ss_session',path='/',secure=not app.config['TESTING'],httponly=True,samesite='Lax')
+            return response
         # JSON bearer token supports desktop OS-vault storage; browser uses HttpOnly cookie.
         response=make_response(jsonify(info|{'access_token':token,'csrf_token':csrf(token)}))
         response.set_cookie('ss_session',token,max_age=28800,secure=not app.config['TESTING'],httponly=True,samesite='Lax',path='/')
+        return response
+
+    @app.post('/api/auth/mfa/challenge')
+    def verify_mfa_challenge():
+        require_db()
+        token,info=auth.mfa.verify_challenge(body(),request.remote_addr or '')
+        return session_response(token,info)
+
+    @app.post('/api/auth/mfa/cancel')
+    def cancel_mfa_challenge():
+        require_db();return jsonify(auth.mfa.cancel_challenge(body(),request.remote_addr or ''))
+
+    @app.get('/api/auth/mfa')
+    @authenticated
+    def mfa_status():return jsonify(auth.mfa.status(g.actor))
+
+    @app.post('/api/auth/mfa/enroll')
+    @authenticated
+    def mfa_begin():return jsonify(auth.mfa.begin(g.actor,body(),request.remote_addr or ''))
+
+    @app.post('/api/auth/mfa/enroll/cancel')
+    @authenticated
+    def mfa_cancel_enrollment():
+        body();return jsonify(auth.mfa.cancel_enrollment(g.actor))
+
+    @app.post('/api/auth/mfa/confirm')
+    @authenticated
+    def mfa_confirm():return jsonify(auth.mfa.confirm(g.actor,body(),request.remote_addr or ''))
+
+    @app.post('/api/auth/mfa/recovery-codes')
+    @authenticated
+    def mfa_recovery():return jsonify(auth.mfa.change(g.actor,body(),request.remote_addr or ''))
+
+    @app.post('/api/auth/mfa/disable')
+    @authenticated
+    def mfa_disable():
+        result=auth.mfa.change(g.actor,body(),request.remote_addr or '',disable=True)
+        response=make_response(jsonify(result))
+        response.delete_cookie('ss_session',path='/',secure=not app.config['TESTING'],httponly=True,samesite='Lax')
         return response
 
     @app.post('/api/auth/logout')
@@ -150,7 +201,8 @@ def create_app(config=None,*,database=None,square_transport=None):
 
     @app.get('/api/me')
     @authenticated
-    def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot')
+    def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot',
+                           mfa_enabled=bool(g.actor.get('mfa_enabled')),mfa_authenticated=bool(g.actor.get('mfa_authenticated')))
 
     @app.get('/api/staff')
     @authenticated
@@ -172,6 +224,39 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/credit/customers')
     @authenticated
     def customers():return jsonify(customers=ledger.customers(g.actor,request.args.get('q','')))
+
+    @app.get('/privacy')
+    def privacy_portal():
+        return render_template('privacy.html',browser_max_bytes=privacy.limits.browser_max_bytes if privacy else PrivacyLimits().browser_max_bytes)
+
+    @app.post('/api/privacy/customers/<uuid:customer_id>/export')
+    @authenticated
+    def customer_privacy_export(customer_id):
+        output=privacy.begin(g.actor,customer_id,body(),g.token)
+        response=Response(stream_with_context(output.iter_bytes()),mimetype='application/x-ndjson')
+        response.headers['Content-Disposition']='attachment; filename="Stock-and-Sleeve-customer-export-'+str(output.id)+'.ndjson"'
+        response.headers['X-SS-Export-Id']=str(output.id)
+        response.call_on_close(output.close)
+        return response
+
+    @app.get('/api/privacy/context')
+    @authenticated
+    def customer_privacy_context():
+        privacy.authorize(g.actor,g.token)
+        return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),
+                       recent_sign_in_seconds=privacy.limits.recent_sign_in_seconds)
+
+    @app.get('/api/privacy/customers')
+    @authenticated
+    def customer_privacy_search():
+        privacy.authorize(g.actor,g.token)
+        selected=ledger.customers(g.actor,request.args.get('q',''))
+        privacy.authorize(g.actor,g.token)
+        return jsonify(customers=[{'id':row['id'],'display_name':row['display_name']} for row in selected])
+
+    @app.post('/api/privacy/exports/<uuid:export_id>/confirm')
+    @authenticated
+    def customer_privacy_confirm(export_id):return jsonify(privacy.confirm(g.actor,export_id,body(),g.token))
 
     @app.post('/api/credit/customers')
     @authenticated

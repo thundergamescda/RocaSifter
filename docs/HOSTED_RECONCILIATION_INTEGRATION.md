@@ -1,7 +1,7 @@
 # Hosted credit reconciliation integration
 
 Status: implemented locally; **worker disabled by default, no live activation**.
-Schema version 2 adds immutable terms/settlements, origin-preserving credit lots,
+Reconciliation data introduced in schema version 2 includes immutable terms/settlements, origin-preserving credit lots,
 durable exceptions and job leases. `hosted/settlement.py` atomically consumes or
 releases reservations and restores only proven itemized returned credit.
 `hosted/reconciliation.py` retrieves authoritative tenant resources using the
@@ -16,6 +16,17 @@ existing read-only OAuth adapter. Neither module performs Square writes.
   `applied_money`; the declared `amount_money`, discount name, order total and
   other coupons cannot authorize the credit amount.
   [OrderLineItemDiscount](https://developer.squareup.com/reference/square/objects/OrderLineItemDiscount)
+- The completed order's discount `catalog_version` must equal the immutable
+  approved version. Before spending or releasing completed zero-use credit, the
+  worker retrieves that exact `CatalogDiscount` version through tenant OAuth and
+  verifies object ID/version/type, matching amount-discount type, USD fixed money
+  where present, and explicit `modify_tax_basis`. There is no latest-version or
+  default-tax-basis fallback. Unavailable/malformed/mismatched evidence preserves
+  the full hold and creates durable review; lease/revocation checks still apply.
+  A minimal catalog proof hash/version/tax-basis record is committed in the
+  existing audit transaction; raw catalog metadata is not persisted.
+  [Versioned catalog retrieval](https://developer.squareup.com/docs/catalog-api/retrieve-catalog-objects),
+  [Catalog tax basis](https://developer.squareup.com/reference/square/enums/CatalogDiscountModifyTaxBasis)
 - A return identifies the original sale through `source_order_id`; returned
   discounts reference the original `source_discount_uid`. Restoration uses the
   returned tracked discount's `applied_money`, capped by the original credit
@@ -96,12 +107,21 @@ their reconciliation/device contract is proven.
 
 Local fictional-resource checks:
 `python -m unittest -v test_hosted_credit_lots test_hosted_settlement test_hosted_reconciliation`
-passes 56 tests. Private PostgreSQL checks:
+passes 62 tests. Private PostgreSQL checks:
 `python -m unittest -v test_hosted_settlement_postgres test_hosted_reconciliation_postgres`
-contain 43 real-transaction cases and create/drop only fresh `ss_test_<uuid>`
+contain 51 real-transaction cases and create/drop only fresh `ss_test_<uuid>`
 schemas. They cover concurrent replay/holds/returns, policy revocation,
 cross-tenant rejection, partial consumption, source provenance, stale/changed
 terminal resources, audit-fault rollback, job leases, retry interruption and
 revocation during reads. Fictional approval fixtures hard-refuse normal schemas.
 Local runs skip both PostgreSQL classes without `DATABASE_URL`; that is not
 passing cloud evidence. No live Square, tax or hardware acceptance is claimed.
+
+The consolidated development run
+`Testing/next-security/postgres-runs/20261028T224636577691Z` passed all 129 cases
+on disposable local PostgreSQL 18.6 with TLS, including these 51 reconciliation
+cases and the existing trade/MFA/privacy/integration cases. Expected, started and
+successful case IDs matched exactly; zero skips/failures/errors and unchanged
+source hashes were recorded. This is actual isolated SQL evidence, not proof of
+Square consent, provider checkout behavior, cloud operation, hardware or Idaho
+tax approval. Those release gates remain closed.

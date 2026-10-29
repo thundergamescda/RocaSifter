@@ -131,11 +131,16 @@ class Square:
                 db.execute('UPDATE ss_square_connections SET encrypted_tokens=%s,expires_at=%s,updated_at=now() WHERE tenant_id=%s',(sealed,expiry,tenant))
             return tokens['access_token']
 
-    def retrieve(self,tenant,kind,resource_id):
-        if kind not in ('orders','payments','refunds','locations'):raise ServiceError('Unsupported Square read.')
+    def retrieve(self,tenant,kind,resource_id,*,catalog_version=None):
+        if kind not in ('orders','payments','refunds','locations','catalog'):raise ServiceError('Unsupported Square read.')
+        if kind=='catalog':
+            if type(catalog_version) is not int or not 1<=catalog_version<2**63:
+                raise ServiceError('An exact supported catalog version is required.')
+        elif catalog_version is not None:raise ServiceError('Catalog version is only supported for catalog reads.')
         if kind!='locations':resource_id=provider_id(resource_id,'Square resource ID')
         token=self.access_token(tenant)
-        path='/v2/'+kind+('/'+quote(resource_id,safe='') if kind!='locations' else '')
+        path=('/v2/catalog/object/'+quote(resource_id,safe='')+'?'+urlencode({'catalog_version':catalog_version}) if kind=='catalog'
+              else '/v2/'+kind+('/'+quote(resource_id,safe='') if kind!='locations' else ''))
         try:
             response=self.transport.get(self.base+path,headers={'Authorization':'Bearer '+token,'Square-Version':'2026-09-16'},timeout=20)
             response.raise_for_status();return response.json()

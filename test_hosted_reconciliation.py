@@ -5,16 +5,16 @@ import unittest
 import uuid
 from hosted.reconciliation import Reconciler, ResourceError, LeaseLost
 from hosted.security import ServiceError
-from test_hosted_settlement import order, returned_order, payment_refunds
+from test_hosted_settlement import order, returned_order, payment_refunds,catalog_discount
 
 
 class FakeSquare:
     def __init__(self, resources=None):
-        self.resources = resources or {}; self.calls = []
+        self.resources = {('catalog','discount-credit',123):{'object':catalog_discount()},**(resources or {})}; self.calls = []
     def configured(self):return True
-    def retrieve(self, tenant, kind, ident):
-        self.calls.append((tenant, kind, ident))
-        return deepcopy(self.resources[(kind, ident)])
+    def retrieve(self, tenant, kind, ident,*,catalog_version=None):
+        self.calls.append((tenant, kind, ident) if catalog_version is None else (tenant,kind,ident,catalog_version))
+        return deepcopy(self.resources[(kind,ident)] if catalog_version is None else self.resources[(kind,ident,catalog_version)])
 
 
 class WorkerTests(unittest.TestCase):

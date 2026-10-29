@@ -5,7 +5,12 @@ This is an engineering and owner decision register, not a compliance certificate
 legal opinion, public privacy policy, or permission to collect additional data.
 Development and fictional-data testing can continue while these gates are closed.
 
-## Review boundary and evidence
+The original review below describes the pre-development checkpoint. The dated
+development addendum at the end updates MFA and hosted access-export progress
+only in `Development/next-security`; it does not change the checkpoint/download
+or close the other commercial gates.
+
+## Historical review boundary and evidence
 
 This review inspected source and existing redacted test evidence; it did not read
 merchant records, credentials, payment details, or production database contents.
@@ -311,3 +316,67 @@ contracts; collection/marketing rules; staff/support permissions; category
 retention and financial record handling; incident team, backup objectives and
 support hours; Square/provider legal review. No data monetization is included
 in the initial scope.
+
+## Development addendum — October 28, 2026
+
+This addendum applies **only to the isolated `Development/next-security` source**.
+The verified project-root checkpoint and its download remain separate. No new
+security source was deployed and no actual customer record was exported. The
+historical 290-test review above is preserved as dated evidence; it is not the
+test count or certification for these later endpoints.
+
+MFA and a scoped owner-authorized hosted customer export are now implemented in
+that development copy, rather than being solely proposed. MFA adds optional
+authenticator enrollment, challenges and recovery codes, encrypted secret
+storage, version-bound sessions, revocation/epoch handling and database guards
+against issuing incompatible sessions for an enrolled account. Optional
+enrollment does not establish that every store or platform operator uses MFA.
+Recovery/support governance and safe compatible rollback remain release work.
+
+The new owner-only export requires recent sign-in, explicit verification method,
+purpose, typed account confirmation, authority and copy-handling attestations.
+It streams every explicitly linked hosted collection from one consistent
+read-only snapshot, with complete counts and a hash footer. It includes linked
+ledger/lots/reservations/trade receipt copies and selected stored Square
+settlement/return evidence; it excludes credential/authentication tables and
+other accounts. Fresh authorization is rechecked during generation and final
+verification. Logout, revocation, stale views, missing/invalid footers and
+resource-limit failures do not authorize a completed download. See
+`docs/HOSTED_CUSTOMER_EXPORT.md` for exact selection, format and engineering
+limits.
+
+The export stores lifecycle/verification audit metadata without names, contacts
+or export payloads. It creates no persistent server export file/table. The
+browser clears interrupted buffers; a successful downloaded copy still needs
+the owner's approved handling and disposal. A verified-client event confirms
+reported content verification, not delivery to a customer or completion of a
+legal request. Hashed internal references and IDs are not described as
+anonymous.
+
+Scoped actual evidence on October 28:
+
+- The complete **121-case PostgreSQL18.6+TLS run**, ID
+  `20261028T223546241790Z`, passed with zero skips/failures/errors, exact test
+  coverage and stable source. It includes the current five export cases,
+  32 MFA cases and prior hosted tests. All database data was in disposable
+  fictional `ss_test_<uuid>` schemas on a loopback test fixture.
+- The export pure/HTTP module passed **17 cases**. It includes multi-large-record
+  byte-bounded pages, complete history beyond 100 entries, identity/purpose/
+  recency checks, tenant/role/CSRF, interruption, revocation and audit failures.
+- Actual Chrome passed **nine scoped cases**, with a fictional 275-entry file
+  downloaded and its counts/hash verified. It rejected truncation, changed
+  content and excessive buffer size, cleared across real portal logout/new
+  sign-in, ignored delayed old refresh/search401 responses and released cursors.
+  The report has matching before/after source hashes at
+  `Testing/next-security/privacy-export/privacy-user-acceptance.json`.
+
+These facts advance part of G3 (hosted access export) and parts of G5
+(authentication). G3 is still open for identity correction, deletion and an
+end-to-end rights process. No complete search of duplicate/unlinked accounts,
+local workstations, scanner/printer files, previous downloads, support stores,
+backups or external provider records is claimed. Incidental third-party free
+text still requires owner review. G1 entity/notices/contracts, G2 Square
+provenance/offboarding, G4 retention/copy disposal, G6 incident/restore and the
+remaining provider/Marketplace/security gates stay open. Data monetization is
+still outside the initial release. No legal compliance or commercial readiness
+certification is made by this addendum.

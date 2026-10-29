@@ -88,7 +88,36 @@ class PackageTests(unittest.TestCase):
             instructions = archive.read('READ ME FIRST.txt').decode()
             self.assertIn('invited online shared', instructions)
             self.assertIn('under development', instructions)
+            self.assertIn('older clients receive an upgrade', instructions)
+            self.assertIn('Installing this desktop does not deploy the server', instructions)
+            self.assertIn('owner-only customer export', instructions)
+            self.assertIn('Export does not delete records', instructions)
             self.assertNotIn('TestProfile-2.6.0', instructions)
+
+    def test_security_evidence_uses_only_the_exact_selected_flat_reports(self):
+        names=('unit-summary.json','unit-tests.log','postgres-summary.json','postgres-tests.log',
+               'desktop-mfa-user-acceptance.json','desktop-mfa-user-acceptance.log',
+               'hosted-mfa-browser.json','hosted-mfa-browser.log',
+               'privacy-user-acceptance.json','privacy-user-acceptance.log',
+               'restore-drill.json','restore-drill.log','packaged-security-readiness.json',
+               'SECURITY_PILOT_README.md')
+        evidence=self.root/'security-evidence';evidence.mkdir()
+        for name in names:(evidence/name).write_text('Fictional reviewed report: '+name)
+        (evidence/'postgres-latest.json').write_text('Unselected private diagnostic, never copied')
+        result=self.build(evidence_directory=evidence,evidence=names)
+        self.assertEqual(result['evidence_files'],14)
+        with zipfile.ZipFile(self.output) as archive:
+            actual={name.removeprefix('Test results/') for name in archive.namelist() if name.startswith('Test results/')}
+            self.assertEqual(actual,set(names))
+        self.assertEqual(package.verify_archive(self.output)['evidence_files'],14)
+
+    def test_security_report_neighbors_and_dump_are_not_authorized_by_allowlist(self):
+        for name in ('security/unit-summary.json','UNIT-SUMMARY.json','unit-tests-full.log',
+                     'postgres-latest.json','fictional-fixture.dump','owned-namespaces.json',
+                     'restore-drills/restore-drill.json','SECURITY_PILOT_README.txt'):
+            with self.subTest(name=name),self.assertRaises(package.PackageError):
+                self.build(evidence_directory=self.root,evidence=[name])
+        self.assertFalse(self.output.exists())
 
     def test_unreviewed_or_nested_evidence_rejected(self):
         for name in ('private.log', '../automated-summary.json', 'nested/automated-summary.json'):

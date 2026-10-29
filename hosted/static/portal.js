@@ -15,18 +15,24 @@ async function api(path,data){
  return result;
 }
 function clearInvitation(){byId('staffInvitationLink').value='';byId('staffInvitationResult').hidden=true}
+function notifyAuthTransition(){
+ try{localStorage.setItem('ss-auth-epoch',crypto.randomUUID())}catch{}
+ try{const channel=new BroadcastChannel('ss-auth-transition');channel.postMessage({changed:true});channel.close()}catch{}
+}
 function beginAuthTransition(){
  if(authTransitionBusy)return false;
  authTransitionBusy=true;
- for(const id of ['signin','workspace','invitation','pilotSetup'])byId(id).inert=true;
+ notifyAuthTransition();
+ for(const id of ['signin','workspace','invitation','pilotSetup','mfaSignin','accountSecurity'])byId(id).inert=true;
  return true;
 }
 function endAuthTransition(){
  authTransitionBusy=false;
- for(const id of ['signin','workspace','invitation','pilotSetup'])byId(id).inert=false;
+ for(const id of ['signin','workspace','invitation','pilotSetup','mfaSignin','accountSecurity'])byId(id).inert=false;
 }
 function signedOutView(){
  ++portalEpoch;portalMe=null;csrfToken='';clearInvitation();byId('staffList').replaceChildren();byId('staffPanel').hidden=true;
+ if(typeof clearMfaSecrets==='function')clearMfaSecrets();byId('mfaSignin').hidden=true;byId('accountSecurity').hidden=true;
  byId('storeName').textContent='';byId('workspace').hidden=true;byId('signin').hidden=false;
  for(const input of document.querySelectorAll('input[type="password"]'))input.value='';
  byId('inviteStaffForm').reset();byId('staffStatus').textContent='';
@@ -34,7 +40,9 @@ function signedOutView(){
 }
 function showAccountForm(target){
  if(authTransitionBusy)return;
+ if(typeof hasMfaChallenge==='function'&&hasMfaChallenge()){byId('mfaSigninStatus').textContent='Cancel verification before switching accounts.';return}
  ++portalEpoch;
+ if(typeof clearMfaSecrets==='function')clearMfaSecrets();byId('mfaSignin').hidden=true;byId('accountSecurity').hidden=true;
  byId('workspace').hidden=true;
  for(const id of ['signin','invitation','pilotSetup'])byId(id).hidden=id!==target;
  for(const id of ['acceptInviteForm','pilotSetupForm']){byId(id).reset();byId(id).querySelector('button').disabled=false}
@@ -44,6 +52,7 @@ function showAccountForm(target){
 async function workspace(epoch=portalEpoch){
  const me=await api('/api/me');if(epoch!==portalEpoch)return;
  portalMe=me;csrfToken=me.csrf_token;
+ if(typeof updateMfaView==='function')updateMfaView(me);
  byId('storeName').textContent=me.store;byId('signin').hidden=true;byId('invitation').hidden=true;byId('pilotSetup').hidden=true;byId('workspace').hidden=false;
  byId('staffPanel').hidden=me.role!=='owner';
  const square=await api('/api/square/status');if(epoch!==portalEpoch)return;
@@ -80,7 +89,7 @@ byId('refreshStaff').onclick=()=>refreshStaff();
 byId('loginForm').onsubmit=async event=>{
  event.preventDefault();if(!beginAuthTransition())return;
  const button=event.target.querySelector('button'),epoch=++portalEpoch;button.disabled=true;byId('loginStatus').textContent='Signing in…';
- try{const result=await api('/api/auth/login',{store_slug:byId('storeSlug').value,email:byId('email').value,password:byId('password').value});if(epoch!==portalEpoch)return;csrfToken=result.csrf_token;byId('password').value='';sessionStorage.removeItem('ss-signed-out');await workspace(epoch)}
+ try{const result=await api('/api/auth/login',{store_slug:byId('storeSlug').value,email:byId('email').value,password:byId('password').value,mfa_supported:true});if(epoch!==portalEpoch)return;byId('password').value='';if(result.mfa_required){beginMfaChallenge(result);notifyAuthTransition();return}csrfToken=result.csrf_token;sessionStorage.removeItem('ss-signed-out');await workspace(epoch);notifyAuthTransition()}
  catch(error){if(epoch===portalEpoch)byId('loginStatus').textContent=error.message}
  finally{byId('password').value='';button.disabled=false;endAuthTransition()}
 };
@@ -93,7 +102,7 @@ byId('signOut').onclick=async()=>{
  if(!beginAuthTransition())return;
  const request=api('/api/auth/logout',{});sessionStorage.setItem('ss-signed-out','1');signedOutView();
  const epoch=portalEpoch;
- try{await request;if(epoch===portalEpoch)byId('loginStatus').textContent='Signed out.'}
+ try{await request;notifyAuthTransition();if(epoch===portalEpoch)byId('loginStatus').textContent='Signed out.'}
  catch{if(epoch===portalEpoch)byId('loginStatus').textContent='Signed out of this view. The service could not confirm session revocation. Close this browser until you can sign in and sign out online; sessions expire within eight hours.'}
  finally{endAuthTransition()}
 };
@@ -141,6 +150,7 @@ function openAccountFragment(){
  if(!token&&!setup)return false;
  history.replaceState(null,'',location.pathname);
  if(authTransitionBusy){byId(portalMe?'workspaceStatus':'loginStatus').textContent='Wait for sign-in or sign-out to finish, then open the private link again.';return true}
+ if(typeof hasMfaChallenge==='function'&&hasMfaChallenge()){byId('mfaSigninStatus').textContent='Cancel verification before opening another account link.';return true}
  if(portalMe){byId('workspaceStatus').textContent='Sign out before opening another account invitation or initial setup. Open the private link again after signing out.';return true}
  if(token){showAccountForm('invitation');byId('inviteCode').value=token;byId('inviteStore').value=fragment.get('store')||''}
  else showAccountForm('pilotSetup');

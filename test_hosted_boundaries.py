@@ -102,7 +102,13 @@ class HostedHTTPTests(unittest.TestCase):
         self.assertIn('invitation-only',page.text)
         self.assertNotIn('https://',page.text)
         script=self.get('/static/portal.js');self.assertEqual(script.status_code,200)
-        self.assertNotIn('localStorage',script.text)
+        # Only a random, non-PII epoch may cross tabs; credentials stay in memory.
+        storage=[line.strip() for line in script.text.splitlines() if 'localStorage' in line]
+        self.assertEqual(storage,["try{localStorage.setItem('ss-auth-epoch',crypto.randomUUID())}catch{}"])
+        mfa_script=self.get('/static/mfa.js')
+        self.assertNotIn('localStorage',mfa_script.text)
+        self.assertNotIn('sessionStorage.setItem',mfa_script.text.replace("sessionStorage.setItem('ss-signed-out','1')",''))
+        mfa_script.close()
         self.assertIn('textContent',script.text)
         script.close();page.close()
 
