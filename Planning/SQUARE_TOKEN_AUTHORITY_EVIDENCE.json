@@ -1,0 +1,37 @@
+{
+  "review_date_local": "2026-10-28",
+  "timezone": "America/Los_Angeles",
+  "scope": "Server implementation and fictional response tests; no live provider credentials, network requests, catalog writes, inventory writes, deployment or merchant data.",
+  "official_sources": [
+    {
+      "url": "https://developer.squareup.com/reference/square/o-auth-api/retrieve-token-status",
+      "api_version": "2026-09-16",
+      "supports": "POST /oauth2/token/status returns actual scopes, merchant_id, client_id and expires_at; documented Authorization context requires a valid production credential."
+    },
+    {
+      "url": "https://developer.squareup.com/docs/oauth-api/token-introspection",
+      "supports": "Token introspection verifies permissions without inferring them from successful unrelated calls or the requested authorization scopes."
+    },
+    {
+      "url": "https://developer.squareup.com/docs/oauth-api/square-permissions",
+      "supports": "Catalog upserts require ITEMS_WRITE and inventory changes require INVENTORY_WRITE. Request only permissions needed by enabled capabilities."
+    }
+  ],
+  "implementation": {
+    "file": "hosted/square.py",
+    "method": "verified_access(tenant, required_scopes)",
+    "production_proof": "Exact configured application, saved merchant, saved environment, finite unexpired OAuth token and actual granted required scopes. Recheck saved token connection after provider response.",
+    "credentials": "Token remains in an ephemeral server-only object with redacted repr; proof projection contains no token or application secret.",
+    "transport": "Fixed provider origin, explicit no redirects, TLS verification retained, environment proxy disabled, 20-second request timeout, bounded 64 KiB streamed token-status JSON.",
+    "status_endpoint": "Saved connection is separate from granted-scope proof. scopes is empty; requested_scopes is labeled and grants_verified is false without introspection.",
+    "sandbox": "Actionable unavailable status before any token or provider call. No fallback treating requested scopes as actual grants.",
+    "existing_oauth_scopes": "Unchanged read-only request list. Receiving re-consent and typed write adapter remain separate implementation/release gates.",
+    "legacy_requests": "OAuth token exchange and existing resource reads reject redirects and non-200 responses."
+  },
+  "tests": {
+    "modules": ["test_hosted_square_authority", "test_hosted_square_status", "test_hosted_provider_ids"],
+    "focused_result": "27 cases passed with fictional responses; broad source-bound acceptance pending integration.",
+    "covered": ["wrong merchant/application", "missing scopes", "expired/nonexpiring/malformed token expiry", "revocation or token replacement during introspection", "HTTP errors and redirects", "malformed/oversized body", "sandbox unsupported proof", "credential-free proof projection"],
+    "not_proven": ["actual Sandbox introspection capability", "live production authorization", "owner re-consent", "provider catalog/inventory write acceptance", "native checkout/reporting", "Idaho tax classification", "consumer readiness"]
+  }
+}

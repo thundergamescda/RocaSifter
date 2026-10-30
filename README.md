@@ -1,19 +1,33 @@
-# Roca Station 2
+# Stock & Sleeve 2.6 local test preview
+
+This preview adds a working local credit ledger and cleanup eligibility checks.
+Shared credit, live automatic Square discount redemption, deployed OAuth and
+catalog deletion are not enabled. See [release scope](docs/RELEASE_2_6_0.md).
+The detailed 2.5 workflow documentation below remains useful for receiving.
+
+Includes price-specific Square variations, a Price research tab, separate intake/retail recommendations, Pokémon $1 labels and a persistent approved-trade summary. Two packages are available: **Standard** (offer calculator, no credit tracker) and **Credit tracker** (the same app plus local customer balances/history). Neither issues credit or changes Square financial transactions. See [editions and update instructions](docs/EDITIONS.md).
+
+**Pricing access remains partial:** the public feed offers TCGplayer market/low references. Verified TCGplayer individual sold records and PriceCharting are not connected. Complete automatic multi-source pricing is gated until those sources are available; no subscription has been purchased. See [pricing coverage](docs/PRICING_PREVIEW.md).
 
 A local receiving workspace for Roca Sifter exports, Square inventory, trade-in offers, and Zebra 2″ × 1″ labels.
 
 **[Operator manual — PDF](docs/Roca_Station_Operator_Manual.pdf)** · **[One-page desk reference — PDF](docs/Roca_Station_Desk_Reference.pdf)**
 
-The 15-page operator manual starts with a one-page daily guide, then covers extra workflows, admin setup, printing, troubleshooting and a fillable store profile.
+The operator manual starts with a one-page daily guide, then covers extra workflows, admin setup, printing, troubleshooting and a fillable store profile.
 
-![Roca Station card review](docs/manual-assets/workspace.png)
+![Stock & Sleeve card review](docs/manual-assets/workspace.png)
 
 ## Start on Windows
 
+After setup, open **Stock & Sleeve** from the Desktop or Start menu. The icon
+starts the background service and opens the workspace without a command window.
+Existing installations can run **Install shortcuts.cmd** once to add these icons.
+Keep the application folder in its current location; the shortcuts point to it.
+
 1. Download **Code → Download ZIP** from GitHub and extract the complete ZIP into a permanent, writable folder. Keep every application file together; this is no longer a single-file app.
-2. Install Python 3.10 or newer if needed.
+2. Install Python 3.10 or newer if needed. The installer uses prebuilt Windows dependencies; Python 3.15.2 ARM64/x64 packages were checked, with full Windows startup still requiring a store test.
 3. Run **Install dependencies.cmd** once, including when upgrading. It creates a local `.venv`, updates pip, and installs prebuilt packages without compiling them. On Windows, token encryption uses built-in DPAPI and does not install `cryptography`.
-4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.3.1**. Edge is never launched as a fallback.
+4. Double-click **Start Roca.vbs** for startup with no command window. **Start Roca.cmd** also starts in the background (its command window may flash briefly). Chrome displays **2.5.0**. Edge is never launched as a fallback.
 5. Open **Admin settings**, create your own password (at least 12 characters), and enter your Square token. There is no default password.
 6. Choose Production for a real store or Sandbox for a sandbox token. Test the connection, select the receiving store, and save.
 7. Choose **Set up automatic pickup**, unlock Admin, then choose **Use Downloads folder** (or enter the actual Roca export folder) and save. Press Export in Roca; new CSVs open for review automatically. Review every included card before stock or labels.
@@ -27,6 +41,14 @@ To shut down, save your edits, wait for **All changes saved**, close the Roca br
 When upgrading from a console-based version, close its old Roca/Python command window once, then replace the application files with this complete release. Preserve **station_data**, **outputs**, and settings; rerun the installer. If a background station is running from another folder, use **Stop Roca** from that folder first.
 
 ### Automatic updates
+
+If you received the versioned **Standard Auto Update ZIP**, extract all of it
+into a separate folder and run **Install Roca Update.cmd**. Choose your existing
+Roca folder, then **Update & reopen Roca**. The release is included, so no GitHub
+connection is required; package installation may still need internet. Your saved
+work is backed up and retained. Leave the included application.zip zipped. This
+installs Standard, keeping the cash/store-credit offer calculator without enabling
+the optional credit tracker.
 
 For future updates, double-click **Update Roca.vbs** in the application folder. Save your work, close the Roca browser window, then select **Update & reopen Roca**. The updater downloads the current GitHub revision, waits for the station to stop, creates a backup, installs the packages and application files, and reopens Chrome. It does not require a Square token or admin password.
 
@@ -80,33 +102,33 @@ Reimporting the same CSV, or opening that receipt from **Activity & orders**, of
 
 - Open a card’s editor to correct name, set, collector number, language, condition, finish/treatment, quantity, price, or storage location.
 - Finish is a free-text field with optional suggestions, not a fixed list. Future/custom treatments are supported.
-- Changing identity or treatment clears the review confirmation and a legacy SKU override in the editor. Confirm the price for the corrected variant; no live market-price lookup is connected.
+- Changing identity or treatment clears review and requests fresh research for the corrected card. Unknown treatments and slabs need manual confirmation; a raw-card reference cannot value a slab.
 - **Separate one copy** separates one card from a quantity so it can receive a different condition or treatment. The total incoming quantity is preserved by the UI.
 - Confirm each card, or explicitly confirm that all included cards have been physically reviewed.
 - Search and review filters operate across the entire receipt. The table renders 40 rows per page; an 11,000-row import was exercised in the browser.
-- After accepting a buy or receiving stock, card identity/quantity/price are locked. Notes and storage assignments can still be updated. Handle post-receiving stock corrections in Square and record a separate correction workflow rather than rewriting a committed receipt.
+- After accepting a buy, card identity/quantity and the agreed offer are locked; retail prices can still be reviewed before receiving. After receiving, prices are locked as well. Notes and storage assignments can still be updated. Handle post-receiving stock corrections in Square and record a separate correction workflow rather than rewriting a committed receipt.
 
-Cash and store-credit percentages are configurable defaults, not recommended buying rates. Offers use included quantities and proposed retail prices. Accepted buys are saved separately from inventory receiving, and include an acceptance PDF. They do not transfer money, issue store credit, or create a legal customer signature.
+Cash and store-credit percentages are configurable defaults, not recommended buying rates. Offers use included quantities and the approved intake values, falling back to the entered price. The Pokémon retail rounding rule does not inflate intake values. Accepted buys are saved separately from inventory receiving, and include an acceptance PDF. They do not transfer money, issue store credit, or create a legal customer signature.
 
 ## Manual labels and inventory
 
 Use **Add item** beside New batch for a graded card or any custom item. On a blank workspace it creates a manual batch without a CSV. In an unfinished batch, including a trade-in, it adds the item alongside the scanned cards.
 
-Enter the item name, **selling / label price**, quantity and condition/grade, such as **PSA 10**, **BGS 9.5** or any other text. Set, collector number, finish and language are optional details. Manual prices keep the cents you enter; they are not rounded to a quarter. Grade participates in item identity, so PSA 9 and PSA 10 do not share a generated SKU. If an individual slab needs a separate identity, include its certification/reference in the name. Side-fold QR labels show the condition/grade; include it in the name when using standard/top-fold labels, which print only the name and price.
+Enter the item name, **selling / label price**, quantity and condition/grade, such as **PSA 10**, **BGS 9.5** or any other text. Set, collector number, finish and language are optional details. Manual prices keep the cents you enter, except Pokémon retail values of $0.50–$1.00 follow the explicit $1 label rule; the original intake value is retained. Grade participates in item identity, so PSA 9 and PSA 10 do not share a generated SKU. If an individual slab needs a separate identity, include its certification/reference in the name. Side-fold QR labels show the condition/grade; include it in the name when using standard/top-fold labels, which print only the name and price.
 
 The new item is unchecked. Verify it, Continue, then choose **Create labels only** or **Add to Square & create labels**, using the same final stock confirmation as scanned cards. In a trade-in, your entered price is the retail value: **the existing cash/store-credit percentages apply normally**. There is no separate fixed buying-price override.
 
 Adding an item never changes Square by itself. Repeated submission of the same request does not add another copy, including after a lost response or restart. Accepted purchases and received/pending-retry batches cannot accept more items; start another batch instead. Adding to an editable batch clears its old output links so labels/listing files are regenerated for the new contents. Existing exported files stay on disk.
 
-## Direct price comparisons
+## In-app price research
 
-Use **Compare prices** in **Add item** or the card editor. Select Pokémon or Magic for the current batch. The app opens four source searches: **eBay sold**, **eBay current listings**, **PriceCharting guide**, and **TCGplayer values**. Unsaved name, set, collector number, finish, language and condition/grade are included in the searches.
+The **Price research** tab sits beside **Check cards**. Imports and corrected identities queue background research; duplicate identities share a cached lookup. Results stay inside the app, with separate intake and retail recommendations and visible source availability. Slabs need exact grader/grade evidence; unmatched cards retain their entered values.
 
-For a slab, compare the exact grader, grade and premium tier. TCGplayer is labeled as a **raw-card reference**, rather than a slab valuation. PSA 10, BGS 10, BGS Black Label 10, CGC Gem Mint 10 and CGC Pristine 10 must not be pooled. Generic “Grade 9” guide data is not automatically identified as PSA 9.
+Current live adapter: daily TCGplayer market/low references for exact English Near Mint cards. Individual TCGplayer sold records and PriceCharting are **not connected**. Partial suggestions require approval and cannot silently correct prices. The public feed could not be validated live from this environment (proxy HTTP 403); fixture tests do not prove real pricing accuracy.
 
-**These are direct search links, not fetched or verified prices.** Check the exact product/grade on the source site, return to the item, and enter the selling price you choose. The app does not read those pages, average their results, or overwrite a manual price. Existing buying percentages, label layouts, export pickup and inventory approvals are unchanged.
+Once all three required sources have verified records, intake prefers the lowest matching listing (then the intake percentage); retail weights recent sold median at 75% and the exact guide at 25% (then the retail percentage). Those weights are a transparent initial policy, not a guarantee of appraisal accuracy. Automatic corrections require complete matching evidence, no source conflict and a small difference from the current price. **Over 15% and at least $1** flags review; both limits and automatic correction are adjustable in Admin. Explicit/manual retail prices, accepted intake amounts, generated retail documents and received stock are protected.
 
-Automatic import-time Pokémon repricing still requires verified data access. The offline comparison engine in `pricing_review.py` has raw and graded policies plus tests, but only its search-link helper is connected to the running app. No subscription or API feed has been activated. See [pricing implementation status](docs/PRICING_RESEARCH.md).
+Pokémon retail values from **$0.50 through $1.00** become **$1 labels**, while the intake amount stays separate. Existing received shelf stock is never silently rounded or repriced. See [pricing coverage](docs/PRICING_PREVIEW.md).
 
 ## Password-protected Admin
 
@@ -136,7 +158,7 @@ To turn pickup off, clear the export folder in Admin and save. Queued batches re
 
 New card identifiers are independent of CSV row order and price. They include card name, collector number, condition, finish, language and set. Supply consistent set data to keep editions separate. Common condition/non-foil aliases are normalized; different variants stay separate.
 
-Repeated matching CSV rows are grouped for the inventory request. A matching Square SKU receives an additive adjustment from `NONE` to `IN_STOCK`, not an absolute count: 4 existing + 2 incoming = 6, absent intervening sales. Existing prices are preserved, and a mismatch between the CSV label price and Square price stops preflight. Multiple Square variations sharing a SKU also stop preflight.
+Repeated matching CSV rows are grouped for the inventory request. A matching Square SKU receives an additive adjustment from `NONE` to `IN_STOCK`, not an absolute count: 4 existing + 2 incoming = 6, absent intervening sales. Matching card details and price reuse that variation/SKU and add quantity. A different price creates a sibling variation with its own barcode under the same Square item. Older variations keep their prices. Multiple Square variations sharing a SKU, conflicting currency or inconsistent identity stop preflight. Labels use the SKU confirmed by receiving. Saved in-flight operations from older versions retain their original retry behavior.
 
 Each receipt has one receiving operation. Repeating **Receive** after success is a no-op. The local SQLite journal stores outgoing payloads and Square idempotency keys before sending; retries use the saved payload, including timestamps, and reuse confirmed responses. This covers tested restarts and lost-response cases. A preflight error before any catalog/inventory write leaves the receipt editable; ambiguous or partial writes lock it for a saved retry. Restore the original environment/location before retrying. Do not create a new receipt as a workaround. Very old pending requests, manual Square changes during a pending operation, or persistent Square errors require merchant-side reconciliation; do not assume stock is correct until Square confirms it.
 
@@ -159,7 +181,7 @@ PDF barcode/QR decoding was tested at both supported resolutions. Actual Zebra o
 
 ## Online preparation boundaries
 
-The CSV is a **generic listing review sheet**, with SKU, identity, variant, quantity, price, channel and storage location. It is not guaranteed to match TCGplayer/eBay’s native import schema. Listings must be published through a verified seller workflow. Marketplace APIs, automatic delisting, live price feeds, and automatic order notifications are not implemented in this release. Physical bins are configured in Roca; this app records where the approved cards are stored.
+The CSV is a **generic listing review sheet**, with SKU, identity, variant, quantity, price, channel and storage location. It is not guaranteed to match TCGplayer/eBay’s native import schema. Listings must be published through a verified seller workflow. Marketplace APIs, automatic delisting and automatic order notifications are not implemented in this release. Physical bins are configured in Roca; this app records where the approved cards are stored.
 
 ## Upgrading, files and backups
 
@@ -174,6 +196,7 @@ python -m pip install -r requirements-dev.txt
 python -m unittest discover -v
 python -m playwright install chromium
 python browser_smoke.py
+python browser_store_workflow.py
 ```
 
 The browser test uses an isolated temporary database, fictional batch data, and no live merchant credentials. It exercises the import/check/finish flow, explicit/cancelled stock confirmation, labels-only, reprints, delete/restore, trade approval, arbitrary finish text and separate copies, same-batch workflow transfer, online storage guards, downloads, Admin defaults/lock, pull tasks, real file pickup, partial downloads, queued drafts, restart/reopen and duplicate reexports, fresh batches, manual-only labels and inventory, graded identity, exact prices, lost-response retry, mixed trade offers, mobile layout, and 11,000-row intake/paging/search. Screenshots are written to a temporary folder. `ROCA_BROWSER_PATH` can select a local Chrome/Chromium executable.

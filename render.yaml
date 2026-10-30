@@ -1,0 +1,24 @@
+# Existing database is deliberately not declared here: do not create a second one.
+services:
+  - type: web
+    name: stock-and-sleeve-api
+    runtime: python
+    region: oregon
+    plan: starter
+    branch: stock-and-sleeve-2-6-local-preview
+    autoDeployTrigger: off
+    buildCommand: python tools/install_hosted_dependencies.py
+    preDeployCommand: python -m hosted.manage migrate && python tools/test_hosted_postgres.py && python -m hosted.runtime_acceptance
+    startCommand: gunicorn hosted.wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 60 --access-logfile - --access-logformat '%(m)s %(U)s %(s)s'
+    healthCheckPath: /readyz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.12
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_ENCRYPTION_KEYS
+        generateValue: true
+      - key: BOOTSTRAP_TOKEN
+        generateValue: true
+      - key: SQUARE_ENVIRONMENT
+        value: sandbox

@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -36,6 +37,13 @@ def private_write(path, data):
 
 
 class Store:
+    SUMMARY_VERSION = 2
+    SUMMARY_FIELDS = frozenset(('id', 'title', 'source_name', 'mode', 'created', 'updated', 'revision',
+        'inventory_status', 'inventory_intent', 'prepared', 'pickup_pending', 'pricing_game', 'mixed_games',
+        'requires_purchase', 'cash_percent', 'credit_percent', 'channel', 'storage_strategy', 'storage_location', 'error'))
+    PURCHASE_FIELDS = frozenset(('type', 'amount', 'at', 'intake_total', 'scope'))
+    SHARED_FIELDS = frozenset(('state', 'trade_id', 'message'))
+
     def __init__(self, root):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -59,6 +67,15 @@ class Store:
                 receipt_id TEXT, key TEXT, request TEXT, response TEXT,
                 PRIMARY KEY(receipt_id,key));
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, updated TEXT, body TEXT);
+            CREATE TABLE IF NOT EXISTS receipt_summaries (
+                receipt_id TEXT PRIMARY KEY, receipt_updated TEXT NOT NULL,
+                format_version INTEGER NOT NULL, body TEXT NOT NULL, digest TEXT NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS receipts_summary_insert AFTER INSERT ON receipts
+                BEGIN DELETE FROM receipt_summaries WHERE receipt_id=NEW.id; END;
+            CREATE TRIGGER IF NOT EXISTS receipts_summary_update AFTER UPDATE ON receipts
+                BEGIN DELETE FROM receipt_summaries WHERE receipt_id=OLD.id OR receipt_id=NEW.id; END;
+            CREATE TRIGGER IF NOT EXISTS receipts_summary_delete AFTER DELETE ON receipts
+                BEGIN DELETE FROM receipt_summaries WHERE receipt_id=OLD.id; END;
             ''')
             if 'deleted_at' not in {row['name'] for row in db.execute('PRAGMA table_info(receipts)')}:
                 db.execute('ALTER TABLE receipts ADD COLUMN deleted_at TEXT')
@@ -98,12 +115,16 @@ class Store:
         return json.loads(row[0])
 
     def save_receipt(self, receipt, event=None):
-        receipt['updated'] = now()
-        receipt['revision'] = receipt.get('revision', 0) + 1
         with self.db() as db:
+            receipt['updated'] = now()
+            receipt['revision'] = receipt.get('revision', 0) + 1
+            body = json.dumps(receipt)
+            # Derive from the exact serialized snapshot, never a mutable second view.
+            summary = self._make_summary(json.loads(body))
             db.execute('INSERT OR REPLACE INTO receipts (id,source_hash,updated,body,deleted_at,pickup_pending) VALUES (?,?,?,?,?,?)',
-                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], json.dumps(receipt), receipt.get('deleted_at'),
+                (receipt['id'], receipt.get('source_hash', ''), receipt['updated'], body, receipt.get('deleted_at'),
                  int(bool(receipt.get('pickup_pending')))))
+            self._save_summary(db, receipt['id'], receipt['updated'], summary)
             if event:
                 db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
                     (receipt['id'], now(), event[0], event[1]))
@@ -115,31 +136,112 @@ class Store:
         return row[0] if row else None
 
     def summaries(self):
+        return self._summary_rows()
+
+    @staticmethod
+    def _scalar(value):
+        return value is None or isinstance(value, (str, int, float, bool))
+
+    @classmethod
+    def _make_summary(cls, receipt):
+        cards = [card for card in receipt['cards'] if card.get('include', True)]
+        result = {key: receipt[key] for key in cls.SUMMARY_FIELDS if key in receipt and cls._scalar(receipt[key])}
+        result.update(rows=len(cards), units=sum(card['qty'] for card in cards),
+                      retail=round(sum(card['qty'] * card['final_price'] for card in cards), 2),
+                      all_reviewed=bool(cards) and all(card.get('reviewed') and not card.get('price_missing') for card in cards))
+        purchase = receipt.get('purchase')
+        result['purchase'] = ({key: purchase[key] for key in cls.PURCHASE_FIELDS if key in purchase and cls._scalar(purchase[key])}
+                              if isinstance(purchase, dict) else None)
+        files = receipt.get('files', {})
+        if isinstance(files, dict):
+            result['files'] = {key: value for key, value in list(files.items())[:20]
+                               if isinstance(key, str) and len(key) <= 64 and isinstance(value, str) and len(value) <= 512}
+        shared = receipt.get('shared_trade')
+        if isinstance(shared, dict):
+            result['shared_trade'] = {key: shared[key][:1000] for key in cls.SHARED_FIELDS
+                                     if isinstance(shared.get(key), str)}
+        return result
+
+    @classmethod
+    def _save_summary(cls, db, receipt_id, updated, summary):
+        body = json.dumps(summary, separators=(',', ':'))
+        hashed = hashlib.sha256(body.encode()).hexdigest()
+        db.execute('INSERT OR REPLACE INTO receipt_summaries(receipt_id,receipt_updated,format_version,body,digest) VALUES (?,?,?,?,?)',
+                   (receipt_id, updated, cls.SUMMARY_VERSION, body, hashed))
+
+    @classmethod
+    def _cached_summary(cls, row):
+        try:
+            body = row['summary_body']
+            if (row['format_version'] != cls.SUMMARY_VERSION or row['receipt_updated'] != row['updated']
+                    or not isinstance(body, str) or hashlib.sha256(body.encode()).hexdigest() != row['digest']):
+                return None
+            result = json.loads(body)
+            allowed = cls.SUMMARY_FIELDS | {'rows', 'units', 'retail', 'all_reviewed', 'purchase', 'files', 'shared_trade'}
+            if not isinstance(result, dict) or not set(result) <= allowed or result.get('id') != row['id']:
+                return None
+            if type(result.get('rows')) is not int or result['rows'] < 0:
+                return None
+            if type(result.get('all_reviewed')) is not bool:
+                return None
+            for key in ('units', 'retail'):
+                value = result.get(key)
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    return None
+            if any(not cls._scalar(result[key]) for key in cls.SUMMARY_FIELDS if key in result):
+                return None
+            purchase = result.get('purchase')
+            if purchase is not None and (not isinstance(purchase, dict) or not set(purchase) <= cls.PURCHASE_FIELDS
+                                         or any(not cls._scalar(value) for value in purchase.values())):
+                return None
+            files = result.get('files', {})
+            if not isinstance(files, dict) or len(files) > 20 or any(not isinstance(key, str) or len(key) > 64
+                or not isinstance(value, str) or len(value) > 512 for key, value in files.items()):
+                return None
+            shared = result.get('shared_trade', {})
+            if not isinstance(shared, dict) or not set(shared) <= cls.SHARED_FIELDS or any(
+                    not isinstance(value, str) or len(value) > 1000 for value in shared.values()):
+                return None
+            return result
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def _summary_rows(self, pickup=False):
+        where = 'r.pickup_pending=1 AND r.deleted_at IS NULL' if pickup else 'r.deleted_at IS NULL'
+        order = 'r.updated,r.id' if pickup else 'r.updated DESC'
+        result = []
         with self.db() as db:
-            rows = db.execute('SELECT body FROM receipts WHERE deleted_at IS NULL ORDER BY updated DESC LIMIT 150').fetchall()
-        summaries = []
-        for row in rows:
-            receipt = json.loads(row[0])
-            cards = [c for c in receipt['cards'] if c.get('include', True)]
-            receipt['rows'] = len(cards)
-            receipt['units'] = sum(c['qty'] for c in cards)
-            receipt['retail'] = round(sum(c['qty'] * c['final_price'] for c in cards), 2)
-            receipt.pop('cards')
-            summaries.append(receipt)
-        return summaries
+            query = f'''SELECT r.id,r.updated,s.receipt_updated,s.format_version,
+                                  s.body AS summary_body,s.digest FROM receipts r
+                                  LEFT JOIN receipt_summaries s ON s.receipt_id=r.id
+                                  WHERE {where} ORDER BY {order} LIMIT 150'''
+            rows = db.execute(query).fetchall()
+            cached = [self._cached_summary(row) for row in rows]
+            if all(summary is not None for summary in cached):
+                return cached
+            # Warm polls need no writer lock. Repair re-reads under an immediate
+            # transaction so another process cannot pair a new body with an old
+            # stamp after the initial read. Only derived rows are written.
+            db.execute('BEGIN IMMEDIATE')
+            rows = db.execute(query).fetchall()
+            for row in rows:
+                summary = self._cached_summary(row)
+                if summary is None:
+                    # Only one original payload is materialized at a time. The
+                    # repair never updates original receipts, events or journals.
+                    original = db.execute('SELECT body FROM receipts WHERE id=?', (row['id'],)).fetchone()
+                    summary = self._make_summary(json.loads(original['body']))
+                    self._save_summary(db, row['id'], row['updated'], summary)
+                result.append(summary)
+        return result
 
     def activity(self):
         with self.db() as db:
             return [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 150')]
 
     def pickup_queue(self):
-        with self.db() as db:
-            rows = db.execute('SELECT body FROM receipts WHERE pickup_pending=1 AND deleted_at IS NULL ORDER BY updated,id LIMIT 150').fetchall()
-        result = []
-        for row in rows:
-            receipt = json.loads(row['body'])
-            result.append({key: receipt[key] for key in ('id', 'title', 'source_name', 'mode')})
-        return result
+        return [{key: receipt.get(key, '') for key in ('id', 'title', 'source_name', 'mode')}
+                for receipt in self._summary_rows(pickup=True)]
 
 
 class Vault:

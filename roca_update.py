@@ -7,6 +7,7 @@ import argparse
 import ast
 from contextlib import contextmanager
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -24,10 +25,13 @@ import uuid
 import zipfile
 
 REPOSITORY = 'thundergamescda/RocaSifter'
-PROTECTED = {'.git', '.venv', 'station_data', 'outputs', 'backups', '__pycache__', '.env', 'roca_settings.json'}
+PROTECTED = {'.git', '.venv', 'station_data', 'outputs', 'backups', '__pycache__', '.env', 'roca_settings.json', 'roca_edition.json'}
 REQUIRED = {'roca_to_square.py', 'station_service.py', 'station_server.py', 'station_store.py',
             'station_desktop.py', 'station_runtime.py', 'roca_update.py', 'requirements.txt',
             'station.js', 'station.css', 'roca_square_label_app.html', 'Start Roca.vbs', 'Update Roca.vbs'}
+REQUIRED.update({'square_variations.py','station_pricing.py','store_pricing.py','station_edition.py','pricing_review.py',
+                 'station_paths.py','station_diagnostics.py','station_cloud.py','station_shared_trade.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py',
+                 'cloud.js','cloud.css','intake.js','import.js','import.css','shared-trade.js','shared-trade.css','intake_manifest.py','station_intake_claim.py','intake-claim.js','intake-claim.css','product_brand.py','product_brand.json','preview.js'})
 MAX_DOWNLOAD = 64 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
 
@@ -84,6 +88,33 @@ def literal_setting(path, name, default=None):
     return default
 
 
+def station_port(path):
+    """Read the installed launcher port without importing or executing its source.
+
+    Older releases use a literal PORT. The desktop-profile release uses this
+    exact environment-backed expression; interpreting only that known shape
+    preserves the launcher's port override without evaluating arbitrary code.
+    """
+    value = 8765
+    allowed = ast.parse("int(os.environ.get('ROCA_STATION_PORT', '8765'))", mode='eval').body
+    for node in ast.parse(Path(path).read_text(encoding='utf-8-sig')).body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'PORT' for target in node.targets):
+            if ast.dump(node.value) == ast.dump(allowed):
+                try:
+                    value = int(os.environ.get('ROCA_STATION_PORT', '8765'))
+                except (ValueError, TypeError):
+                    raise UpdateError('The installed station has an invalid local port override.') from None
+            else:
+                try:
+                    value = ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    raise UpdateError('The installed station has an unsupported local port setting.') from None
+            break
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 65536:
+        raise UpdateError('The installed station has an invalid local port.')
+    return value
+
+
 def installation(root):
     root = Path(root).resolve()
     if not (root / 'roca_to_square.py').is_file():
@@ -124,14 +155,49 @@ def download_release(stage):
     return archive, commit
 
 
-def unpack_release(archive, destination):
+def bundled_release(manifest_path):
+    """Validate a supplied release before stopping the station or changing files."""
+    manifest_path = Path(manifest_path).resolve()
+    try:
+        if manifest_path.stat().st_size > 16 * 1024:
+            raise ValueError()
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        if not isinstance(manifest, dict) or manifest.get('format') != 1:
+            raise ValueError()
+        filename = manifest['archive']
+        if filename != 'application.zip':
+            raise ValueError()
+        if manifest.get('edition') not in ('standard', 'credit-tracker'):
+            raise ValueError()
+        if not re.fullmatch(r'\d+\.\d+\.\d+', str(manifest.get('version', ''))):
+            raise ValueError()
+        expected = manifest['sha256']
+        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+            raise ValueError()
+        archive = manifest_path.parent / filename
+        if archive.is_symlink() or archive.stat().st_size > MAX_DOWNLOAD:
+            raise ValueError()
+        digest = hashlib.sha256()
+        with archive.open('rb') as source:
+            for chunk in iter(lambda: source.read(128 * 1024), b''):
+                digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise ValueError()
+    except (OSError, ValueError, KeyError, TypeError):
+        raise UpdateError('The included update is missing or damaged. Extract the complete updater ZIP again. No application files were changed.') from None
+    return archive, 'bundle:' + expected, manifest
+
+
+def unpack_release(archive, destination, edition=None):
     files = []
     seen = set()
     total = 0
     top = None
     with zipfile.ZipFile(archive) as bundle:
         for member in bundle.infolist():
-            name = member.filename
+            # Windows ZipInfo normalizes backslashes in filename; validate the
+            # original archive spelling before that normalization can hide it.
+            name = member.orig_filename
             parts = PurePosixPath(name).parts
             if ('\\' in name or not parts or name.startswith('/')
                     or any(p in ('.', '..') or p != p.rstrip(' .') or re.search(r'[<>:"|?*]', p)
@@ -146,7 +212,8 @@ def unpack_release(archive, destination):
             if len(parts) < 2 or member.is_dir():
                 continue
             relative = Path(*parts[1:])
-            if (any(p.casefold() in PROTECTED for p in relative.parts)
+            edition_file = edition is not None and relative.as_posix() == 'roca_edition.json'
+            if (not edition_file and any(p.casefold() in PROTECTED for p in relative.parts)
                     or len(relative.parts) == 1 and relative.suffix.casefold() in ('.csv', '.pdf', '.zpl')):
                 continue
             key = relative.as_posix().casefold()
@@ -163,6 +230,13 @@ def unpack_release(archive, destination):
             files.append(relative)
     if not REQUIRED.issubset({str(p) for p in files}):
         raise UpdateError('The download is missing required application files. Nothing was installed.')
+    if edition is not None:
+        try:
+            selected = json.loads((Path(destination) / 'roca_edition.json').read_text(encoding='utf-8'))['edition']
+        except (OSError, ValueError, KeyError, TypeError):
+            selected = None
+        if selected != edition or (edition == 'credit-tracker' and Path('credit_tracker.py') not in files):
+            raise UpdateError('The included update does not match its selected edition. Nothing was installed.')
     version = literal_setting(Path(destination) / 'roca_to_square.py', 'APP_VERSION')
     if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise UpdateError('The update does not contain a valid version number.')
@@ -332,16 +406,23 @@ def start_updated_station(root, version, port):
     return False
 
 
-def perform_update(folder, report=lambda *_: None, restart=True):
+def perform_update(folder, report=lambda *_: None, restart=True, bundle=None):
     root = installation(folder)
     backup = None
     with UpdateLock(root), tempfile.TemporaryDirectory(prefix='Roca-update-') as temporary:
         stage = Path(temporary)
-        report(8, 'Downloading the latest Roca version…')
-        archive, commit = download_release(stage)
+        release = None
+        if bundle is not None:
+            report(8, 'Checking the included Roca update…')
+            archive, commit, release = bundled_release(bundle)
+        else:
+            report(8, 'Downloading the latest Roca version…')
+            archive, commit = download_release(stage)
         payload = stage / 'application'
-        report(22, 'Checking the downloaded application…')
-        files, version = unpack_release(archive, payload)
+        report(22, 'Checking the application files…')
+        files, version = unpack_release(archive, payload, edition=release['edition'] if release else None)
+        if release and version != release['version']:
+            raise UpdateError('The included update has inconsistent version information. Nothing was installed.')
         current = literal_setting(root / 'roca_to_square.py', 'APP_VERSION', '0.0.0')
         if re.fullmatch(r'\d+\.\d+\.\d+', str(current)):
             if tuple(map(int, current.split('.'))) > tuple(map(int, version.split('.'))):
@@ -352,9 +433,15 @@ def perform_update(folder, report=lambda *_: None, restart=True):
         except (OSError, ValueError):
             installed = {}
         current_release = installed.get('commit') == commit and current == version
-        port = literal_setting(root / 'roca_to_square.py', 'PORT', 8765)
-        if not isinstance(port, int) or not 0 < port < 65536:
-            raise UpdateError('The installed station has an invalid local port.')
+        if release:
+            try:
+                edition = json.loads((root / 'roca_edition.json').read_text(encoding='utf-8'))['edition']
+            except FileNotFoundError:
+                edition = 'standard'
+            except (OSError, ValueError, KeyError, TypeError):
+                edition = None
+            current_release = current_release and edition == release['edition']
+        port = station_port(root / 'roca_to_square.py')
         if not current_release:
             report(30, 'Finishing the current Roca session…')
             stop_existing_station(root, port, report)
@@ -391,10 +478,11 @@ def perform_update(folder, report=lambda *_: None, restart=True):
     return {'version': version, 'current': current_release, 'backup': str(backup) if backup else None, 'reopened': reopened}
 
 
-def desktop(folder=None):
+def desktop(folder=None, bundle=None):
     import queue
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
+    release = bundled_release(bundle)[2] if bundle is not None else None
     app = tk.Tk()
     app.title('Update Roca Station')
     app.geometry('650x570')
@@ -408,8 +496,8 @@ def desktop(folder=None):
         item.pack(fill='x', pady=(0, 12))
         return item
     label('ROCA STATION  /  SOFTWARE UPDATE', 9, '#315dea')
-    label('Keep your station current.', 22, '#192438')
-    label('Downloads, backups and setup are handled for you.\nYour receipts, labels and saved settings stay in place.')
+    label('Install Roca ' + release['version'] + '.' if release else 'Keep your station current.', 22, '#192438')
+    label(('Included edition: ' + ('Standard' if release['edition'] == 'standard' else 'Credit tracker') + '. Backups and setup are handled for you.\n' if release else 'Downloads, backups and setup are handled for you.\n') + 'Your receipts, labels and saved settings stay in place.', wraplength=510)
     candidate = Path(folder) if folder else Path(__file__).resolve().parent
     path = tk.StringVar(value=str(candidate) if (candidate / 'roca_to_square.py').is_file() else '')
     label('Existing Roca application folder', 10, '#192438')
@@ -434,7 +522,7 @@ def desktop(folder=None):
     app.protocol('WM_DELETE_WINDOW', finish_close)
     def worker(root):
         try:
-            events.put(('done', perform_update(root, lambda value, text: events.put(('progress', value, text)))))
+            events.put(('done', perform_update(root, lambda value, text: events.put(('progress', value, text)), bundle=bundle)))
         except Exception as exc:
             events.put(('error', str(exc)))
     def start():
@@ -476,15 +564,17 @@ def desktop(folder=None):
 def main():
     parser = argparse.ArgumentParser(description='Update the existing Roca Station installation.')
     parser.add_argument('--folder', type=Path)
+    parser.add_argument('--bundle', type=Path, help='Install the release supplied beside this updater, without a GitHub download.')
     args = parser.parse_args()
     try:
         if sys.version_info < (3,10):
             raise UpdateError('Python 3.10 or newer is required.')
-        desktop(args.folder)
+        desktop(args.folder, bundle=args.bundle)
     except Exception as exc:
         if os.name == 'nt':
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, 'The updater could not open. Install Python 3.10 or newer with Tcl/Tk support.\n\n'+str(exc), 'Roca Station updater', 0x10)
+            message = str(exc) if isinstance(exc, UpdateError) else 'The updater could not open. Install Python 3.10 or newer with Tcl/Tk support.\n\n' + str(exc)
+            ctypes.windll.user32.MessageBoxW(None, message, 'Roca Station updater', 0x10)
         else:
             raise
 

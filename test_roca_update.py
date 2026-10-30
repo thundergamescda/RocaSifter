@@ -1,5 +1,6 @@
 """Update filesystem transactions, preserved merchant data and process boundaries."""
 import json
+import os
 from pathlib import Path
 import socket
 import tempfile
@@ -48,7 +49,10 @@ class UpdaterTests(unittest.TestCase):
                     content=f'APP_VERSION = "{version}"\nPORT = {self.port}\n'
                 bundle.writestr('RocaSifter-revision/'+name,content)
             for name,content in (extras or {}).items():
-                bundle.writestr(name if name.startswith('/') else 'RocaSifter-revision/'+name,content)
+                # ZipInfo preserves intentionally invalid backslashes on Windows.
+                info=zipfile.ZipInfo(name if name.startswith('/') else 'RocaSifter-revision/'+name)
+                info.filename=info.orig_filename
+                bundle.writestr(info,content)
 
     def run_update(self, **kwargs):
         with patch.object(update,'download_release',return_value=(self.archive,self.commit)), \
@@ -83,6 +87,40 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual((backup/'files'/name).read_bytes(),content)
         self.assertEqual(update.literal_setting(self.root/'roca_to_square.py','APP_VERSION'),'2.0.4')
         self.assertEqual(json.loads((backup/'update.json').read_text())['status'],'installed')
+
+    def test_current_desktop_source_updates_using_its_isolated_port_override(self):
+        # Use the actual current source, not the legacy literal-PORT fixture.
+        self.old=Path(core.__file__).read_bytes()
+        (self.root/'roca_to_square.py').write_bytes(self.old)
+        self.make_archive(version='2.6.1')
+        with patch.dict(os.environ,{'ROCA_STATION_PORT':str(self.port)}):
+            result,_,_,restart=self.run_update()
+        self.assertEqual(result['version'],'2.6.1')
+        restart.assert_called_once_with(self.root,'2.6.1',self.port)
+        self.assertEqual((Path(result['backup'])/'files/roca_to_square.py').read_bytes(),self.old)
+        self.assert_business_preserved()
+
+    def test_port_reader_matches_current_launcher_default_and_override(self):
+        path=Path(core.__file__)
+        with patch.dict(os.environ,{},clear=True):
+            self.assertEqual(update.station_port(path),8765)
+        with patch.dict(os.environ,{'ROCA_STATION_PORT':'8876'}):
+            self.assertEqual(update.station_port(path),8876)
+        # A legacy literal port must not be redirected by the newer override.
+        with patch.dict(os.environ,{'ROCA_STATION_PORT':'8876'}):
+            self.assertEqual(update.station_port(self.root/'roca_to_square.py'),self.port)
+        for invalid in ('0','65536','not-a-port'):
+            with self.subTest(override=invalid),patch.dict(os.environ,{'ROCA_STATION_PORT':invalid}):
+                with self.assertRaisesRegex(update.UpdateError,'invalid local port'):
+                    update.station_port(path)
+
+    def test_port_reader_rejects_executable_source_without_executing_it(self):
+        marker=Path(self.temp.name)/'must-not-be-written'
+        path=self.root/'roca_to_square.py'
+        path.write_text('PORT = __import__("pathlib").Path('+repr(str(marker))+').write_text("bad")\n')
+        with self.assertRaisesRegex(update.UpdateError,'unsupported local port'):
+            update.station_port(path)
+        self.assertFalse(marker.exists())
 
     def test_update_archive_cannot_replace_local_data_or_environment(self):
         self.make_archive({name:b'wrong remote content' for name in [*self.business,'.venv/Scripts/python.exe','.git/config','backups/previous/private.txt']})
@@ -141,6 +179,16 @@ class UpdaterTests(unittest.TestCase):
                     update.perform_update(self.root)
                 install.assert_not_called()
         self.assertEqual((self.root/'roca_to_square.py').read_bytes(),self.old)
+
+    def test_cloud_and_scanner_runtime_dependencies_are_required_before_stopping(self):
+        for missing in ('station_cloud.py','station_shared_trade.py','scanner_adapters.py','catalog_cleanup.py','credit_tracker.py','cloud.js','cloud.css','intake.js','import.js','import.css','shared-trade.js','shared-trade.css','intake_manifest.py','station_intake_claim.py','intake-claim.js','intake-claim.css'):
+            self.make_archive(omit=missing)
+            with self.subTest(missing=missing),patch.object(update,'download_release',return_value=(self.archive,self.commit)), \
+                 patch.object(update,'stop_existing_station') as stop:
+                with self.assertRaisesRegex(update.UpdateError,'missing required application files'):
+                    update.perform_update(self.root)
+                stop.assert_not_called()
+        self.assert_business_preserved()
 
     def test_same_revision_reopens_without_installing_again(self):
         self.run_update()

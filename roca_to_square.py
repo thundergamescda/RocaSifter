@@ -40,12 +40,18 @@ except ImportError:
     canvas = None
     code128 = None
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_FILE = os.path.join(APP_DIR, "roca_settings.json")
+from station_paths import resolve_paths
+
+_paths = resolve_paths(__file__)
+APP_DIR = str(_paths.resources)
+DATA_DIR = str(_paths.data)
+SETTINGS_FILE = os.path.join(DATA_DIR, "roca_settings.json")
 HTML_APP_FILE = os.path.join(APP_DIR, "roca_square_label_app.html")
-PORT = 8765
-APP_VERSION = "2.3.1"
-OUTPUT_DIR = os.path.join(APP_DIR, "outputs")
+PORT = int(os.environ.get('ROCA_STATION_PORT', '8765'))
+if not 1 <= PORT <= 65535:
+    raise RuntimeError('ROCA_STATION_PORT must be between 1 and 65535.')
+APP_VERSION = "2.6.0"
+OUTPUT_DIR = os.path.join(DATA_DIR, "outputs")
 
 
 class HTTPServer(ThreadingHTTPServer):
@@ -101,82 +107,58 @@ def generate_sku(card_name: str, card_num: str, condition: str, printing: str, s
     return f"{int(digest, 16) % 10**12:012d}"
 
 
+def generate_card_sku(card):
+    """Extend new explicit identities while preserving legacy receipt SKUs.
+
+    Existing Square SKU overrides are applied by the receipt service. Legacy
+    rows without per-card game/slab/sports metadata retain generate_sku output.
+    """
+    legacy = generate_sku(card.get('card_name', card.get('cardName', '')), card.get('card_num', card.get('cardNum', '')),
+        card.get('condition', 'Near Mint'), card.get('printing', 'Normal'), 0,
+        card.get('language', 'English'), card.get('card_set', ''))
+    fields = ('game', 'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number',
+              'year', 'manufacturer', 'team', 'player')
+    normalize = lambda value: ' '.join(str(value or '').casefold().split())
+    metadata = {key: normalize(card.get(key, '')) for key in fields if card.get(key)}
+    if not metadata:
+        return legacy
+    raw = json.dumps(['stock-and-sleeve-card-v1', legacy, metadata], sort_keys=True, ensure_ascii=True)
+    return f"{int(hashlib.sha256(raw.encode()).hexdigest(), 16) % 10**12:012d}"
+
+
 # ==============================================================================
 # 2. ROCA SCAN CSV INGESTION & FILTERING
 # ==============================================================================
 
-def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.70) -> List[Dict[str, Any]]:
+def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.70, **intake_options) -> List[Dict[str, Any]]:
+    """Strict CSV adapter for the legacy command-line workflow.
+
+    Desktop intake separately retains unpriced rows for explicit review. The
+    command-line label/upload path must never interpret a missing price as zero.
+    """
+    from scanner_adapters import parse_csv_strict
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Scan export not found at: {file_path}")
-
-    filtered_cards = []
-
-    with open(file_path, mode="r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        headers = {col.strip().lower(): col for col in reader.fieldnames or [] if col}
-        if not ({"card name", "name"} & set(headers)):
-            raise ValueError("The CSV needs a Card Name or Name column.")
-
-        def get_col(row, *aliases):
-            for alias in aliases:
-                col_name = headers.get(alias.lower())
-                if col_name and row.get(col_name) is not None:
-                    return str(row[col_name]).strip()
-            return ""
-
-        seq_counter = 1
-        for row in reader:
-            card_name = get_col(row, "Card Name", "Name")
-            card_num = get_col(row, "Card #", "Card Number", "Number")
-            condition = get_col(row, "Condition") or "Near Mint"
-            printing = get_col(row, "Printing") or "Normal"
-            language = get_col(row, "Language") or "English"
-            rarity = get_col(row, "Rarity")
-            card_set = get_col(row, "Set Code", "Set", "Set Name", "Expansion")
-            raw_price_str = get_col(row, "Listing Price", "Price", "Market Price")
-            bin_val = get_col(row, "Bin")
-            qty_str = get_col(row, "Qty", "Quantity") or "1"
-
-            try:
-                raw_price = float(re.sub(r'[^\d.]', '', raw_price_str))
-            except ValueError:
-                raw_price = 0.0
-
-            try:
-                qty = int(qty_str)
-            except ValueError:
-                raise ValueError(f"Invalid quantity on CSV row {reader.line_num}.") from None
-            if qty <= 0:
-                raise ValueError(f"Quantity must be positive on CSV row {reader.line_num}.")
-            if not card_name:
-                continue
-
-            bin_clean = bin_val.lower().replace("bin", "").strip()
-            is_target_bin = target_bin == "*" or bin_clean == target_bin.lower().replace("bin", "").strip()
-
-            if is_target_bin or (raw_price >= min_price and not bin_val):
-                rounded_price = round_to_nearest_quarter(raw_price)
-                sku = get_col(row, "SKU", "Square SKU") or generate_sku(card_name, card_num, condition, printing, seq_counter, language, card_set)
-
-                item = {
-                    "card_name": card_name,
-                    "card_num": card_num,
-                    "condition": condition,
-                    "printing": printing,
-                    "language": language,
-                    "rarity": rarity,
-                    "card_set": card_set,
-                    "raw_price": raw_price,
-                    "final_price": rounded_price,
-                    "sku": sku,
-                    "qty": qty,
-                    "bin": bin_val,
-                    "seq": seq_counter
-                }
-                filtered_cards.append(item)
-                seq_counter += 1
-
-    return filtered_cards
+    with open(file_path, 'rb') as source:
+        preview = parse_csv_strict(source.read(), **intake_options)
+    if preview.requires_quantity_confirmation:
+        raise ValueError('This export contains stock snapshot quantities. Choose delivery quantities before receiving; use the desktop intake preview.')
+    cards = []
+    for source_card in preview.cards:
+        card = dict(source_card)
+        if card['price_cents'] is None:
+            raise ValueError(f"CSV row {card['source_row']}: enter a selling price before command-line labels or receiving. Market references are not approved label prices.")
+        raw_price = card['price_cents'] / 100
+        bin_val = card.get('bin', '')
+        bin_clean = bin_val.lower().replace('bin', '').strip()
+        selected_bin = str(target_bin).lower().replace('bin', '').strip()
+        if target_bin != '*' and bin_clean != selected_bin and (bin_val or raw_price < min_price):
+            continue
+        card.update(raw_price=raw_price, final_price=round_to_nearest_quarter(raw_price),
+                    seq=len(cards) + 1)
+        card['sku'] = card['sku_override'] or generate_card_sku(card)
+        cards.append(card)
+    return cards
 
 
 # ==============================================================================
@@ -194,6 +176,8 @@ def barcode_value(item):
 
 
 def label_fields(item):
+    if item.get('price_missing'):
+        raise ValueError('Enter and confirm the selling price before creating labels.')
     name = str(item.get("card_name") or item.get("cardName") or "Card")
     price = float(item.get("final_price", item.get("finalPrice", 0)))
     qty = int(item.get("qty", 1))
@@ -401,10 +385,16 @@ def upload_to_square(
     environment: str = "production",
     log_fn: Callable[[str], None] = print,
     location_id: str = "",
-    request_log=None
+    request_log=None,
+    price_variations=False
 ) -> Dict[str, Any]:
+    if any(card.get('price_missing') for card in cards):
+        return {"uploaded_count": 0, "inventory_count": 0, "errors": ["Enter and confirm every included selling price before uploading to Square."]}
     if requests is None or not access_token.strip():
         return {"uploaded_count": 0, "inventory_count": 0, "errors": ["Install requests and supply a Square access token."]}
+    if price_variations:
+        from square_variations import upload
+        return upload(sys.modules[__name__], cards, access_token, environment, location_id, log_fn, request_log)
 
     base_url = "https://connect.squareupsandbox.com" if environment.lower() == "sandbox" else "https://connect.squareup.com"
     endpoint = f"{base_url}/v2/catalog/batch-upsert"
@@ -671,9 +661,9 @@ def open_station_browser(url):
 
 def launch_desktop_station(reuse_existing=False):
     from roca_update import update_in_progress
-    if update_in_progress(APP_DIR):
+    if update_in_progress(APP_DIR) or update_in_progress(os.path.dirname(SETTINGS_FILE)):
         raise RuntimeError('Roca is being updated. Wait for the updater to finish; it will reopen the app for you.')
-    from station_runtime import RuntimeControl, read_runtime, running_status
+    from station_runtime import RuntimeControl, current_build, drain_station_work, read_runtime, running_status
     url = f"http://127.0.0.1:{PORT}"
     # Bind before opening Chrome so another installation cannot serve this window.
     try:
@@ -690,6 +680,8 @@ def launch_desktop_station(reuse_existing=False):
                         raise RuntimeError("Roca is stopping. Wait for it to finish before starting again.") from exc
                     if status['version'] != APP_VERSION:
                         raise RuntimeError("An older Roca version is running. Use Stop Roca from its folder first.") from exc
+                    if status.get('build')!=current_build(sys.modules[__name__]):
+                        raise RuntimeError('A different Stock & Sleeve build is already running. Use Quit app in that window, then open your desktop icon again.') from exc
                     if not open_station_browser(url):
                         raise RuntimeError("Install Google Chrome, then start Roca again.") from exc
                     return
@@ -703,9 +695,10 @@ def launch_desktop_station(reuse_existing=False):
         server.station = StationService(sys.modules[__name__])
         control = server.runtime_control = RuntimeControl(server, sys.modules[__name__])
         server.station.start_watcher()
-        print(f"Roca release {APP_VERSION} | {os.path.abspath(__file__)}")
+        server.station.pricing.start()
+        print(f"Stock & Sleeve release {APP_VERSION} | {os.path.abspath(__file__)}")
         print(f"Station running at: {url}")
-        print("Use Stop Roca to shut down. Closing Chrome leaves the station running.")
+        print("Use Quit app to shut down. Closing the window leaves the station running.")
         if not open_station_browser(url):
             if reuse_existing:
                 raise RuntimeError("Chrome could not be launched. Install Google Chrome, then restart Roca.")
@@ -716,12 +709,15 @@ def launch_desktop_station(reuse_existing=False):
         except KeyboardInterrupt:
             print("\nShutting down station.")
     finally:
+        if control:
+            control.stopping.set()
         if hasattr(server, 'station'):
             server.station.stop_event.set()
-            with server.station.lock:
-                pass
+            drain_station_work(server.station)
             if server.station.watcher:
                 server.station.watcher.join(timeout=5)
+            if server.station.pricing.worker:
+                server.station.pricing.worker.join(timeout=5)
         server.server_close()
         if control:
             control.close()

@@ -251,6 +251,7 @@ class StationTests(unittest.TestCase):
         with sqlite3.connect(root/'station.sqlite3') as db:
             db.execute('CREATE TABLE receipts (id TEXT PRIMARY KEY, source_hash TEXT, updated TEXT NOT NULL, body TEXT NOT NULL)')
             db.execute('INSERT INTO receipts VALUES (?,?,?,?)',('legacy','source','2026-01-01',json.dumps({'id':'legacy','cards':[]})))
+        db.close()  # SQLite context managers commit but do not close Windows file handles.
         store=Store(root)
         self.assertEqual(store.summaries()[0]['id'],'legacy')
         self.assertEqual(store.find_source('source'),'legacy')

@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo.
-echo Roca Station 2.3.1 - Windows setup
+echo Roca Station - Windows setup
 echo.
 if not exist "requirements.txt" goto missing_files
 if not exist "station_store.py" goto missing_files
@@ -34,8 +34,16 @@ if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" -c "import roca_to_square; print('Roca Station', roca_to_square.APP_VERSION, 'import check passed.')"
 if errorlevel 1 goto failed
 echo.
-echo Setup complete. Close this window and double-click Start Roca.vbs.
+echo Creating Desktop and Start menu shortcuts...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools\install_shortcuts.ps1"
+if errorlevel 1 goto shortcut_failed
+echo Setup complete. Open Roca Station from your Desktop or Start menu.
 set "ROCA_INSTALL_RESULT=0"
+goto finished
+:shortcut_failed
+echo The app is installed, but Windows could not create its shortcuts.
+echo Run Install shortcuts.cmd to try again. Start Roca.vbs still works.
+set "ROCA_INSTALL_RESULT=1"
 goto finished
 :python_required
 echo.

@@ -1,0 +1,135 @@
+{
+  "reviewed_date": "2026-10-28",
+  "status": "NO-GO for automatic tracked-discount redemption until provider, device, reporting and tax acceptance",
+  "review_type": "Official documentation review and proposed acceptance protocol; no Square transactions or tax approvals performed",
+  "verified_capabilities_and_limits": [
+    {
+      "finding": "Orders API can retrieve orders completed in Square POS and exposes order-related webhooks. This does not establish a supported way to insert a custom credit prompt into every native checkout.",
+      "source": "https://developer.squareup.com/docs/orders-api/what-it-does"
+    },
+    {
+      "finding": "Square documents that orders not created through the API omit version and cannot be updated. The current settlement code deliberately requires versioned evidence; native versionless orders need an approved separate proof design.",
+      "source": "https://developer.squareup.com/reference/square/objects/Order"
+    },
+    {
+      "finding": "Catalog discounts support a tax-basis setting. Configuring that setting is an integration capability, not a legal classification of a customer's credit.",
+      "source": "https://developer.squareup.com/reference/square/objects/CatalogDiscount?redirect_hash=navsection-connectapibasics"
+    },
+    {
+      "finding": "Square exposes the actually applied discount amount and its order-local UID, alongside catalog identity. Reconciliation must match the approved discount and applied cents rather than its display name or requested amount.",
+      "source": "https://developer.squareup.com/docs/orders-api/apply-taxes-and-discounts/auto-apply-discounts"
+    },
+    {
+      "finding": "Square's current sales-summary documentation distinguishes discounts, returns, taxes, collected funds and multiple sales metrics; report timing and inclusion of open checks can differ. A discount cannot be promised to behave like a tender or gift-card redemption in every report.",
+      "source": "https://squareup.com/help/us/en/article/5381-in-app-summaries-and-reports"
+    },
+    {
+      "finding": "Idaho Rule044 requires qualifying trade property to enter resale inventory, documented purchased and traded goods by sale time, ownership by the buyer, and delivery/purchase within one transaction. Rule051 treats retailer discounts and gift certificates differently. Inference: credit earned on one visit and spent later must not automatically receive same-transaction trade-in treatment merely because the app labels it trade credit.",
+      "source": "https://adminrules.idaho.gov/rules/current/35/350102.pdf",
+      "sections": [
+        "044.01-04",
+        "051.01-05"
+      ],
+      "published_pages": [
+        21,
+        22,
+        27,
+        28,
+        29
+      ],
+      "owner_tax_approval_obtained": false
+    }
+  ],
+  "current_code_policy": {
+    "accepted_trade_credit_origin": "trade_unreviewed",
+    "checkout_eligible_default": false,
+    "reconciliation_worker_default": "disabled",
+    "legacy_balances_auto_classified": false,
+    "tax_policy_auto_approved": false,
+    "unsupported_evidence": "review-only exception; never guess a debit, refund restoration or released hold"
+  },
+  "proposed_live_acceptance_cases": [
+    {
+      "id": "SQ01",
+      "case": "OAuth connect each independent seller",
+      "pass": "Seller identity, locations and actual granted scopes match consent; no cross-store token use; Square credentials remain server-side and absent from desktop, URLs and logs. The encrypted local staff session is a separate credential."
+    },
+    {
+      "id": "SQ02",
+      "case": "Refresh, permission loss and revoke",
+      "pass": "Refresh rotates safely; revoked access stops provider calls and mutations. Separate seller-content deletion/offboarding gate remains open."
+    },
+    {
+      "id": "SQ03",
+      "case": "Native checkout for every supported POS/device edition",
+      "pass": "Record exact device/app versions and actual order/payment evidence. Prove how a customer and reservation attach before checkout. Unsupported/versionless flows remain blocked."
+    },
+    {
+      "id": "SQ04",
+      "case": "Partial credit plus cash/card",
+      "pass": "One reservation, approved catalog discount/version/tax basis, actual applied cents no greater than reserved cents, terminal-order/payment proof and exactly one debit. Unused reserved cents release only from verified evidence; both PCs show the same authoritative balance."
+    },
+    {
+      "id": "SQ05",
+      "case": "Credit covers entire eligible sale",
+      "pass": "Prove zero-payment completion and tax behavior on the selected device. Absence of payment is never treated as sufficient completion proof."
+    },
+    {
+      "id": "SQ06",
+      "case": "Two tills, same shopper, simultaneous checkout",
+      "pass": "Available balance cannot be overspent; held amounts are visible; failed requests preserve keys; one authoritative outcome per sale."
+    },
+    {
+      "id": "SQ07",
+      "case": "Timeout, crash, duplicate/reordered/missed webhook and reconnect",
+      "pass": "Recover the same request outcome with no duplicate debit. Signed ingress, replay protection and an explicit missed-event catch-up strategy must pass. Missing evidence holds for review rather than inventing a result."
+    },
+    {
+      "id": "SQ08",
+      "case": "Cancel, changed cart, removed discount and delayed payment",
+      "pass": "No early debit or unsafe release. Final customer, location, currency, discount identity, tax basis and amount must match the approved immutable terms."
+    },
+    {
+      "id": "SQ09",
+      "case": "Itemized partial/full return, repeated return and amount-only refund",
+      "pass": "Restore only the proven tracked credit allocation once, capped by original use. Unsupported refunds require review; they do not automatically recreate credit."
+    },
+    {
+      "id": "SQ10",
+      "case": "Cashier substitutes similarly named discount or changes tax setting",
+      "pass": "Wrong identity/version/tax basis fails closed and creates a review exception without a customer ledger mutation."
+    },
+    {
+      "id": "SQ11",
+      "case": "Square Dashboard and exported sales/discount/tax/payment reports",
+      "pass": "For approved fictional sales, save before/after values, report definitions/filters/location/timezone/business-day cutoff and settled timing. Bookkeeper approves each requested accounting outcome."
+    },
+    {
+      "id": "SQ12",
+      "case": "Origin-specific Idaho tax examples and mixed-origin balance",
+      "pass": "Written owner/tax-adviser decision covers same-transaction inventory trade, deferred trade credit, refund credit, promotional credit and purchased stored value. Unapproved origins remain blocked."
+    }
+  ],
+  "owner_decisions": [
+    "Which exact Square POS, Retail, Register, Terminal or app-owned checkout combinations are in the launch support matrix?",
+    "Which credit origins are offered, and can they be transferred, redeemed for cash, refunded or expire? Do not implement legal terms by inference.",
+    "Obtain written Idaho treatment for deferred credit and same-transaction trade allowances, including required sale/ownership/inventory documentation and mixed-origin redemption.",
+    "Choose and approve the desired Square report definitions and accounting treatment; a request to reduce one metric is not authority to change tax basis.",
+    "Choose business entity, public support/privacy URLs and commercial terms before Marketplace submission. The current Marketplace requirements and approval must be checked in the actual Square Developer Dashboard; no listing approval is claimed."
+  ],
+  "evidence_still_required": [
+    "Actual seller OAuth consent/refresh/revoke record",
+    "Device-by-device checkout, receipts and redacted API evidence",
+    "Two physical desktop computers using the hosted ledger",
+    "Bookkeeper-approved reporting comparisons and written tax classification",
+    "Square Marketplace integration review and acceptance",
+    "Seller-content offboarding and privacy/legal release gates"
+  ],
+  "implementation_gaps_still_open": [
+    "Hosted Square status currently reports requested scopes, not token-status introspection of actual granted scopes.",
+    "Completed authoritative order evidence is the current consumption signal; independent payment checks and zero-payment device behavior still require an approved proof contract and live acceptance.",
+    "Webhook job retry exists; a missed-webhook catch-up scan is not implemented.",
+    "Active desktop receiving still uses its local Square vault and local operation journal. A typed server-side receiving/catalog/inventory saga through hosted OAuth, re-consented write scopes, permissions and two-PC deduplication remain to build. Existing uncertain local operations must retain their original keys and outcome recovery.",
+    "Accepting a hosted trade agreement does not itself receive Square inventory or establish the ownership and same-transaction evidence needed for Idaho trade-allowance treatment."
+  ]
+}
