@@ -9,7 +9,7 @@ sharedTradeDialog.innerHTML=`<div class="modal-heading"><div><span class="sectio
 document.body.append(sharedTradeDialog);
 let sharedTradeContext=null,sharedTradeSequence=0;
 window.sharedTradePendingMarkup=row=>row.action?.startsWith('trade_')?'<article class="cloud-pending-action"><p>Saved shared trade · '+escapeHTML(row.receiptId)+'</p><button class="button secondary small" data-open-shared-trade="'+escapeHTML(row.receiptId)+'">Open local trade & recover</button></article>':'';
-window.sharedTradeLocked=receipt=>!!(receipt?.shared_trade&&!['confirmed','cancelled'].includes(receipt.shared_trade.state));
+window.sharedTradeLocked=receipt=>!!(receipt?.shared_trade&&!['confirmed','cancelled'].includes(receipt.shared_trade.state))||!!window.intakeClaimLocked?.(receipt);
 window.renderSharedTrade=()=>{
  const receipt=state.receipt,intent=receipt?.shared_trade;
  sharedTradePanel.hidden=!receipt||state.mode!=='trade'||(!!receipt.purchase&&receipt.purchase.scope!=='hosted');
@@ -22,15 +22,17 @@ window.renderSharedTrade=()=>{
 };
 function sharedTradeClose(){if(sharedTradeContext?.busy)return;sharedTradeContext=null;++sharedTradeSequence;sharedTradeDialog.close()}
 $('closeSharedTrade').onclick=sharedTradeClose;sharedTradeDialog.addEventListener('cancel',event=>{event.preventDefault();sharedTradeClose()});
-function sharedTradeConsent(){const context=sharedTradeContext;$('acceptSharedTrade').disabled=!context||context.busy||!['owner','manager'].includes(context.role)||!$('sharedTradeAgreed').checked||!$('sharedTradeReceived').checked}
+function sharedTradeConsent(){const context=sharedTradeContext;$('acceptSharedTrade').disabled=!context||context.busy||!['owner','manager'].includes(context.role)||!$('sharedTradeAgreed').checked||!$('sharedTradeReceived').checked||!!(context.data?.receipt?.shared_trade?.claim_binding_version===1&&!$('sharedTradeClaimReviewed')?.checked)}
 $('sharedTradeAgreed').onchange=$('sharedTradeReceived').onchange=sharedTradeConsent;
 function sharedTradeAdopt(data){
  if(data.receipt&&state.receipt?.id===data.receipt.id){state.receipt=data.receipt;state.dirty=false;renderReceipt()}
  const context=sharedTradeContext;if(!context)return;context.data=data;const trade=data.trade;
+ window.renderIntakeClaim?.(data.receipt,data.claim);
  $('sharedTradeCustomerPicker').hidden=true;$('sharedTradeOffer').hidden=!trade;
  $('refreshSharedTrade').hidden=false;$('cancelSharedTradeDraft').hidden=!window.sharedTradeLocked(data.receipt)||trade?.state?.startsWith('accepted_');
  $('sharedTradeConsent').hidden=trade?.state!=='draft';$('acceptSharedTrade').hidden=trade?.state!=='draft';
  $('sharedTradeAgreed').checked=$('sharedTradeReceived').checked=false;
+ if($('sharedTradeClaimReviewed'))$('sharedTradeClaimReviewed').checked=false;
  if(trade){
   const accepted=trade.state==='accepted_credit',customer=data.customer||trade.accepted_receipt?.customer||{};
   $('sharedTradeOffer').innerHTML='<div class="shared-trade-facts"><div><span>Hosted customer</span><strong>'+escapeHTML(customer.display_name||data.receipt.shared_trade.customer_id)+'</strong><small>'+escapeHTML(data.receipt.shared_trade.store)+'</small></div><div><span>'+ (accepted?'Shared credit issued':'Saved hosted credit offer')+'</span><strong>'+usd((accepted?trade.accepted_amount_cents:trade.credit_offer_cents)/100)+'</strong><small>Intake total '+usd(trade.intake_total_cents/100)+'</small></div></div><p class="hint">Hosted receipt '+escapeHTML(trade.id)+' · '+escapeHTML(trade.state)+' · version '+Number(trade.version)+'</p><div class="shared-trade-lines"><table><thead><tr><th>Included item / identity</th><th>Copies</th><th>Intake each</th></tr></thead><tbody>'+trade.lines.filter(line=>line.included).map(line=>'<tr><td><strong>'+escapeHTML(line.identity.name)+'</strong><small>'+escapeHTML([line.identity.game_label||intakeGames[line.identity.game]||line.identity.game,line.identity.set,line.identity.number,line.identity.condition,line.identity.printing,line.identity.language,line.identity.grading_company,line.identity.grade,line.identity.certification,line.identity.year,line.identity.manufacturer,line.identity.player,line.identity.team,line.identity.serial_number].filter(Boolean).join(' · '))+'</small></td><td>'+Number(line.quantity)+'</td><td>'+usd(line.unit_intake_cents/100)+'</td></tr>').join('')+'</tbody></table></div>'+(accepted?'<p class="shared-trade-confirmed">Confirmed in shared credit. No local wallet entry was created. Square checkout is disabled and the credit tax policy remains unreviewed.</p><p class="hint shared-trade-hash">Receipt hash '+escapeHTML(trade.receipt_hash)+'</p>':'<p class="hint">This is the saved hosted store offer. Its rates can differ from the local estimate. Review the customer, cards and amount before agreeing.</p>');
@@ -44,8 +46,9 @@ async function sharedTradeRun(work){
  try{await work(context)}catch(error){
   if(sharedTradeContext!==context)return;
   $('sharedTradeMessage').textContent=error.message+' The saved local batch remains available. Use Check saved trade to recover a pending action.';
+  window.intakeClaimError?.(error);
   try{const data=await api('/api/receipts/'+context.receiptId);if(state.receipt?.id===context.receiptId){state.receipt=data.receipt;state.dirty=false;renderReceipt()}if(data.receipt.shared_trade){$('refreshSharedTrade').hidden=false;$('cancelSharedTradeDraft').hidden=!window.sharedTradeLocked(data.receipt)}}catch{}
- }finally{if(sharedTradeContext===context){context.busy=false;sharedTradeDialog.querySelectorAll('button,input').forEach(node=>node.disabled=false);sharedTradeConsent();await refreshReceipts().catch(()=>{})}}
+ }finally{if(sharedTradeContext===context){context.busy=false;sharedTradeDialog.querySelectorAll('button,input').forEach(node=>node.disabled=false);window.renderIntakeClaim?.(state.receipt,context.data?.claim);sharedTradeConsent();if(context.intakeNeedsSearch){context.intakeNeedsSearch=false;await sharedTradeSearch()}await refreshReceipts().catch(()=>{})}}
 }
 async function sharedTradeSearch(){
  const context=sharedTradeContext;if(!context||context.busy)return;const sequence=++sharedTradeSequence;
@@ -64,8 +67,9 @@ window.openSharedTrade=async()=>{
   const session=await cloudApi('session');if(sharedTradeContext!==context)return;
   cloudSession=session;cloudHealthy=session.signedIn;cloudRenderSession();
   if(!session.signedIn){$('sharedTradeMessage').textContent='Sign in to your shared store first, then reopen this saved local trade.';$('sharedTradeSignIn').hidden=false;return}
-  context.sessionId=session.sessionId;context.role=session.role;
+  context.sessionId=session.sessionId;context.role=session.role;context.capabilities=session.capabilities;
   if(state.receipt.shared_trade&&!['cancelled'].includes(state.receipt.shared_trade.state)){sharedTradeAdopt(await cloudApi('trade-status',{receiptId:context.receiptId,sessionId:context.sessionId}));return}
+  if(window.openIntakeClaim&&!await window.openIntakeClaim(context))return;
   $('sharedTradeCustomerPicker').hidden=false;$('sharedTradeMessage').textContent='Shared store: '+session.store+'. Select the exact customer to create a hosted draft.';
  });
  if(sharedTradeContext&&!$('sharedTradeCustomerPicker').hidden)await sharedTradeSearch();
@@ -80,6 +84,6 @@ $('sharedTradeCustomers').onclick=event=>{const button=event.target.closest('[da
 })};
 $('saveSharedTradeDraft').onclick=()=>sharedTradeRun(async context=>{if(!context.selected)throw Error('Select a shared customer first.');sharedTradeAdopt(await cloudApi('trade-prepare',{receiptId:context.receiptId,revision:state.receipt.revision,customerId:context.selected.id,sessionId:context.sessionId}))});
 $('refreshSharedTrade').onclick=()=>sharedTradeRun(async context=>sharedTradeAdopt(await cloudApi('trade-status',{receiptId:context.receiptId,sessionId:context.sessionId})));
-$('acceptSharedTrade').onclick=()=>sharedTradeRun(async context=>{if(!context.data?.confirmationHash||!$('sharedTradeAgreed').checked||!$('sharedTradeReceived').checked)throw Error('Review the hosted offer and both confirmations.');sharedTradeAdopt(await cloudApi('trade-accept',{receiptId:context.receiptId,confirmationHash:context.data.confirmationHash,customerAgreed:true,itemsReceived:true,sessionId:context.sessionId}))});
+$('acceptSharedTrade').onclick=()=>sharedTradeRun(async context=>{if(!context.data?.confirmationHash||!$('sharedTradeAgreed').checked||!$('sharedTradeReceived').checked||!$('sharedTradeClaimReviewed')?.checked)throw Error('Review the hosted offer, physical intake and all confirmations.');sharedTradeAdopt(await cloudApi('trade-accept',{receiptId:context.receiptId,confirmationHash:context.data.confirmationHash,customerAgreed:true,itemsReceived:true,claimReviewed:true,sessionId:context.sessionId}))});
 $('cancelSharedTradeDraft').onclick=async()=>{if(!await confirmAction('Cancel the hosted trade draft?','The app will check the saved action and explicitly void the server draft. If credit was already accepted, it will recover that receipt instead of cancelling it.','Check & cancel draft'))return;await sharedTradeRun(async context=>sharedTradeAdopt(await cloudApi('trade-cancel',{receiptId:context.receiptId,sessionId:context.sessionId})))};
 document.addEventListener('click',async event=>{const button=event.target.closest('[data-open-shared-trade]');if(!button)return;try{await openReceipt(button.dataset.openSharedTrade);await window.openSharedTrade()}catch(error){toast(error.message,true)}});

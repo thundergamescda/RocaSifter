@@ -16,16 +16,20 @@ import sys
 import unittest
 
 root=Path(__file__).resolve().parents[1]
-modules=['test_station_paths','test_station_runtime','test_station','test_roca_to_square',
-         'test_roca_update','test_pricing_review','test_credit_cleanup_oauth','test_price_variations',
-         'test_hosted_boundaries','test_hosted_auth_abuse','test_hosted_square_status',
-         'test_station_cloud','test_scanner_adapters','test_intake_integration','test_pricing_metadata',
-         'test_hosted_settlement','test_hosted_credit_lots','test_hosted_reconciliation',
-         'test_cloud_http_boundary','test_hosted_provider_ids','test_hosted_trades','test_import_preview','test_package_preview',
-         'test_shared_trade','test_receipt_summary_cache','test_hosted_mfa','test_station_mfa','test_hosted_privacy','tools.test_pg_restore_drill_guards']
+EVIDENCE_ROOT=root/'Testing'/'oauth-receiving'
+
+
+def selected_modules():
+    # New top-level tests cannot silently fall outside the release evidence.
+    # Real PostgreSQL cases have their own strict runner and environment.
+    return sorted(p.stem for p in root.glob('test_*.py') if not p.stem.endswith('_postgres')) + [
+        'tools.test_pg_restore_drill_guards', 'tools.test_evidence_guards']
+
+
+modules=selected_modules()
 def fingerprints():
     paths=[p for p in root.iterdir() if p.is_file() and p.suffix in ('.py','.js','.css','.html','.cmd','.vbs')]
-    paths.extend(p for p in (root/'hosted').rglob('*') if p.is_file() and p.suffix in ('.py','.js','.css','.html','.sql'))
+    paths.extend(p for p in (root/'hosted').rglob('*') if p.is_file() and p.suffix in ('.py','.js','.css','.html','.sql','.png','.ico','.svg'))
     paths.extend(p for p in (root/'tools').iterdir() if p.is_file() and p.suffix in ('.py','.ps1','.js'))
     paths.extend(root/name for name in ('requirements.txt','requirements-dev.txt','requirements-build.txt','requirements-hosted.txt',
                                       'render.yaml','roca_edition.json','product_brand.json','assets/stock-and-sleeve.ico','assets/stock-and-sleeve.png'))
@@ -78,10 +82,10 @@ def main():
     args=parser.parse_args()
     if args.evidence_child:
         destination=args.evidence_child.resolve()
-        if not destination.is_relative_to((root/'Testing'/'next-security').resolve()):
-            parser.error('Child evidence must remain inside this snapshot Testing/next-security folder.')
+        if not destination.is_relative_to(EVIDENCE_ROOT.resolve()):
+            parser.error('Child evidence must remain inside this snapshot Testing/oauth-receiving folder.')
         return child(destination)
-    report=root/'Testing'/'next-security';report.mkdir(parents=True,exist_ok=True)
+    report=EVIDENCE_ROOT;report.mkdir(parents=True,exist_ok=True)
     started=datetime.now(timezone.utc)
     run=report/'unit-runs'/started.strftime('%Y%m%dT%H%M%S%fZ');run.mkdir(parents=True)
     source_start=fingerprints()
@@ -107,8 +111,8 @@ def main():
          'live_square_contacted':False,'scope':'Isolated unit and loopback integration tests with fictional Square responses. Actual PostgreSQL/browser/provider/hardware acceptance is separate.',
          'source_sha256':source_end,'source_sha256_at_start':source_start,
          'source_snapshot_stable':not changed,'changed_during_run':changed,
-         'log_sha256':hashlib.sha256(log.encode()).hexdigest(),'run_directory':str(run)}
-    (run/'unit-tests.log').write_text(log,encoding='utf-8')
+         **helper.write_log(run/'unit-tests.log',log),
+         'run_directory':str(run)}
     (run/'unit-summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     (report/'unit-latest.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     print(log[-4500:])

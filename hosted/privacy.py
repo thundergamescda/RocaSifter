@@ -17,9 +17,10 @@ from psycopg.types.json import Jsonb
 from .security import ServiceError
 
 EXPORT_SCHEMA = 'stock-and-sleeve.hosted-customer-export'
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 SCOPE_LIMITATIONS = [
     'Only records structurally linked to this customer in this hosted store are selected, as of one database snapshot. Duplicate accounts and incidental free-text mentions are not searched.',
+    'Original physical-intake manifests and claim requests are selected only through a consumed claim bound to this customer\'s accepted trade. Unconsumed claims and competing draft references have unconfirmed ownership and require separate owner review.',
     'Local desktop databases, pending journals, scanner files, printer queues, generated files and previous downloads are not inspected.',
     'Backups, support copies, unlinked events and records held by Square or other providers are not searched. This export makes no provider calls.',
     'Staff credentials, passwords, sessions, MFA/recovery material and provider tokens are excluded. Customer-related audit details use an explicit field projection.',
@@ -44,6 +45,10 @@ OWN_ENTRIES = f'SELECT id FROM ss_credit_entries WHERE {CUSTOMER}'
 OWN_LOTS = f'SELECT id FROM ss_credit_lots WHERE {CUSTOMER}'
 OWN_RESERVATIONS = f'SELECT id FROM ss_reservations WHERE {CUSTOMER}'
 OWN_TRADES = f'SELECT id FROM ss_trade_receipts WHERE {CUSTOMER}'
+OWN_INTAKES = '''SELECT i.id FROM ss_intake_claims i JOIN ss_trade_receipts t
+    ON t.tenant_id=i.tenant_id AND t.id=i.bound_trade_id AND t.physical_intake_id=i.id
+    WHERE i.tenant_id=%(tenant)s AND t.customer_id=%(customer)s AND i.state='consumed'
+    AND t.state IN ('accepted_cash','accepted_credit')'''
 DATASETS = (
     dataset('customer', 'id,display_name,contact,square_customer_id,privacy_basis,balance_cents,version,created_at',
             'ss_customers', 'tenant_id=%(tenant)s AND id=%(customer)s', 'id'),
@@ -68,11 +73,15 @@ DATASETS = (
     dataset('credit_returns', 'k.return_order_id,k.source_order_id,k.entry_id,k.restored_cents,k.return_order_version,k.proof_hash,k.proof,k.created_at',
             'ss_credit_returns k JOIN ss_square_settlements s ON s.tenant_id=k.tenant_id AND s.source_order_id=k.source_order_id JOIN ss_reservations r ON r.tenant_id=s.tenant_id AND r.id=s.reservation_id JOIN ss_credit_entries e ON e.tenant_id=k.tenant_id AND e.id=k.entry_id',
             'k.tenant_id=%(tenant)s AND r.customer_id=%(customer)s AND e.customer_id=%(customer)s', 'k.created_at,k.return_order_id,k.source_order_id'),
-    dataset('trade_receipts', 'id,customer_id,title,source_reference,creation_hash,state,version,currency,cash_bps,credit_bps,cash_override_cents,credit_override_cents,override_reason,intake_total_cents,cash_offer_cents,credit_offer_cents,lines_hash,created_by,updated_by,created_at,updated_at,selected_offer,accepted_amount_cents,accepted_at,accepted_by,ledger_entry_id,receipt_hash,accepted_receipt,acceptance_result,voided_at,voided_by,void_reason',
+    dataset('trade_receipts', 'id,customer_id,title,source_reference,creation_hash,state,version,currency,cash_bps,credit_bps,cash_override_cents,credit_override_cents,override_reason,intake_total_cents,cash_offer_cents,credit_offer_cents,lines_hash,created_by,updated_by,created_at,updated_at,selected_offer,accepted_amount_cents,accepted_at,accepted_by,ledger_entry_id,receipt_hash,accepted_receipt,acceptance_result,voided_at,voided_by,void_reason,physical_intake_id,physical_manifest_hash',
             'ss_trade_receipts', CUSTOMER, 'created_at,id'),
-    dataset('trade_lines', 'l.id,l.trade_id,l.ordinal,l.identity,l.quantity,l.unit_intake_cents,l.included,l.reviewed,l.line_total_cents',
+    dataset('trade_lines', 'l.id,l.trade_id,l.ordinal,l.identity,l.quantity,l.unit_intake_cents,l.included,l.reviewed,l.line_total_cents,l.source_line_key',
             'ss_trade_receipt_lines l JOIN ss_trade_receipts t ON t.tenant_id=l.tenant_id AND t.id=l.trade_id',
             'l.tenant_id=%(tenant)s AND t.customer_id=%(customer)s', 'l.trade_id,l.ordinal,l.id'),
+    dataset('physical_intakes', 'i.id,i.physical_reference,i.source_manifest,i.manifest_hash,i.semantic_hash,i.raw_csv_sha256,i.additional_delivery_of,i.additional_delivery_reason,i.state,i.version,i.bound_trade_id,i.created_by,i.created_at,i.consumed_at,i.consumed_by',
+            'ss_intake_claims i', f'i.tenant_id=%(tenant)s AND i.id IN ({OWN_INTAKES})', 'i.created_at,i.id'),
+    dataset('physical_intake_requests', 'q.request_key,q.intent_hash,q.claim_id,q.result,q.created_at',
+            'ss_intake_requests q', f'q.tenant_id=%(tenant)s AND q.claim_id IN ({OWN_INTAKES})', 'q.created_at,q.request_key'),
     dataset('idempotency_records', 'q.key,q.operation,q.body_hash,q.result,q.at', 'ss_requests q',
             f'''q.tenant_id=%(tenant)s AND ((q.operation='ledger' AND
                 (q.result->>'customer_id'=%(customer_text)s OR q.result->>'entry_id' IN (SELECT id::text FROM ss_credit_entries WHERE {CUSTOMER})
@@ -91,13 +100,15 @@ DATASETS = (
             f'''a.tenant_id=%(tenant)s AND (a.entity_id=%(customer_text)s OR a.details->>'customer_id'=%(customer_text)s
                 OR a.entity_id IN (SELECT id::text FROM ss_credit_entries WHERE {CUSTOMER})
                 OR a.entity_id IN (SELECT id::text FROM ss_reservations WHERE {CUSTOMER})
-                OR a.entity_id IN (SELECT id::text FROM ss_trade_receipts WHERE {CUSTOMER}))''', 'a.at,a.id'),
+                OR a.entity_id IN (SELECT id::text FROM ss_trade_receipts WHERE {CUSTOMER})
+                OR a.entity_id IN (SELECT linked.id::text FROM ({OWN_INTAKES}) linked))''', 'a.at,a.id'),
 )
 DATASET_NAMES = tuple(item.name for item in DATASETS)
 AUDIT_DETAIL_FIELDS = frozenset(('customer_id','entry_id','credit_entry_id','reservation_id','amount_cents','restored_cents',
     'kind','offer_type','code','order_version','version','line_count','receipt_hash','terms_hash','proof_hash','discount_uid',
     'policy_reference','export_id','purpose','verification_method','case_reference_sha256','outcome','failure_code',
-    'record_counts','content_chain_sha256','start_audit_id','redacted_fields'))
+    'record_counts','content_chain_sha256','start_audit_id','redacted_fields',
+    'manifest_hash','physical_intake_id','physical_manifest_hash','semantic_hash','additional_delivery_of'))
 FORBIDDEN_KEY = re.compile(r'password|passwd|secret|token|credential|session|csrf|mfa|recovery|authorization', re.I)
 
 

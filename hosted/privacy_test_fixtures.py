@@ -39,7 +39,7 @@ class Connection:
             self.snapshot=deepcopy(db.rows);return Result()
         if query.startswith('SET LOCAL') or 'pg_advisory_xact_lock' in query:return Result()
         if 'transaction_timestamp() AS snapshot_at' in query:
-            return Result({'snapshot_at':datetime(2026,10,28,tzinfo=timezone.utc),'schema_version':4})
+            return Result({'snapshot_at':datetime(2026,10,28,tzinfo=timezone.utc),'schema_version':5})
         if query.startswith('SELECT id,square_customer_id FROM ss_customers'):
             if str(params[0])!=str(db.actor['tenant_id']) or str(params[1])!=str(db.customer):return Result()
             return Result({'id':db.customer,'square_customer_id':'fixture-square-customer'})

@@ -20,13 +20,19 @@ from scanner_adapters import (ALIASES, GAME_LABELS, IntakeValidationError, ident
                               normalize_game, normalize_manual_card, parse_csv, parse_csv_strict,
                               spreadsheet_safe)
 import station_edition
-from station_shared_trade import SharedTrade, require_editable as require_shared_editable
+from station_shared_trade import SharedTrade, require_editable as require_trade_editable
+from station_intake_claim import IntakeClaims, capture_original, append_original_manual, centrally_bound, require_editable as require_intake_editable
 
 MODES = ('bulk', 'trade', 'labels', 'online')
 CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
                'qty', 'final_price', 'include', 'reviewed', 'storage_location', 'sku_override',
                'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number',
                'serial_number', 'year', 'manufacturer', 'team', 'player', 'price_confirmed')
+
+
+def require_shared_editable(receipt):
+    require_trade_editable(receipt)
+    require_intake_editable(receipt)
 
 
 def money(value):
@@ -59,6 +65,7 @@ class StationService:
         self.auth = AdminAuth(self.store)
         self.lock = threading.RLock()
         self.shared_trades = SharedTrade(self)
+        self.intake_claims = IntakeClaims(self)
         self.stop_event = threading.Event()
         edition_root = Path(core.SETTINGS_FILE).parent
         if not (edition_root / 'roca_edition.json').exists():
@@ -291,6 +298,7 @@ class StationService:
                 'intake_source': intake_source, 'pickup_pending': intake_source == 'folder',
                 'cash_percent': self.preferences()['cashPercent'],
                 'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
+            capture_original(receipt,'csv',digest)
             self.prepare_pricing(receipt)
             self.store.save_receipt(receipt, ('imported', f'{len(cards)} card rows imported into {mode}.'))
             self.pricing.enqueue_receipt(receipt)
@@ -348,6 +356,7 @@ class StationService:
                         and any(not row.get('game') for row in receipt['cards'])):
                     raise StationError('Review the game on each existing card before mixing games in this legacy batch.')
                 receipt['cards'].append(card)
+                append_original_manual(receipt,card)
                 # Existing documents describe the old contents; regenerate them after reviewing this item.
                 for key in ('pdf', 'zpl', 'listing', 'ticket'):
                     receipt['files'].pop(key, None)
@@ -365,6 +374,7 @@ class StationService:
                     'prepared': False, 'intake_source': 'manual-item', 'pickup_pending': False,
                     'cash_percent': self.preferences()['cashPercent'],
                     'credit_percent': self.preferences()['creditPercent'], 'files': {}, 'error': ''}
+                capture_original(receipt,'manual')
             receipt.setdefault('pricing_game', selected_game)
             explicit_games={row.get('game','') for row in receipt['cards']}
             if '' not in explicit_games:
@@ -671,6 +681,7 @@ class StationService:
         with self.lock:
             receipt = self.active_receipt(receipt_id)
             require_shared_editable(receipt)
+            if centrally_bound(receipt):raise StationError('This batch belongs to central hosted intake. Use hosted trade acceptance with recent enrolled MFA; local cash/store-credit acceptance cannot replace it.')
             if receipt['purchase']:
                 return receipt
             if receipt['mode'] != 'trade' or offer_type not in ('cash', 'credit'):
@@ -748,6 +759,8 @@ class StationService:
             require_shared_editable(receipt)
             if receipt['inventory_status'] == 'received':
                 return receipt
+            if centrally_bound(receipt):
+                raise StationError('This batch belongs to central hosted intake. Hosted Square receiving is not available yet; it cannot fall back to a local Square token. No stock was added. Recover existing legacy batches only through their original saved provider requests.')
             if receipt['mode'] == 'bulk':
                 raise StationError('Bulk sift does not receive inventory. Move this receipt to a receiving workflow.')
             if receipt['inventory_intent'] == 'existing':

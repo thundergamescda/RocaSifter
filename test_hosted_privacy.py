@@ -11,6 +11,7 @@ from hosted.app import create_app
 from hosted.privacy import Privacy, Limits, DATASETS, DATASET_NAMES, attestation
 from hosted.privacy_test_fixtures import Database, request
 from hosted.security import ServiceError
+from intake_manifest import capture_manifest
 
 
 def decode(lines):
@@ -201,6 +202,24 @@ class PrivacyExportTests(unittest.TestCase):
                 self.assertIn('%(tenant)s',item.query)
                 for table in ('ss_staff','ss_sessions','ss_staff_mfa','ss_square_connections','ss_invites','ss_oauth_states'):
                     self.assertNotIn(table,item.query)
+
+    def test_v2_counts_and_preserves_original_all_source_intake_evidence(self):
+        manifest=capture_manifest('manual',[
+            {'identity':{'name':'Selected fictional card','game':'pokemon','kind':'card'},'quantity':2},
+            {'identity':{'name':'Excluded fictional card','game':'pokemon','kind':'card'},'quantity':1}])
+        claim=uuid.uuid4()
+        self.db.rows['physical_intakes']=[{'id':claim,'source_manifest':manifest,'manifest_hash':manifest['sha256'],'state':'consumed'}]
+        self.db.rows['physical_intake_requests']=[{'request_key':'fictional-claim-request','claim_id':claim,
+                                                 'result':{'source_manifest':manifest,'access_token':'NEVER-EXPORT-INTAKE-TOKEN'}}]
+        output=self.begin();lines=list(output.iter_bytes());header,records,footer=decode(lines)
+        self.assertEqual(header['version'],2)
+        self.assertEqual(footer['version'],2)
+        self.assertEqual(footer['record_counts']['physical_intakes'],1)
+        self.assertEqual(footer['record_counts']['physical_intake_requests'],1)
+        self.assertEqual(records['physical_intakes'][0]['source_manifest'],manifest)
+        self.assertEqual(records['physical_intakes'][0]['manifest_hash'],manifest['sha256'])
+        self.assertNotIn(b'NEVER-EXPORT-INTAKE-TOKEN',b''.join(lines))
+        self.assertIn('unconfirmed ownership',' '.join(header['scope_limitations']))
 
 
 class PrivacyHTTPTests(unittest.TestCase):

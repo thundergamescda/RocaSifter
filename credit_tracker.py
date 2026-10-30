@@ -126,7 +126,7 @@ class Tracker:
             if kind=='trade':
                 receipt=self.service.store.receipt(str(body['receiptId']))
                 purchase=receipt.get('purchase') or {}
-                if receipt.get('shared_trade',{}).get('state') not in (None,'cancelled') or purchase.get('scope')=='hosted':
+                if receipt.get('intake_claim') or receipt.get('shared_trade',{}).get('state') not in (None,'cancelled') or receipt.get('shared_trade',{}).get('claim_binding_version') or purchase.get('scope')=='hosted' or purchase.get('physical_intake_id'):
                     raise StationError('This trade belongs to shared credit. It cannot issue credit to a local wallet.')
                 if purchase.get('type')!='credit':
                     raise StationError('Choose an accepted store-credit trade.')

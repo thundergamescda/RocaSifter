@@ -1,9 +1,11 @@
 """Server-only Square OAuth and minimal signed-event ingress."""
 from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass, field
 import hashlib
 import base64
 import hmac
 import json
+import re
 import secrets
 from urllib.parse import urlencode, quote, urlsplit
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
@@ -14,8 +16,22 @@ from .ledger import require_role
 from .database import audit
 
 
+@dataclass(frozen=True)
+class VerifiedSquareAccess:
+    """Ephemeral server-only authority for the exact introspected OAuth token.
+
+    Never serialize this object to a browser, desktop, journal or audit record.
+    The redacted repr prevents accidental token disclosure in diagnostics.
+    A receiving adapter still rechecks staff authority and its frozen operation.
+    """
+    token: str = field(repr=False)
+    proof: dict
+
+
 class Square:
     SCOPES=('MERCHANT_PROFILE_READ','CUSTOMERS_READ','ITEMS_READ','INVENTORY_READ','ORDERS_READ','PAYMENTS_READ')
+    AUTHORITY_SCOPES=frozenset(SCOPES+('ITEMS_WRITE','INVENTORY_WRITE'))
+    API_VERSION='2026-09-16'
 
     def __init__(self,database,config,transport=None):
         self.database,self.config=database,config
@@ -59,7 +75,10 @@ class Square:
         return {'oauth_configured':self.configured(),'connected':connected,'connection_status':state,'message':message,
                 'merchant_id':row['merchant_id'] if connected else None,
                 'environment':self.environment,'saved_environment':row['environment'] if row else None,
-                'scopes':list(self.SCOPES),'write_checkout_enabled':False}
+                # A saved authorization and our requested scopes are not proof
+                # of the permissions Square actually granted this token.
+                'scopes':[],'requested_scopes':list(self.SCOPES),'grants_verified':False,
+                'write_checkout_enabled':False}
 
     def begin(self,actor):
         require_role(actor,'owner')
@@ -75,7 +94,8 @@ class Square:
     def _token(self,payload):
         try:
             response=self.transport.post(self.base+'/oauth2/token',json=payload|{'client_id':self.config['SQUARE_APPLICATION_ID'],
-                         'client_secret':self.config['SQUARE_APPLICATION_SECRET']},timeout=20)
+                         'client_secret':self.config['SQUARE_APPLICATION_SECRET']},timeout=20,allow_redirects=False)
+            if response.status_code!=200:raise ValueError()
             response.raise_for_status();result=response.json()
             if not all(isinstance(result.get(k),str) and result[k] for k in ('access_token','refresh_token','expires_at')):
                 raise ValueError()
@@ -142,9 +162,87 @@ class Square:
         path=('/v2/catalog/object/'+quote(resource_id,safe='')+'?'+urlencode({'catalog_version':catalog_version}) if kind=='catalog'
               else '/v2/'+kind+('/'+quote(resource_id,safe='') if kind!='locations' else ''))
         try:
-            response=self.transport.get(self.base+path,headers={'Authorization':'Bearer '+token,'Square-Version':'2026-09-16'},timeout=20)
+            response=self.transport.get(self.base+path,headers={'Authorization':'Bearer '+token,'Square-Version':self.API_VERSION},timeout=20,allow_redirects=False)
+            if response.status_code!=200:raise ValueError()
             response.raise_for_status();return response.json()
         except Exception:raise ServiceError('Square could not confirm the resource. Retry reconciliation later.',502) from None
+
+    def _authority_snapshot(self,tenant,token):
+        with self.database.transaction() as db:
+            row=db.execute('SELECT merchant_id,environment,encrypted_tokens,expires_at,revoked_at FROM ss_square_connections WHERE tenant_id=%s',
+                           (tenant,)).fetchone()
+            try:
+                if not row or row['revoked_at'] or row['environment']!=self.environment:raise ValueError()
+                saved=json.loads(self.cipher.decrypt(row['encrypted_tokens'].encode()))
+                if not isinstance(token,str) or not token or not hmac.compare_digest(saved['access_token'],token):raise ValueError()
+                provider_id(row['merchant_id'],'Square merchant ID')
+                if row['expires_at']<=datetime.now(timezone.utc)+timedelta(minutes=1):raise ValueError()
+            except (ValueError,TypeError,KeyError,InvalidToken,AttributeError):
+                raise ServiceError('The saved Square authorization changed or is unavailable. Reconnect and review this operation.',409) from None
+        return dict(row)
+
+    def verified_access(self,tenant,required_scopes):
+        """Verify actual token grants and identity; never infer from request scopes.
+
+        Square documents token status for production credentials. Sandbox proof
+        remains an explicit provider acceptance gate, not a permissive fallback.
+        This performs a read-only OAuth introspection, never a catalog/stock write.
+        """
+        if (not isinstance(required_scopes,(tuple,list,frozenset,set)) or not required_scopes
+                or any(not isinstance(scope,str) or scope not in self.AUTHORITY_SCOPES for scope in required_scopes)):
+            raise ServiceError('Select supported server-owned Square permissions.')
+        required=frozenset(required_scopes)
+        if self.environment!='production':
+            raise ServiceError('Square Sandbox token permission proof is not accepted yet. Hosted receiving remains unavailable until provider verification is completed.',409)
+        token=self.access_token(tenant)
+        snapshot=self._authority_snapshot(tenant,token)
+        response=None
+        try:
+            response=self.transport.post(self.base+'/oauth2/token/status',
+                headers={'Authorization':'Bearer '+token,'Square-Version':self.API_VERSION,'Content-Type':'application/json'},
+                timeout=20,allow_redirects=False,stream=True)
+            if response.status_code!=200:raise ValueError()
+            length=response.headers.get('Content-Length')
+            if length is not None and (not re.fullmatch(r'[0-9]{1,8}',length) or int(length)>65536):raise ValueError()
+            chunks=[];total=0
+            for chunk in response.iter_content(chunk_size=8192):
+                if not isinstance(chunk,bytes):raise ValueError()
+                total+=len(chunk)
+                if total>65536:raise ValueError()
+                chunks.append(chunk)
+            result=json.loads(b''.join(chunks).decode('utf-8'))
+            if not isinstance(result,dict) or result.get('errors'):raise ValueError()
+            scopes=result.get('scopes')
+            if (not isinstance(scopes,list) or not 1<=len(scopes)<=256
+                    or any(not isinstance(scope,str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,99}',scope) for scope in scopes)
+                    or len(set(scopes))!=len(scopes)):raise ValueError()
+            if (result.get('client_id')!=self.config['SQUARE_APPLICATION_ID']
+                    or result.get('merchant_id')!=snapshot['merchant_id']):raise ValueError()
+            expiry=result.get('expires_at')
+            if (not isinstance(expiry,str) or not re.fullmatch(
+                    r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})',expiry)):raise ValueError()
+            expires=datetime.fromisoformat(expiry.replace('Z','+00:00'))
+            now=datetime.now(timezone.utc)
+            if expires<=now+timedelta(minutes=1):raise ValueError()
+        except Exception:
+            raise ServiceError('Square token identity and permissions could not be verified. Reconnect or retry before receiving.',502) from None
+        finally:
+            if response is not None:response.close()
+        # Revocation/reconnection while the provider call was in flight cannot
+        # leave usable authority attached to the previous saved connection.
+        current=self._authority_snapshot(tenant,token)
+        if any(current[key]!=snapshot[key] for key in ('merchant_id','environment','encrypted_tokens','expires_at')):
+            raise ServiceError('Square authorization changed during permission verification. Review and retry the same operation.',409)
+        if not required.issubset(scopes):
+            raise ServiceError('Square has not granted all required permissions. The owner must reconnect with receiving access.',409)
+        proof={'merchant_id':snapshot['merchant_id'],'application_id':self.config['SQUARE_APPLICATION_ID'],
+               'environment':self.environment,'scopes':sorted(scopes),'required_scopes':sorted(required),
+               'expires_at':expires.astimezone(timezone.utc).isoformat(),'checked_at':now.isoformat(),
+               'square_version':self.API_VERSION,'method':'oauth-token-status','grants_verified':True}
+        return VerifiedSquareAccess(token,proof)
+
+    def verified_grants(self,tenant,required_scopes):
+        return self.verified_access(tenant,required_scopes).proof
 
     def ingest(self,raw,signature):
         key=self.config.get('SQUARE_WEBHOOK_SIGNATURE_KEY','')

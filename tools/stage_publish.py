@@ -20,6 +20,10 @@ names += ['docs/SHARED_PILOT_PACKAGE.md','docs/RECEIPT_LIST_PERFORMANCE.md']
 names += ['docs/HOSTED_TRADES.md','docs/SHARED_TRADE_BRIDGE.md','docs/PRICING_RESEARCH.md']
 names += ['Planning/SECURITY_PRIVACY_RELEASE_GATES.md']
 names += ['Planning/SQUARE_IDAHO_ACCEPTANCE_2026-10-28.json']
+names += ['tools/test_evidence_guards.py','Planning/SQUARE_TOKEN_AUTHORITY_EVIDENCE.json']
+names += ['docs/PHYSICAL_INTAKE_CLAIMS.md','Planning/OAUTH_RECEIVING_DOMAIN_CONTRACT.md',
+          'Planning/OAUTH_RECEIVING_ACCEPTANCE_MATRIX.json']
+names += ['docs/DESKTOP_INTAKE_CLAIMS.md','Planning/OAUTH_RECEIVING_SCHEMA6_PROPOSAL.md']
 files={name:(ROOT/name).read_text(encoding='utf-8-sig') for name in sorted(set(names))}
 if len(sys.argv)>1:
     keys=list(files);part=int(sys.argv[1]);keys=keys[part*12:(part+1)*12]

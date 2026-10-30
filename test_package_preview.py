@@ -125,6 +125,18 @@ class PackageTests(unittest.TestCase):
                 self.build(evidence_directory=self.root, evidence=[name])
         self.assertFalse(self.output.exists())
 
+    def test_encrypted_intake_and_receiving_journals_cannot_enter_a_package(self):
+        for name in ('cloud.intake','cloud.receiving'):
+            for parent in (self.program,self.program/'_internal'):
+                with self.subTest(journal=name,parent=parent.name):
+                    payload=parent/name
+                    payload.write_bytes(b'Fictional encrypted journal marker; never real merchant data')
+                    try:
+                        with self.assertRaisesRegex(package.PackageError,'Credential or merchant'):
+                            self.build()
+                        self.assertFalse(self.output.exists())
+                    finally:payload.unlink()
+
     def test_stale_source_or_tampered_build_record_rejected(self):
         (self.source / 'fictional.py').write_text('# newer source\n')
         with self.assertRaisesRegex(package.PackageError, 'differ'):

@@ -49,5 +49,12 @@ class SquareStatusTests(unittest.TestCase):
         self.assertIsNone(result['saved_environment']);self.assertIsNone(result['merchant_id'])
         self.assertNotIn('fixture-secret',str(result));self.assertNotIn('encrypted_tokens',result)
 
+    def test_saved_connection_never_reports_requested_scopes_as_granted(self):
+        result=self.status(row=self.row)
+        self.assertTrue(result['connected'])
+        self.assertFalse(result['grants_verified'])
+        self.assertEqual(result['scopes'],[])
+        self.assertEqual(result['requested_scopes'],list(Square.SCOPES))
+
 
 if __name__=='__main__':unittest.main()

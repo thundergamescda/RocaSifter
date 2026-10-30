@@ -13,7 +13,9 @@ from hosted.ledger import Ledger
 from hosted.security import ServiceError
 from hosted.trades import Trades
 from hosted.app import create_app
-from hosted.security import password_hash
+from hosted.security import password_hash, digest
+from intake_manifest import source_line_id
+from test_intake_fixtures import fresh_mfa_actor, claim_draft
 from cryptography.fernet import Fernet
 from test_hosted_settlement_postgres import _PostgreSQLSettlementFixture
 from test_hosted_trades import draft_data, acceptance_data, card_line
@@ -30,6 +32,8 @@ class PostgreSQLTradeAcceptance(_PostgreSQLSettlementFixture):
                 db.execute('INSERT INTO ss_staff(id,tenant_id,email,password_hash,role) VALUES (%s,%s,%s,%s,%s)',
                            (actor['staff_id'], self.tenant, role + '@example.invalid', 'fixture-invalid-password-hash', role))
             db.execute("INSERT INTO ss_customers(id,tenant_id,display_name,privacy_basis) VALUES (%s,%s,'Fictional trade customer','fixture-only')", (self.customer, self.tenant))
+            for role in self.actors:
+                self.actors[role] = fresh_mfa_actor(db, self.actors[role])
         self.trades = Trades(self.database)
         no_provider = patch('requests.sessions.Session.request', side_effect=AssertionError('Provider HTTP is forbidden in trade acceptance tests.'))
         no_provider.start();self.addCleanup(no_provider.stop)
@@ -40,11 +44,13 @@ class PostgreSQLTradeAcceptance(_PostgreSQLSettlementFixture):
         if lines is not None:data['lines'] = lines
         if offers is not None:data['offer_terms'] = offers
         if title is not None:data['title'] = title
+        data, _ = claim_draft(self.database, self.actors['owner'], data)
         return self.trades.create(actor or self.actors['buyer'], data), data
 
     def accept(self, trade, *, actor=None, key=None, offer='credit', cents=1000, version=None, customer=None):
         data = acceptance_data(customer or self.customer, request_key=key or 'accept-' + uuid.uuid4().hex,
                                version=trade['version'] if version is None else version, offer=offer, cents=cents)
+        data['claim_reviewed'] = True
         return self.trades.accept(actor or self.actors['owner'], trade['trade_id'], data)
 
     def wallet(self, customer=None):
@@ -136,7 +142,8 @@ class PostgreSQLTradeAcceptance(_PostgreSQLSettlementFixture):
 
     def test_editing_draft_requires_fresh_acceptance_version_and_amount(self):
         trade, _ = self.create()
-        saved = self.trades.update(self.actors['buyer'], trade['trade_id'], {'request_key': 'edit', 'version': 0, 'lines': [card_line(cents=2000)]})
+        line = card_line(cents=2000);line['source_line_key'] = source_line_id(line['identity'])
+        saved = self.trades.update(self.actors['buyer'], trade['trade_id'], {'request_key': 'edit', 'version': 0, 'lines': [line]})
         self.assertEqual(saved['version'], 1)
         with self.assertRaises(ServiceError):self.accept(trade)
         self.assertEqual(self.accept(saved, cents=2000)['accepted_amount_cents'], 2000)
@@ -346,6 +353,9 @@ class PostgreSQLTradeAcceptance(_PostgreSQLSettlementFixture):
     def test_real_http_session_csrf_trade_receipt_and_credit_transaction_work_together(self):
         password = 'fictional-owner-trade-password'
         with self.database.transaction() as db:
+            # This fictional HTTP case starts unenrolled, signs in normally,
+            # then establishes a fixture-only fresh enrolled proof below.
+            db.execute('DELETE FROM ss_staff_mfa WHERE tenant_id=%s AND staff_id=%s', (self.tenant, self.actors['owner']['staff_id']))
             db.execute('UPDATE ss_staff SET password_hash=%s WHERE tenant_id=%s AND id=%s',
                        (password_hash(password), self.tenant, self.actors['owner']['staff_id']))
         app = create_app({'TESTING': True, 'PUBLIC_BASE_URL': 'https://trade-fixture.example.test',
@@ -355,10 +365,15 @@ class PostgreSQLTradeAcceptance(_PostgreSQLSettlementFixture):
                              'email': 'owner@example.invalid', 'password': password})
         self.assertEqual(login.status_code, 200)
         csrf = {'X-SS-CSRF': login.json['csrf_token']}
-        created = client.post('/api/trades', base_url=base, json=draft_data(customer_id=self.customer), headers=csrf)
+        token = client.get_cookie('ss_session', domain='trade-fixture.example.test').value
+        actor = self.actors['owner'] | {'session_hash': digest(token)}
+        with self.database.transaction() as db:fresh_mfa_actor(db, actor, existing_session=True)
+        bound, _ = claim_draft(self.database, actor, draft_data(customer_id=self.customer))
+        created = client.post('/api/trades', base_url=base, json=bound, headers=csrf)
         self.assertEqual(created.status_code, 201)
         ident = created.json['trade_id'];path = '/api/trades/' + ident + '/accept'
         payload = acceptance_data(self.customer, request_key='http-accepted')
+        payload['claim_reviewed'] = True
         self.assertEqual(client.post(path, base_url=base, json=payload).status_code, 403)
         accepted = client.post(path, base_url=base, json=payload, headers=csrf)
         self.assertEqual((accepted.status_code, accepted.json['accepted_amount_cents']), (200, 1000))

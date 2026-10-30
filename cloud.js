@@ -44,7 +44,7 @@ async function cloudApi(path,data){
  const headers={'X-SS-Local-Session':cloudSession.sessionId||''};if(data!==undefined){headers['Content-Type']='application/json';if(path!=='login')data={...data,sessionId:data.sessionId??cloudSession.sessionId??''}}
  let response;try{response=await fetch('/api/cloud/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:JSON.stringify(data),cache:'no-store'})}catch{const error=Error('The desktop service is not responding. Reopen the app and check saved shared actions before retrying.');error.offline=true;error.pendingRequired=['adjust','customer'].includes(path);throw error}
  let result;try{result=await response.json()}catch{throw Error('The desktop service is not responding. Reopen the app and check the shared history before retrying.')}
- if(!response.ok){const error=Error((result.errors||['The shared-credit action could not complete.']).join('\n'));error.status=response.status;error.offline=result.offline;error.pendingRequired=result.pendingRequired;error.sessionChanged=result.sessionChanged;error.mfaRestartRequired=result.mfaRestartRequired;throw error}return result;
+ if(!response.ok){const error=Error((result.errors||['The shared-credit action could not complete.']).join('\n'));error.status=response.status;error.offline=result.offline;error.pendingRequired=result.pendingRequired;error.sessionChanged=result.sessionChanged;error.mfaRestartRequired=result.mfaRestartRequired;error.code=result.code;error.physicalIntakeId=result.physicalIntakeId;throw error}return result;
 }
 function cloudMfaMethod(){
  const recovery=$('cloudMfaMethod').value==='recovery_code';$('cloudMfaCode').value='';$('cloudMfaCode').type=recovery?'password':'text';

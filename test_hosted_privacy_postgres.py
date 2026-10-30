@@ -3,6 +3,7 @@
 No application/merchant tables outside that schema and no provider requests.
 """
 from datetime import timedelta
+from copy import deepcopy
 import json
 import threading
 import unittest
@@ -20,7 +21,9 @@ from hosted.credit_lots import record_credit_lot
 from test_hosted_privacy import decode
 from test_hosted_settlement import order,returned_order,payment_refunds
 from test_hosted_settlement_postgres import _PostgreSQLSettlementFixture
-from test_hosted_trades import draft_data,acceptance_data
+from test_hosted_trades import draft_data,acceptance_data,card_line
+from hosted.intake import IntakeClaims
+from test_intake_fixtures import fresh_mfa_actor,claim_draft
 
 
 class PostgreSQLPrivacyAcceptance(_PostgreSQLSettlementFixture):
@@ -71,11 +74,93 @@ class PostgreSQLPrivacyAcceptance(_PostgreSQLSettlementFixture):
         self.actor=self.auth.resolve(self.token)
         self.service=Privacy(self.database,authorize_session=self.auth.resolve,proof_key='fictional-export-proof-key')
         trades=Trades(self.database)
-        created=trades.create(self.actor,draft_data(customer_id=self.customer,request_key='fictional-trade-create'))
-        accepted=trades.accept(self.actor,created['trade_id'],acceptance_data(self.customer,request_key='fictional-trade-accept'))
+        # Keep the rights-request owner unenrolled so its original recent-login
+        # tests retain their meaning. A separate fictional enrolled manager
+        # authorizes the newly guarded trade fixture; never bypass claim/MFA.
+        with self.database.transaction() as db:
+            manager={'tenant_id':self.tenant,'staff_id':uuid.uuid4(),'role':'manager'}
+            db.execute("INSERT INTO ss_staff(id,tenant_id,email,password_hash,role) VALUES (%s,%s,'fixture-export-trade-manager@example.invalid','fixture-invalid-password-hash','manager')",
+                       (manager['staff_id'],self.tenant))
+            manager=fresh_mfa_actor(db,manager)
+        self.trade_manager=manager
+        original=draft_data(customer_id=self.customer,request_key='fictional-trade-create')
+        excluded=card_line(name='EXCLUDED-ORIGINAL-CUSTOMER-ITEM',quantity=1,cents=50)
+        excluded['included']=False
+        original['lines'].append(excluded)
+        claimed,self.intake_claim=claim_draft(self.database,manager,original)
+        created=trades.create(manager,claimed)
+        # A competing other-customer draft may refer to the still-open claim.
+        # Only the finally bound accepted customer owns its all-source export.
+        competing=deepcopy(claimed)
+        competing.update(customer_id=str(self.other_customer),request_key='other-customer-competing-draft',source_reference='other-customer-competing-source')
+        competing['lines']=competing['lines'][:1]
+        self.competing_trade_id=trades.create(manager,competing)['trade_id']
+        accepted=trades.accept(manager,created['trade_id'],acceptance_data(self.customer,request_key='fictional-trade-accept')|{'claim_reviewed':True})
         self.trade_id=created['trade_id'];self.trade_hash=accepted['receipt_hash']
         no_network=patch('requests.sessions.Session.request',side_effect=AssertionError('Provider HTTP is forbidden in privacy acceptance.'))
         no_network.start();self.addCleanup(no_network.stop)
+
+    def test_claim_original_exclusions_requests_and_audit_export_only_for_final_bound_customer(self):
+        trades=Trades(self.database)
+        # This unrelated customer's opening entry existed only to test export
+        # exclusion. Complete its fictional provenance before asking the domain
+        # to append a new trade credit; do not bypass the money-origin guard.
+        with self.database.transaction() as db:
+            record_credit_lot(db,self.tenant,self.other_customer,self.other_entry)
+        # Same-tenant unrelated source is intentionally unlinked to a customer.
+        unlinked_data=draft_data(customer_id=self.customer,request_key='unlinked-intake')
+        unlinked_data['source_reference']='unlinked-physical-intake'
+        unlinked_data['lines'][0]['identity']['name']='UNLINKED-ORIGINAL-CLAIM'
+        _,unlinked=claim_draft(self.database,self.trade_manager,unlinked_data)
+        other_data=draft_data(customer_id=self.other_customer,request_key='other-accepted-intake')
+        other_data['source_reference']='other-accepted-physical-source'
+        other_data['lines'][0]['identity']['name']='OTHER-CUSTOMER-CLAIM-ORIGINAL'
+        other_data,other_claim=claim_draft(self.database,self.trade_manager,other_data)
+        other_trade=trades.create(self.trade_manager,other_data)
+        trades.accept(self.trade_manager,other_trade['trade_id'],acceptance_data(self.other_customer,request_key='other-intake-accept')|{'claim_reviewed':True})
+        # A foreign tenant's accepted claim must not enter either projection.
+        with self.database.transaction() as db:
+            foreign=db.execute('SELECT tenant_id FROM ss_customers WHERE id=%s',(self.foreign_customer,)).fetchone()['tenant_id']
+            foreign_manager={'tenant_id':foreign,'staff_id':uuid.uuid4(),'role':'manager'}
+            db.execute("INSERT INTO ss_staff(id,tenant_id,email,password_hash,role) VALUES (%s,%s,'foreign-intake-manager@example.invalid','fixture-invalid-password-hash','manager')",
+                       (foreign_manager['staff_id'],foreign))
+            foreign_manager=fresh_mfa_actor(db,foreign_manager)
+        foreign_data=draft_data(customer_id=self.foreign_customer,request_key='foreign-accepted-intake')
+        foreign_data['source_reference']='foreign-physical-intake'
+        foreign_data['lines'][0]['identity']['name']='FOREIGN-CLAIM-ORIGINAL'
+        foreign_data,foreign_claim=claim_draft(self.database,foreign_manager,foreign_data)
+        foreign_trade=trades.create(foreign_manager,foreign_data)
+        trades.accept(foreign_manager,foreign_trade['trade_id'],acceptance_data(self.foreign_customer,request_key='foreign-intake-accept')|{'claim_reviewed':True})
+
+        before=self.business_snapshot()
+        output=self.begin();chunks=list(output.iter_bytes());manifest,records,footer=decode(chunks)
+        own_id=self.intake_claim['physical_intake_id']
+        self.assertEqual(footer['record_counts']['physical_intakes'],1)
+        self.assertEqual({row['id'] for row in records['physical_intakes']},{own_id})
+        source=records['physical_intakes'][0]['source_manifest']
+        self.assertEqual(len(source['rows']),2)
+        self.assertIn('EXCLUDED-ORIGINAL-CUSTOMER-ITEM',{row['identity']['name'] for row in source['rows']})
+        self.assertEqual(records['physical_intakes'][0]['bound_trade_id'],self.trade_id)
+        self.assertTrue(records['physical_intake_requests'])
+        self.assertTrue(all(row['claim_id']==own_id for row in records['physical_intake_requests']))
+        self.assertTrue(any(row['entity_id']==own_id and row['action']=='physical-intake-created' for row in records['audit']))
+        self.assertEqual(records['trade_receipts'][0]['physical_intake_id'],own_id)
+        self.assertTrue(all(row['source_line_key'] for row in records['trade_lines']))
+        body=b''.join(chunks)
+        for forbidden in ('UNLINKED-ORIGINAL-CLAIM','OTHER-CUSTOMER-CLAIM-ORIGINAL','FOREIGN-CLAIM-ORIGINAL','DO-NOT-EXPORT-SECRET',
+                          unlinked['physical_intake_id'],other_claim['physical_intake_id'],foreign_claim['physical_intake_id']):
+            self.assertNotIn(forbidden.encode(),body)
+        self.assertEqual(before,self.business_snapshot())
+
+        # This customer has a competing draft pointing to our consumed claim;
+        # that draft must not expose our original rows or claim request copies.
+        other_output=self.begin(customer=self.other_customer)
+        other_chunks=list(other_output.iter_bytes());_,other_records,other_footer=decode(other_chunks)
+        self.assertEqual(other_footer['record_counts']['physical_intakes'],1)
+        self.assertEqual({row['id'] for row in other_records['physical_intakes']},{other_claim['physical_intake_id']})
+        self.assertNotIn(own_id,{row['claim_id'] for row in other_records['physical_intake_requests']})
+        self.assertFalse(any(row['entity_id']==own_id for row in other_records['audit']))
+        self.assertNotIn(b'EXCLUDED-ORIGINAL-CUSTOMER-ITEM',b''.join(other_chunks))
 
     def begin(self,actor=None,customer=None):
         selected=customer or self.customer

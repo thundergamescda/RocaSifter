@@ -47,7 +47,7 @@ EVIDENCE_ALLOWLIST = frozenset({
 FORBIDDEN_PARTS = frozenset({
     '.git', '.venv', '__pycache__', 'station_data', 'outputs', 'backups',
     'profiles', 'profile', 'merchant', 'merchant_data', 'merchant-data', 'merchantdata',
-    'cloud.session', 'cloud.pending', 'square.secret', 'vault.key',
+    'cloud.session', 'cloud.pending', 'cloud.intake', 'cloud.receiving', 'square.secret', 'vault.key',
     'roca_settings.json', 'installed_release.json', 'runtime.json', 'runtime.lock',
 })
 FORBIDDEN_SUFFIXES = {'.db', '.sqlite', '.sqlite3', '.csv', '.log', '.secret', '.key', '.token', '.pfx', '.p12', '.pdf', '.zpl'}

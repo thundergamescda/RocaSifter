@@ -415,3 +415,78 @@ DROP TRIGGER IF EXISTS ss_session_mfa_guard ON ss_sessions;
 CREATE TRIGGER ss_session_mfa_guard BEFORE INSERT OR UPDATE ON ss_sessions
     FOR EACH ROW EXECUTE FUNCTION ss_guard_mfa_session();
 INSERT INTO ss_schema_versions(version) VALUES (4) ON CONFLICT DO NOTHING;
+
+-- Version 5: immutable original physical-delivery evidence. No old receipt or
+-- balance is classified/backfilled. Legacy drafts must bind real original
+-- evidence before NEW acceptance; accepted evidence stays untouched.
+CREATE TABLE IF NOT EXISTS ss_intake_claims (
+    id UUID NOT NULL, tenant_id UUID NOT NULL REFERENCES ss_tenants(id),
+    physical_reference TEXT NOT NULL CHECK(length(physical_reference) BETWEEN 3 AND 100),
+    source_manifest JSONB NOT NULL CHECK(jsonb_typeof(source_manifest)='object'),
+    manifest_hash TEXT NOT NULL CHECK(manifest_hash ~ '^[a-f0-9]{64}$'),
+    semantic_hash TEXT NOT NULL CHECK(semantic_hash ~ '^[a-f0-9]{64}$'),
+    raw_csv_sha256 TEXT CHECK(raw_csv_sha256 ~ '^[a-f0-9]{64}$'),
+    additional_delivery_of UUID, additional_delivery_reason TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','consumed')),
+    version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0), bound_trade_id UUID,
+    created_by UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    consumed_at TIMESTAMPTZ, consumed_by UUID,
+    PRIMARY KEY(tenant_id,id), UNIQUE(tenant_id,physical_reference),
+    FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,consumed_by) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,additional_delivery_of) REFERENCES ss_intake_claims(tenant_id,id),
+    FOREIGN KEY(tenant_id,bound_trade_id) REFERENCES ss_trade_receipts(tenant_id,id),
+    CHECK((additional_delivery_of IS NULL AND additional_delivery_reason='') OR
+          (additional_delivery_of IS NOT NULL AND length(additional_delivery_reason) BETWEEN 10 AND 200)),
+    CHECK((state='open' AND bound_trade_id IS NULL AND consumed_at IS NULL AND consumed_by IS NULL AND version=0) OR
+          (state='consumed' AND bound_trade_id IS NOT NULL AND consumed_at IS NOT NULL AND consumed_by IS NOT NULL AND version=1))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ss_intake_original_semantic ON ss_intake_claims(tenant_id,semantic_hash) WHERE additional_delivery_of IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_intake_original_csv ON ss_intake_claims(tenant_id,raw_csv_sha256) WHERE additional_delivery_of IS NULL AND raw_csv_sha256 IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_intake_once_per_trade ON ss_intake_claims(tenant_id,bound_trade_id) WHERE bound_trade_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS ss_intake_requests (
+    tenant_id UUID NOT NULL REFERENCES ss_tenants(id), request_key TEXT NOT NULL CHECK(length(request_key) BETWEEN 1 AND 150),
+    intent_hash TEXT NOT NULL CHECK(intent_hash ~ '^[a-f0-9]{64}$'), claim_id UUID NOT NULL,
+    result JSONB NOT NULL CHECK(jsonb_typeof(result)='object'), created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY(tenant_id,request_key), FOREIGN KEY(tenant_id,claim_id) REFERENCES ss_intake_claims(tenant_id,id)
+);
+ALTER TABLE ss_trade_receipts ADD COLUMN IF NOT EXISTS physical_intake_id UUID;
+ALTER TABLE ss_trade_receipts ADD COLUMN IF NOT EXISTS physical_manifest_hash TEXT;
+ALTER TABLE ss_trade_receipt_lines ADD COLUMN IF NOT EXISTS source_line_key TEXT;
+DO $$ BEGIN
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_trade_receipts'::regclass AND conname='ss_trade_physical_claim') THEN
+        ALTER TABLE ss_trade_receipts ADD CONSTRAINT ss_trade_physical_claim FOREIGN KEY(tenant_id,physical_intake_id) REFERENCES ss_intake_claims(tenant_id,id);
+        ALTER TABLE ss_trade_receipts ADD CONSTRAINT ss_trade_manifest_pair CHECK((physical_intake_id IS NULL AND physical_manifest_hash IS NULL) OR
+             (physical_intake_id IS NOT NULL AND physical_manifest_hash IS NOT NULL AND physical_manifest_hash ~ '^[a-f0-9]{64}$'));
+    END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_trade_receipt_lines'::regclass AND conname='ss_trade_source_line_key') THEN
+        ALTER TABLE ss_trade_receipt_lines ADD CONSTRAINT ss_trade_source_line_key CHECK(source_line_key ~ '^[a-f0-9]{64}$');
+    END IF;
+END $$;
+CREATE OR REPLACE FUNCTION ss_guard_physical_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='DELETE' OR OLD.state='consumed' THEN RAISE EXCEPTION 'Physical delivery evidence is immutable'; END IF;
+    IF (to_jsonb(NEW)-ARRAY['state','version','bound_trade_id','consumed_at','consumed_by']) IS DISTINCT FROM
+       (to_jsonb(OLD)-ARRAY['state','version','bound_trade_id','consumed_at','consumed_by']) THEN
+        RAISE EXCEPTION 'Original physical delivery terms cannot change';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_physical_claim_guard ON ss_intake_claims;
+CREATE TRIGGER ss_physical_claim_guard BEFORE UPDATE OR DELETE ON ss_intake_claims FOR EACH ROW EXECUTE FUNCTION ss_guard_physical_claim();
+CREATE OR REPLACE FUNCTION ss_guard_trade_physical_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE claim ss_intake_claims%ROWTYPE;
+BEGIN
+    IF OLD.physical_intake_id IS NOT NULL AND (NEW.physical_intake_id IS DISTINCT FROM OLD.physical_intake_id OR
+       NEW.physical_manifest_hash IS DISTINCT FROM OLD.physical_manifest_hash) THEN RAISE EXCEPTION 'Trade physical binding cannot change'; END IF;
+    IF OLD.state='draft' AND NEW.state IN ('accepted_credit','accepted_cash') THEN
+        IF NEW.physical_intake_id IS NULL THEN RAISE EXCEPTION 'Central physical intake claim is required before new acceptance'; END IF;
+        SELECT * INTO claim FROM ss_intake_claims WHERE tenant_id=NEW.tenant_id AND id=NEW.physical_intake_id FOR UPDATE;
+        IF claim.state IS DISTINCT FROM 'consumed' OR claim.bound_trade_id IS DISTINCT FROM NEW.id OR
+           claim.manifest_hash IS DISTINCT FROM NEW.physical_manifest_hash THEN RAISE EXCEPTION 'Physical intake was not exclusively consumed for this trade'; END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_trade_physical_claim_guard ON ss_trade_receipts;
+CREATE TRIGGER ss_trade_physical_claim_guard BEFORE UPDATE ON ss_trade_receipts FOR EACH ROW EXECUTE FUNCTION ss_guard_trade_physical_claim();
+INSERT INTO ss_schema_versions(version) VALUES (5) ON CONFLICT DO NOTHING;

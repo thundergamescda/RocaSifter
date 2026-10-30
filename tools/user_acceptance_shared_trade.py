@@ -1,6 +1,7 @@
 """Real Chrome shared-trade handoff; fictional hosted fixture, no external I/O."""
 from datetime import datetime,timezone
 import hashlib
+import copy
 import json
 from pathlib import Path
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import traceback
+import uuid
 from unittest.mock import patch
 from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
@@ -17,10 +19,10 @@ from station_cloud import CloudClient
 from station_service import StationService
 from test_shared_trade import TradeFixtureTransport
 
-REPORT=ROOT/'Testing'/'2.6.0'
+REPORT=ROOT/'Testing'/'oauth-receiving'
 SOURCES=('station_shared_trade.py','station_cloud.py','station_service.py','station_server.py','station_store.py',
          'credit_tracker.py','shared-trade.js','shared-trade.css','cloud.js','station.js','roca_square_label_app.html',
-         'tools/user_acceptance_shared_trade.py','test_shared_trade.py')
+         'tools/user_acceptance_shared_trade.py','test_shared_trade.py','intake_manifest.py','station_intake_claim.py','intake-claim.js','intake-claim.css','test_intake_claim.py')
 def hashes():return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in SOURCES}
 
 
@@ -39,9 +41,10 @@ def run():
         try:
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='chrome',headless=True);context=browser.new_context(viewport={'width':1440,'height':1100});page=context.new_page();page.set_default_timeout(10000)
+                allowed_ports={server.server_port}
                 def route(request):
                     uri=urlsplit(request.request.url)
-                    if uri.scheme=='http' and uri.hostname=='127.0.0.1' and uri.port==server.server_port:request.continue_()
+                    if uri.scheme=='http' and uri.hostname=='127.0.0.1' and uri.port in allowed_ports:request.continue_()
                     else:external.append({'scheme':uri.scheme,'host':uri.hostname});request.abort()
                 context.route('**/*',route);page.on('pageerror',lambda error:errors.append(str(error)))
                 def create(name):
@@ -53,12 +56,17 @@ def run():
                 def open_shared(receipt):
                     reopen(receipt);page.locator('#openSharedTrade').click();expect(page.locator('#sharedTradeDialog')).to_be_visible()
                 def draft(receipt):
-                    open_shared(receipt);expect(page.locator('#sharedTradeCustomers [data-shared-customer="'+customer+'"]')).to_be_visible()
+                    open_shared(receipt)
+                    if not service.store.receipt(receipt['id']).get('intake_claim'):
+                        page.locator('#intakePhysicalReference').fill('TAG-'+receipt['id']);page.locator('#intakePhysicalVerified').check();page.locator('#createIntakeClaim').click()
+                        expect(page.locator('#intakeClaimFacts')).to_contain_text('Central tag')
+                    expect(page.locator('#sharedTradeCustomers [data-shared-customer="'+customer+'"]')).to_be_visible()
                     assert remote.issuances==0 or service.store.receipt(receipt['id']).get('purchase') is None
                     page.locator('[data-shared-customer="'+customer+'"]').click();expect(page.locator('#sharedTradeSelectedName')).to_have_text('Fictional Shared Customer')
                     page.locator('#saveSharedTradeDraft').click();expect(page.locator('#sharedTradeOffer')).to_be_visible();expect(page.locator('#refreshSharedTrade')).to_be_enabled()
-                def consent():
-                    expect(page.locator('#acceptSharedTrade')).to_be_disabled();page.locator('#sharedTradeAgreed').check();expect(page.locator('#acceptSharedTrade')).to_be_disabled();page.locator('#sharedTradeReceived').check();expect(page.locator('#acceptSharedTrade')).to_be_enabled()
+                def consent(target=None):
+                    target=target or page
+                    expect(target.locator('#acceptSharedTrade')).to_be_disabled();target.locator('#sharedTradeAgreed').check();expect(target.locator('#acceptSharedTrade')).to_be_disabled();target.locator('#sharedTradeReceived').check();expect(target.locator('#acceptSharedTrade')).to_be_disabled();target.locator('#sharedTradeClaimReviewed').check();expect(target.locator('#acceptSharedTrade')).to_be_enabled()
                 def case(name,callback):
                     begin=time.monotonic()
                     try:callback();cases.append({'name':name,'status':'pass','elapsed_seconds':round(time.monotonic()-begin,3)});record('PASS '+name)
@@ -93,7 +101,7 @@ def run():
                     page.locator('#cancelSharedTradeDraft').click();expect(page.locator('#confirmDialog')).to_be_visible();page.locator('#confirmOkay').click()
                     expect(page.locator('#sharedTradeMessage')).to_contain_text('cancellation confirmed');expect(page.locator('#refreshSharedTrade')).to_be_enabled()
                     result=service.store.receipt(receipt['id']);assert result.get('purchase') is None and result['shared_trade']['state']=='cancelled' and remote.issuances==previous
-                    page.screenshot(path=str(REPORT/'shared-trade-cancelled.png'),full_page=True);page.locator('#closeSharedTrade').click();expect(page.locator('#addManualItem')).to_be_enabled()
+                    page.screenshot(path=str(REPORT/'shared-trade-cancelled.png'),full_page=True);page.locator('#closeSharedTrade').click();expect(page.locator('#addManualItem')).to_be_disabled();expect(page.locator('#newReceipt')).to_be_enabled()
                     page.locator('#openHistory').click()
                     row=page.locator('#historyList [data-open="'+receipt['id']+'"]')
                     expect(row).to_contain_text('CHECKED');page.locator('#closeHistory').click()
@@ -156,10 +164,83 @@ def run():
                     assert saved.value.status==200;expect(page.locator('#cardDrawer')).to_be_hidden();assert page.evaluate('state.dirty') is False
                     fresh=create('Fictional Editable After Recovery');reopen(fresh);page.locator('#cardRows [data-edit]').first.click()
                     expect(page.locator('#editName')).to_be_enabled();expect(page.locator('#editLocation')).to_be_enabled();expect(page.locator('#cardForm button[type=submit]')).to_be_enabled();page.locator('#closeDrawer').click()
-                case('Explicit shared customer and two confirmations issue hosted credit once without a local-wallet action',normal_issuance)
+                def lost_claim_response():
+                    receipt=create('Fictional Lost Physical Reference');before_claims=len(remote.claims);open_shared(receipt)
+                    page.locator('#intakePhysicalReference').fill('TAG-LOST-'+receipt['id']);page.locator('#intakePhysicalVerified').check();remote.drop_after.add('claim');page.locator('#createIntakeClaim').click()
+                    expect(page.locator('#sharedTradeMessage')).to_contain_text('unavailable');expect(page.locator('#checkIntakeClaim')).to_be_enabled()
+                    stored=service.store.receipt(receipt['id']);key=stored['intake_claim']['request_key'];assert len(remote.claims)==before_claims+1 and stored.get('purchase') is None
+                    assert (service.store.root/'cloud.intake').read_bytes().startswith(b'DP1');assert 'source_manifest' not in json.dumps(service.cloud.pending())
+                    page.screenshot(path=str(REPORT/'intake-claim-response-lost.png'),full_page=True)
+                    page.locator('#closeSharedTrade').click();open_shared(receipt);expect(page.locator('#intakeClaimFacts')).to_contain_text('Central tag')
+                    expect(page.locator('#sharedTradeCustomerPicker')).to_be_visible();assert service.store.receipt(receipt['id'])['intake_claim']['request_key']==key
+                    assert len(remote.claims)==before_claims+1 and service.cloud._intake_pending()==[];page.locator('#closeSharedTrade').click()
+                def cross_pc_same_physical_source():
+                    receipt=create('Fictional Same Physical Cards Across PCs');draft(receipt);claim=service.store.receipt(receipt['id'])['intake_claim'];before_issues=remote.issuances
+                    with patch.object(core,'SETTINGS_FILE',str(Path(folder)/'other-pc/settings.json')):
+                        other=StationService(core);other.store.put('preferences',other.preferences()|{'pricingEnabled':False});other.cloud=CloudClient(other.store.root,transport=remote);other.shared_trades.cloud=other.cloud
+                        other.cloud.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
+                        original=service.store.receipt(receipt['id']);copied=copy.deepcopy(original)
+                        copied['id']='R-OTHER-PC-'+receipt['id'];copied.pop('shared_trade');copied.pop('intake_claim');copied['purchase']=None;other.store.save_receipt(copied)
+                        for card in copied['cards']:card['row_id']=uuid.uuid4().hex
+                        other.store.save_receipt(copied)
+                    second=core.HTTPServer(('127.0.0.1',0),core.RocaStationHandler);second.station=other;second_thread=threading.Thread(target=second.serve_forever,daemon=True);second_thread.start();allowed_ports.add(second.server_port)
+                    another=context.new_page();another.set_default_timeout(10000);another.on('pageerror',lambda error:errors.append(str(error)))
+                    try:
+                        another.goto(f'http://127.0.0.1:{second.server_port}',wait_until='domcontentloaded');another.locator('#openHistory').click();another.locator('#historyList [data-open="'+copied['id']+'"]').click();expect(another.locator('#receiptPicker')).to_have_value(copied['id']);another.locator('#openSharedTrade').click()
+                        another.locator('#intakePhysicalReference').fill('TAG-OTHER-PC-SAME-CARDS');another.locator('#intakePhysicalVerified').check();another.locator('#createIntakeClaim').click()
+                        expect(another.locator('#intakeClaimFacts')).to_contain_text(claim['physical_intake_id']);expect(another.locator('#intakeClaimFacts')).to_contain_text(claim['physical_reference'])
+                        other_saved=other.store.receipt(copied['id']);assert other_saved['intake_claim']['physical_intake_id']==claim['physical_intake_id']
+                        assert other_saved['cards'][0]['source_line_key']==original['cards'][0]['source_line_key']
+                        expect(another.locator('[data-shared-customer="'+customer+'"]').first).to_be_visible();another.locator('[data-shared-customer="'+customer+'"]').first.click();another.locator('#saveSharedTradeDraft').click();expect(another.locator('#sharedTradeOffer')).to_be_visible()
+                        consent();page.locator('#acceptSharedTrade').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('Shared credit confirmed once')
+                        consent(another);another.locator('#acceptSharedTrade').click();expect(another.locator('#sharedTradeMessage')).to_contain_text('already consumed')
+                        assert remote.issuances==before_issues+1 and other.store.receipt(copied['id']).get('purchase') is None
+                        another.screenshot(path=str(REPORT/'intake-claim-second-pc-blocked.png'),full_page=True)
+                        another.locator('#cancelSharedTradeDraft').click();another.locator('#confirmOkay').click();expect(another.locator('#sharedTradeMessage')).to_contain_text('cancellation confirmed')
+                        assert other.cloud.pending()['pending']==[];page.locator('#closeSharedTrade').click()
+                    finally:another.close();second.shutdown();second.server_close();second_thread.join(5);allowed_ports.remove(second.server_port)
+                def server_mfa_denial_can_cancel_without_local_fallback():
+                    receipt=create('Fictional Fresh MFA Required');draft(receipt);consent();before_issues=remote.issuances;remote.mfa_fresh=False
+                    try:
+                        page.locator('#acceptSharedTrade').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('fresh proof');expect(page.locator('#sharedTradeSignIn')).to_be_visible()
+                        expect(page.locator('#intakeMfaSetup')).to_be_visible();expect(page.locator('#intakeMfaSetup')).to_have_attribute('href','https://stock-and-sleeve-api.onrender.com/');expect(page.locator('#intakeMfaSetup')).to_have_attribute('rel','noopener noreferrer');expect(page.locator('#intakeMfaHelp')).to_contain_text('sign out and sign in HERE')
+                        assert remote.issuances==before_issues and service.store.receipt(receipt['id']).get('purchase') is None
+                        assert service.cloud._pending()[0]['kind']=='trade_accept'
+                        page.locator('#cancelSharedTradeDraft').click();page.locator('#confirmOkay').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('cancellation confirmed')
+                        assert service.cloud.pending()['pending']==[] and remote.issuances==before_issues;page.locator('#closeSharedTrade').click()
+                    finally:remote.mfa_fresh=True
+                def selected_all_and_legacy_upgrade_are_explicit():
+                    receipt=service.import_csv('Name,Game,Price,Quantity\nSelected fictional,Magic,3.13,2\nExcluded fictional,Riftbound,2.13,1\n','selected.csv','trade')['receipt']
+                    receipt['cards'][0]['reviewed']=True;receipt['cards'][1]['include']=False;service.store.save_receipt(receipt);draft(receipt)
+                    expect(page.locator('#intakeClaimFacts')).to_contain_text('Selected 2 / original 3 copies');expect(page.locator('#intakeClaimFacts')).to_contain_text('1 excluded copies remain NOT RECEIVED')
+                    page.screenshot(path=str(REPORT/'intake-claim-selected-excluded.png'),full_page=True);page.locator('#cancelSharedTradeDraft').click();page.locator('#confirmOkay').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('cancellation confirmed');page.locator('#closeSharedTrade').click()
+                    legacy=create('Fictional Legacy No Original Manifest');legacy.pop('source_manifest');service.store.save_receipt(legacy);open_shared(legacy)
+                    expect(page.locator('#intakeClaimFacts')).to_contain_text('no original intake manifest');expect(page.locator('#intakeClaimInputs')).to_be_hidden();expect(page.locator('#sharedTradeCustomerPicker')).to_be_hidden();page.locator('#closeSharedTrade').click()
+                def manual_tag_and_additional_delivery():
+                    receipt=service.add_manual_item({'requestId':str(uuid.uuid4()),'game':'magic','mode':'trade','item':{'card_name':'Fictional manual physical stack','qty':1,'final_price':4.13}})
+                    receipt['cards'][0]['reviewed']=True;service.store.save_receipt(receipt);open_shared(receipt)
+                    expect(page.locator('#sharedTradeCustomerPicker')).to_be_hidden();page.locator('#intakePhysicalReference').fill('MANUAL-PHYSICAL-TAG-001');page.locator('#intakePhysicalVerified').check();page.locator('#createIntakeClaim').click()
+                    expect(page.locator('#intakeClaimFacts')).to_contain_text('manual-physical-tag-001');expect(page.locator('#intakeAdditionalSection')).to_be_visible()
+                    original=service.store.receipt(receipt['id'])['intake_claim']['physical_intake_id'];page.locator('#intakeAdditionalSection summary').click()
+                    page.locator('#intakeAdditionalTag').fill('MANUAL-SEPARATE-DELIVERY-002');page.locator('#intakeAdditionalReason').fill('Manager verified a separate physical delivery of identical cards');page.locator('#intakeAdditionalVerified').check();remote.mfa_fresh=False
+                    try:
+                        page.locator('#createAdditionalIntake').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('fresh proof');expect(page.locator('#checkIntakeClaim')).to_be_enabled();expect(page.locator('#selectIntakeClaim')).to_be_disabled()
+                        stored=service.store.receipt(receipt['id']);key=stored['intake_claim']['request_key'];assert stored['intake_claim']['additional_delivery_of']==original
+                        page.screenshot(path=str(REPORT/'intake-additional-mfa-required.png'),full_page=True)
+                        remote.mfa_fresh=True;page.locator('#checkIntakeClaim').click();expect(page.locator('#intakeClaimFacts')).to_contain_text('manual-separate-delivery-002')
+                        stored=service.store.receipt(receipt['id']);assert stored['intake_claim']['request_key']==key and stored['intake_claim']['physical_intake_id']!=original
+                        assert stored['intake_claim_history'][-1]['physical_intake_id']==original and stored.get('purchase') is None
+                        page.screenshot(path=str(REPORT/'intake-additional-confirmed.png'),full_page=True);page.locator('#closeSharedTrade').click()
+                    finally:remote.mfa_fresh=True
+                case('Explicit central physical reference, shared customer and all confirmations issue credit once',normal_issuance)
                 case('Lost acceptance response remains locked and full-page reopen recovers one confirmed credit',lost_acceptance_recovery)
                 case('Draft cancellation is confirmed by the server before the local batch unlocks',draft_cancel)
                 case('Pending drawers and saved-card research stay read-only without dirty state, Quit can cancel, and confirmed void restores editing',pending_drawer_readonly_and_restore)
+                case('Lost physical-claim response recovers its original encrypted request after full-page reopen without a new claim',lost_claim_response)
+                case('Two actual Chrome desktop origins bind the same physical claim and only one accepted trade issues credit',cross_pc_same_physical_source)
+                case('Server fresh-MFA denial preserves the original agreement and permits authoritative draft cancellation without fallback',server_mfa_denial_can_cancel_without_local_fallback)
+                case('Selected/all/excluded-copy limits and legacy missing-original reimport guidance are explicit',selected_all_and_legacy_upgrade_are_explicit)
+                case('Manual physical tags precede trade selection and separate deliveries retain linked intent through server MFA denial/recovery',manual_tag_and_additional_delivery)
                 assert not errors,errors;assert not external,external;assert not backend,backend;assert square.call_count==0
                 record('PASS no external browser/backend requests, no Square uploads and no uncaught JavaScript errors');browser.close()
         finally:

@@ -1,7 +1,7 @@
 'use strict';
 (()=>{
 const $=id=>document.getElementById(id),encoder=new TextEncoder();
-const names=['customer','credit_entries','credit_lots','lot_mutations','reservations','lot_reservations','reservation_terms','square_settlements','credit_returns','trade_receipts','trade_lines','idempotency_records','reconciliation_exceptions','origin_policies','policy_revocations','audit'];
+const names=['customer','credit_entries','credit_lots','lot_mutations','reservations','lot_reservations','reservation_terms','square_settlements','credit_returns','trade_receipts','trade_lines','physical_intakes','physical_intake_requests','idempotency_records','reconciliation_exceptions','origin_policies','policy_revocations','audit'];
 const maximum=Math.min(64*1024*1024,Number($('privacyApp').dataset.browserMaxBytes)||32*1024*1024);
 const limitLabel=maximum>=1024*1024?(maximum/1024/1024).toFixed(0)+' MiB':Math.ceil(maximum/1024)+' KiB';
 $('privacyLimit').textContent=limitLabel;
@@ -69,13 +69,13 @@ async function receive(response,epoch,run,authStamp,context,customer){
   const value=JSON.parse(raw),length=encoder.encode(raw+'\n').length;
   if(value.kind==='error'){if(value.code==='authorization_changed')invalidate(value.error);throw Error(value.error||'The export stopped before completion.')}
   if(value.kind==='manifest'){
-   if(manifest||priorBytes||value.schema!=='stock-and-sleeve.hosted-customer-export'||value.version!==1||value.customer_id!==customer.id||value.store!==context.store||!counts(value.record_counts)||!Number.isSafeInteger(value.start_audit_id)||value.start_audit_id<1||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.export_id))throw Error('The export identity or manifest is invalid.');
+   if(manifest||priorBytes||value.schema!=='stock-and-sleeve.hosted-customer-export'||value.version!==2||value.customer_id!==customer.id||value.store!==context.store||!counts(value.record_counts)||!Number.isSafeInteger(value.start_audit_id)||value.start_audit_id<1||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.export_id))throw Error('The export identity or manifest is invalid.');
    manifest=value;
   }else if(value.kind==='page'){
    if(!manifest||!names.includes(value.dataset)||value.page!==pages+1||!Array.isArray(value.records)||value.records.length!==value.count||!Number.isSafeInteger(value.count)||value.count<1||value.count>100)throw Error('The export page sequence is invalid.');
    observed[value.dataset]+=value.count;if(observed[value.dataset]>manifest.record_counts[value.dataset])throw Error('The export contains unexpected records.');pages++;
   }else if(value.kind==='complete'){
-   if(!manifest||value.schema!==manifest.schema||value.version!==1||value.export_id!==manifest.export_id||value.start_audit_id!==manifest.start_audit_id||value.pages!==pages||value.bytes_before_footer!==priorBytes||!sameCounts(value.record_counts,observed)||!sameCounts(value.record_counts,manifest.record_counts)||value.content_chain_sha256!==hex(chain))throw Error('Export footer counts or hash did not verify. No completed copy was downloaded.');
+   if(!manifest||value.schema!==manifest.schema||value.version!==2||value.export_id!==manifest.export_id||value.start_audit_id!==manifest.start_audit_id||value.pages!==pages||value.bytes_before_footer!==priorBytes||!sameCounts(value.record_counts,observed)||!sameCounts(value.record_counts,manifest.record_counts)||value.content_chain_sha256!==hex(chain))throw Error('Export footer counts or hash did not verify. No completed copy was downloaded.');
    footer=value;return;
   }else throw Error('The export format is not supported.');
   chain=await nextHash(chain,raw);guard(epoch,run,authStamp,context,customer);priorBytes+=length;

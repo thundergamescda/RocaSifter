@@ -15,16 +15,19 @@ ROLES=('owner','manager','buyer','cashier')
 
 
 class CloudError(StationError):
-    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False,mfa_restart=False):
+    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False,mfa_restart=False,code=None,physical_intake_id=None):
         super().__init__(message);self.status=status;self.offline=offline;self.pending=pending;self.session_changed=session_changed;self.mfa_restart=mfa_restart
+        self.code=code;self.physical_intake_id=physical_intake_id
 
 
 class CloudClient:
-    def __init__(self,root,*,transport=None,vault=None,pending_vault=None,clock=None):
+    def __init__(self,root,*,transport=None,vault=None,pending_vault=None,clock=None,intake_vault=None):
         self.vault=vault or Vault(root)
         if vault is None:self.vault.path=self.vault.root/'cloud.session'
         self.pending_vault=pending_vault or Vault(root)
         if pending_vault is None:self.pending_vault.path=self.pending_vault.root/'cloud.pending'
+        self.intake_vault=intake_vault or Vault(root)
+        if intake_vault is None:self.intake_vault.path=self.intake_vault.root/'cloud.intake'
         self.transport=transport or requests.Session()
         self.transport.trust_env=False
         self.clock=clock or time.time
@@ -107,7 +110,9 @@ class CloudClient:
                              or existing.get('trade_id')!=trade_id or existing.get('receipt_id')!=receipt_id):
                 raise CloudError('The pending action has different details. Recover that saved action before creating another.',status=409,pending=True)
             if not existing:
-                if any(row['store']==saved['store'] for row in rows):raise CloudError('Resolve the saved pending action before changing shared credit again.',status=409,pending=True)
+                conflicts=[row for row in rows if row['store']==saved['store']]
+                cancelling_same_trade=kind=='trade_void' and conflicts and all(row['kind']=='trade_accept' and row.get('trade_id')==trade_id and row.get('receipt_id')==receipt_id for row in conflicts)
+                if conflicts and not cancelling_same_trade:raise CloudError('Resolve the saved pending action before changing shared credit again.',status=409,pending=True)
                 if len(rows)>=50:raise CloudError('Resolve the pending actions on this computer before continuing.',status=409,pending=True)
                 rows.append({'kind':kind,'customer_id':customer_id,'store':saved['store'],'request_key':key,
                              'body':body,'fingerprint':fingerprint,'created_at':self.clock(),
@@ -131,15 +136,17 @@ class CloudClient:
 
     def pending(self,*,expected_session_id=None):
         with self.lock:
-            saved=self._saved();rows=self._pending()
+            saved=self._saved();rows=self._pending();intakes=self._intake_pending()
             if saved and saved['expires_at']<=self.clock():self._clear();saved=None
             if saved:self._expected(saved,expected_session_id)
-            if not saved:return {'pending':[],'hasOtherPending':bool(rows)}
+            if not saved:return {'pending':[],'hasOtherPending':bool(rows or intakes)}
             visible=[{'requestKey':row['request_key'],'action':row['kind'],'customerId':row.get('customer_id'),
                       'amount_cents':row['body'].get('amount_cents'),'entryKind':row['body'].get('kind'),
                       'reference':row['body'].get('reference'),'createdAt':row['created_at'],
                       'receiptId':row.get('receipt_id'),'tradeId':row.get('trade_id')} for row in rows if row['store']==saved['store']]
-            return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows)}
+            visible.extend({'requestKey':row['request_key'],'action':'intake_claim','receiptId':row['receipt_id'],
+                            'createdAt':row['created_at']} for row in intakes if row['store']==saved['store'])
+            return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows+intakes)}
 
     def recover(self,key,*,retry=False,expected_session_id=None):
         with self.lock:
@@ -179,7 +186,10 @@ class CloudClient:
         if not 200<=response.status_code<300:
             message=result.get('error')
             if not isinstance(message,str) or not 1<=len(message)<=500:message='The cloud action could not complete. Retry with the same request key.'
-            raise CloudError(message,status=response.status_code,offline=response.status_code>=500)
+            code=result.get('code');code=code if isinstance(code,str) and re.fullmatch(r'[A-Z_]{1,80}',code) else None
+            try:intake=str(uuid.UUID(str(result['physical_intake_id']))) if result.get('physical_intake_id') else None
+            except (ValueError,TypeError,AttributeError):intake=None
+            raise CloudError(message,status=response.status_code,offline=response.status_code>=500,code=code,physical_intake_id=intake)
         return result
 
     def _authenticated(self,method,path,*,data=None,expected_session_id=None):
@@ -350,7 +360,9 @@ class CloudClient:
                 me=self._authenticated('GET','/api/me')
                 if me.get('store')!=saved['store'] or me.get('role') not in ROLES:
                     self._clear();raise CloudError('The cloud account changed. Sign in again.',status=401)
-                return {'signedIn':True,'store':me['store'],'role':me['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id']}
+                capabilities=me.get('capabilities')
+                public={key:capabilities[key] for key in ('physical_intake_claims','trade_claim_required','new_trade_acceptance_requires_fresh_mfa','hosted_receiving') if isinstance(capabilities,dict) and key in capabilities and type(capabilities[key]) in (bool,int)}
+                return {'signedIn':True,'store':me['store'],'role':me['role'],'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id'],'capabilities':public}
             except CloudError as error:
                 if error.status==401:return {'signedIn':False,'mode':'pilot','portalUrl':ORIGIN,'message':str(error)}
                 if error.offline and saved:return {'signedIn':False,'savedSession':True,'offline':True,'mode':'pilot','portalUrl':ORIGIN,'sessionId':saved['session_id'],'message':str(error)}
@@ -422,3 +434,88 @@ class CloudClient:
             saved=self._saved();self._expected(saved,expected_session_id)
             if not saved:raise CloudError('Sign in to the store that owns this trade.',status=401)
             self._finish_pending(saved['store'],key)
+
+    def _intake_pending(self):
+        """Separate typed journal; never rewrite the original credit/trade journal."""
+        try:raw=self.intake_vault.read()
+        except (StationError,UnicodeError,OSError):
+            raise CloudError('The saved physical-intake journal could not be opened. Keep the original saved action for owner recovery and use the same Windows account; do not create a replacement intake.',status=409,pending=True) from None
+        if not raw:return []
+        try:
+            value=json.loads(raw)
+            if (not isinstance(value,dict) or value.get('version')!=1 or value.get('origin')!=ORIGIN
+                or not isinstance(value.get('operations'),list) or len(value['operations'])>50):raise ValueError()
+            rows=value['operations'];seen=set()
+            for row in rows:
+                if (not isinstance(row,dict) or row.get('kind')!='intake_claim'
+                    or not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,49}',row.get('store',''))
+                    or not re.fullmatch(r'R-[A-Za-z0-9-]{1,100}',row.get('receipt_id',''))
+                    or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',row.get('request_key',''))
+                    or not isinstance(row.get('body'),dict) or row['body'].get('request_key')!=row['request_key']
+                    or row.get('fingerprint')!=self._fingerprint(row['body'])):raise ValueError()
+                identity=(row['store'],row['request_key'])
+                if identity in seen:raise ValueError()
+                seen.add(identity)
+                if 'result' in row and (not isinstance(row['result'],dict) or row.get('result_fingerprint')!=self._fingerprint(row['result'])):raise ValueError()
+            return rows
+        except (ValueError,TypeError,AttributeError):
+            raise CloudError('The saved physical-intake journal needs owner recovery. Keep the original batch; do not create a replacement physical intake.',status=409,pending=True) from None
+
+    def _save_intake_pending(self,rows):
+        if rows:self.intake_vault.set(json.dumps({'version':1,'origin':ORIGIN,'operations':rows},separators=(',',':')))
+        elif self.intake_vault.path.exists():self.intake_vault.path.unlink()
+
+    def intake_get(self,ident,*,expected_session_id=None):
+        return self._authenticated('GET','/api/intake-claims/'+self.customer_id(ident),expected_session_id=expected_session_id)
+
+    def intake_request(self,key,*,expected_session_id=None):
+        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key):raise CloudError('Invalid saved physical-intake request.')
+        return self._authenticated('GET','/api/intake-claims/requests/'+quote(key,safe=''),expected_session_id=expected_session_id)
+
+    def intake_create(self,body,receipt_id,*,expected_session_id=None):
+        with self.lock:
+            self._cancel_guard();saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved or saved['expires_at']<=self.clock():raise CloudError('Sign in to the store that owns this physical intake.',status=401)
+            if saved['role'] not in ('owner','manager'):raise CloudError('An owner or manager must create or select the central physical intake.',status=403)
+            key=body.get('request_key') if isinstance(body,dict) else None
+            if (not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key)
+                or not isinstance(receipt_id,str) or not re.fullmatch(r'R-[A-Za-z0-9-]{1,100}',receipt_id)
+                or set(body)-{'request_key','physical_reference','source_manifest','physical_delivery_verified',
+                              'additional_delivery_of','additional_delivery_confirmed','additional_delivery_reason'}):
+                raise CloudError('Use the supported physical-intake request fields.')
+            rows=self._intake_pending();existing=next((row for row in rows if row['store']==saved['store'] and row['request_key']==key),None)
+            hashed=self._fingerprint(body)
+            if existing and (existing['receipt_id']!=receipt_id or existing['fingerprint']!=hashed):
+                raise CloudError('The saved physical-intake request has different details. Recover its original batch.',status=409,pending=True)
+            if existing and 'result' in existing:return existing['result']
+            if not existing:
+                if any(row['store']==saved['store'] for row in rows):raise CloudError('Recover the saved physical-intake action in this store before starting another.',status=409,pending=True)
+                if len(rows)>=50:raise CloudError('Recover the saved physical-intake actions on this computer before continuing.',status=409,pending=True)
+                rows.append({'kind':'intake_claim','store':saved['store'],'receipt_id':receipt_id,'request_key':key,
+                             'body':body,'fingerprint':hashed,'created_at':self.clock()})
+                self._save_intake_pending(rows)
+            try:result=self._authenticated('POST','/api/intake-claims',data=body,expected_session_id=expected_session_id)
+            except CloudError as error:error.pending=True;raise
+            rows=self._intake_pending();row=next(row for row in rows if row['store']==saved['store'] and row['request_key']==key)
+            row['result']=result;row['result_fingerprint']=self._fingerprint(result);self._save_intake_pending(rows)
+            return result
+
+    def intake_journal(self,key,*,expected_session_id=None):
+        with self.lock:
+            saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved:raise CloudError('Sign in to recover this physical intake.',status=401)
+            return next((dict(row) for row in self._intake_pending() if row['store']==saved['store'] and row['request_key']==key),None)
+
+    def intake_remember(self,key,result,*,expected_session_id=None):
+        with self.lock:
+            saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved:raise CloudError('Sign in to keep this physical-intake confirmation for recovery.',status=401)
+            rows=self._intake_pending();row=next((row for row in rows if row['store']==saved['store'] and row['request_key']==key),None)
+            if row is None or not isinstance(result,dict):raise CloudError('The original physical-intake journal is missing. Keep the batch for owner recovery.',status=409,pending=True)
+            row['result']=result;row['result_fingerprint']=self._fingerprint(result);self._save_intake_pending(rows)
+
+    def intake_finish(self,key,*,expected_session_id=None):
+        with self.lock:
+            saved=self._saved();self._expected(saved,expected_session_id)
+            if not saved:raise CloudError('Sign in to the store that owns this physical intake.',status=401)
+            self._save_intake_pending([row for row in self._intake_pending() if (row['store'],row['request_key'])!=(saved['store'],key)])

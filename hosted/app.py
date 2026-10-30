@@ -16,6 +16,7 @@ from .security import ServiceError
 from .square import Square
 from .trades import Trades
 from .privacy import Privacy, Limits as PrivacyLimits
+from .intake import IntakeClaims, IntakeError
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -43,10 +44,11 @@ def create_app(config=None,*,database=None,square_transport=None):
     ledger=Ledger(db) if db else None
     square=Square(db,app.config,square_transport) if db else None
     trades=Trades(db) if db else None
+    intake=IntakeClaims(db) if db else None
     privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
                     proof_key=app.config['APP_ENCRYPTION_KEYS'].split(',')[0],
                     limits=app.config.get('PRIVACY_EXPORT_LIMITS') or PrivacyLimits()) if db else None
-    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy)
+    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake)
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -79,7 +81,12 @@ def create_app(config=None,*,database=None,square_transport=None):
         return response
 
     @app.errorhandler(ServiceError)
-    def service_error(error):return jsonify(error=str(error)),error.status
+    def service_error(error):
+        result={'error':str(error)}
+        if isinstance(error,IntakeError):
+            result['code']=error.code
+            if error.physical_intake_id:result['physical_intake_id']=error.physical_intake_id
+        return jsonify(result),error.status
 
     @app.errorhandler(HTTPException)
     def http_error(error):return jsonify(error=error.name),error.code
@@ -202,7 +209,9 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/me')
     @authenticated
     def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot',
-                           mfa_enabled=bool(g.actor.get('mfa_enabled')),mfa_authenticated=bool(g.actor.get('mfa_authenticated')))
+                           mfa_enabled=bool(g.actor.get('mfa_enabled')),mfa_authenticated=bool(g.actor.get('mfa_authenticated')),
+                           capabilities={'physical_intake_claims':1,'trade_claim_required':True,
+                                         'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False})
 
     @app.get('/api/staff')
     @authenticated
@@ -281,6 +290,18 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/square/status')
     @authenticated
     def square_status():return jsonify(square.status(g.actor))
+
+    @app.post('/api/intake-claims')
+    @authenticated
+    def intake_create():return jsonify(intake.create(g.actor,body())),201
+
+    @app.get('/api/intake-claims/requests/<request_key>')
+    @authenticated
+    def intake_request_status(request_key):return jsonify(intake.request_status(g.actor,request_key))
+
+    @app.get('/api/intake-claims/<uuid:claim_id>')
+    @authenticated
+    def intake_get(claim_id):return jsonify(intake.get(g.actor,claim_id))
 
     @app.get('/api/trades')
     @authenticated

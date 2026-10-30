@@ -49,7 +49,7 @@ epoch, current session-specific CSRF value and the server verification audit.
 
 `hosted/privacy.py` defines explicit column projections and tenant/customer
 joins. No authentication, credential, session, invite, MFA, recovery or Square
-token table is selected. The version-1 export has these collections:
+token table is selected. The version-2 export has these 18 collections:
 
 | Collection | Link and contents |
 | --- | --- |
@@ -59,10 +59,11 @@ token table is selected. The version-1 export has these collections:
 | `reservations`, `lot_reservations` | Account reservations and their lot allocations, including consumed/restored amounts. |
 | `reservation_terms`, `square_settlements`, `credit_returns` | Stored selected checkout/settlement/return evidence linked through account reservations and entries. No provider request is made. |
 | `trade_receipts`, `trade_lines` | Account drafts/final receipts, complete accepted-receipt copies, offer facts, lines and recorded source hashes. |
+| `physical_intakes`, `physical_intake_requests` | Original full source manifests, physical reference, linked-delivery attestation, consumption state and request evidence for consumed claims bound to the account's accepted trade. Excluded source rows remain original evidence. Unconsumed claims, competing draft references and unrelated claims require separate ownership review and are omitted. |
 | `idempotency_records` | Existing request metadata/results directly linked to this account's entries, reservations or trades. |
 | `reconciliation_exceptions` | Exceptions with a directly linked account reservation. |
 | `origin_policies`, `policy_revocations` | Policy versions/revocations referenced by this account's lots. |
-| `audit` | Actions with direct customer/entry/reservation/trade links, using an explicit detail projection. |
+| `audit` | Actions with direct customer/entry/reservation/trade/intake links, using an explicit detail projection. |
 
 Cross-customer association inconsistencies fail the export; they are not
 silently treated as legitimate links. Credential-like JSON keys are removed

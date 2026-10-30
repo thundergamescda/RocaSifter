@@ -7,6 +7,7 @@ enable credit checkout. Accepted receipt evidence is immutable.
 import base64
 from datetime import datetime
 import json
+import re
 import uuid
 from psycopg.types.json import Jsonb
 from .credit_lots import record_credit_lot
@@ -14,6 +15,8 @@ from .database import audit
 from .ledger import Ledger, require_role
 from .security import ServiceError
 from .settlement import evidence_hash
+from .intake import claim_for_trade, current_authority, IntakeError
+from intake_manifest import source_lines
 
 BUY_ROLES = ('owner', 'manager', 'buyer')
 ACCEPT_ROLES = ('owner', 'manager')
@@ -55,7 +58,7 @@ def normalize_lines(lines):
         raise ServiceError('A trade must have between 1 and 1,000 line items.')
     result = [];seen = set();certificates = set()
     for line in lines:
-        _keys(line, ('id', 'identity', 'quantity', 'unit_intake_cents', 'included', 'reviewed'), 'trade line')
+        _keys(line, ('id', 'identity', 'quantity', 'unit_intake_cents', 'included', 'reviewed', 'source_line_key'), 'trade line')
         identity = line.get('identity')
         _keys(identity, IDENTITY_LIMITS, 'card identity')
         normalized = {key: _text(identity.get(key, ''), key.replace('_', ' ').title(), limit,
@@ -88,6 +91,10 @@ def normalize_lines(lines):
         result.append({'id': ident, 'identity': normalized, 'quantity': quantity,
                        'unit_intake_cents': price, 'included': included, 'reviewed': reviewed,
                        'line_total_cents': total})
+        if 'source_line_key' in line:
+            if not isinstance(line['source_line_key'], str) or not re.fullmatch(r'[a-f0-9]{64}', line['source_line_key']):
+                raise ServiceError('Original source-line binding is invalid.')
+            result[-1]['source_line_key'] = line['source_line_key']
     if sum(line['line_total_cents'] for line in result if line['included']) > MAX_CENTS:
         raise ServiceError('The included intake value exceeds the supported trade limit.')
     return result
@@ -138,15 +145,15 @@ class Trades:
         rows = db.execute('SELECT * FROM ss_trade_receipt_lines WHERE tenant_id=%s AND trade_id=%s ORDER BY ordinal,id', (tenant, ident)).fetchall()
         return [{'id': str(row['id']), 'identity': row['identity'], 'quantity': row['quantity'],
                  'unit_intake_cents': row['unit_intake_cents'], 'included': row['included'], 'reviewed': row['reviewed'],
-                 'line_total_cents': row['line_total_cents']} for row in rows]
+                 'line_total_cents': row['line_total_cents']} | ({'source_line_key': row['source_line_key']} if row['source_line_key'] else {}) for row in rows]
 
     @staticmethod
     def _write_lines(db, tenant, ident, lines):
         db.execute('DELETE FROM ss_trade_receipt_lines WHERE tenant_id=%s AND trade_id=%s', (tenant, ident))
         for index, line in enumerate(lines):
-            db.execute('''INSERT INTO ss_trade_receipt_lines(id,tenant_id,trade_id,ordinal,identity,quantity,unit_intake_cents,included,reviewed,line_total_cents)
-                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                       (line['id'], tenant, ident, index, Jsonb(line['identity']), line['quantity'], line['unit_intake_cents'], line['included'], line['reviewed'], line['line_total_cents']))
+            db.execute('''INSERT INTO ss_trade_receipt_lines(id,tenant_id,trade_id,ordinal,identity,quantity,unit_intake_cents,included,reviewed,line_total_cents,source_line_key)
+                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                       (line['id'], tenant, ident, index, Jsonb(line['identity']), line['quantity'], line['unit_intake_cents'], line['included'], line['reviewed'], line['line_total_cents'], line.get('source_line_key')))
 
     @staticmethod
     def _materialize(lines):
@@ -163,7 +170,8 @@ class Trades:
 
     def create(self, actor, data):
         require_role(actor, *BUY_ROLES)
-        _keys(data, ('request_key', 'customer_id', 'title', 'source_reference', 'replace_voided_source', 'lines', 'offer_terms'), 'trade')
+        _keys(data, ('request_key', 'customer_id', 'title', 'source_reference', 'replace_voided_source', 'lines', 'offer_terms',
+                     'physical_intake_id', 'physical_manifest_hash'), 'trade')
         customer = _uuid(data.get('customer_id'), 'Customer ID')
         title = _text(data.get('title', 'Customer trade'), 'Trade title', 150, required=True)
         source = _text(data.get('source_reference', ''), 'Source receipt reference', 200)
@@ -173,6 +181,8 @@ class Trades:
         if change:require_role(actor, *ACCEPT_ROLES)
         intent = {'op': 'trade_create', 'customer_id': str(customer), 'title': title, 'source_reference': source,
                   'lines': lines, 'offer_terms': change, 'replace_voided_source': replacement}
+        binding = self._binding(data)
+        if binding:intent.update(binding)
         creation_hash = evidence_hash({key: value for key, value in intent.items() if key != 'replace_voided_source'})
         tenant = actor['tenant_id'];key = data.get('request_key')
         with self.database.transaction() as db:
@@ -195,6 +205,9 @@ class Trades:
                       'cash_override_cents': None, 'credit_override_cents': None, 'override_reason': ''}
             if change:values.update(change)
             lines = self._materialize(lines);totals = self._calculate(lines, values);ident = uuid.uuid4()
+            if binding:
+                claim = claim_for_trade(db, tenant, binding['physical_intake_id'], binding['physical_manifest_hash'], lines)
+                if claim['state'] != 'open':raise IntakeError('This physical delivery has already been accepted.', physical_intake_id=claim['id'])
             db.execute('''INSERT INTO ss_trade_receipts(id,tenant_id,customer_id,title,source_reference,creation_hash,
                           cash_bps,credit_bps,cash_override_cents,credit_override_cents,override_reason,
                           intake_total_cents,cash_offer_cents,credit_offer_cents,lines_hash,created_by,updated_by)
@@ -204,6 +217,9 @@ class Trades:
                         totals['intake_total_cents'], totals['cash_offer_cents'], totals['credit_offer_cents'],
                         evidence_hash(lines), actor['staff_id'], actor['staff_id']))
             self._write_lines(db, tenant, ident, lines)
+            if binding:
+                db.execute('UPDATE ss_trade_receipts SET physical_intake_id=%s,physical_manifest_hash=%s WHERE tenant_id=%s AND id=%s',
+                           (binding['physical_intake_id'], binding['physical_manifest_hash'], tenant, ident))
             audit(db, tenant, actor['staff_id'], 'trade-draft-created', ident, {'line_count': len(lines)})
             return self.ledger._finish(db, tenant, key, hashed, {'trade_id': str(ident), 'version': 0, 'state': 'draft', 'source_deduplicated': False}, operation='trade')
 
@@ -255,7 +271,7 @@ class Trades:
 
     def update(self, actor, trade_id, data):
         require_role(actor, *BUY_ROLES);ident = _uuid(trade_id, 'Trade ID');tenant = actor['tenant_id']
-        _keys(data, ('request_key', 'version', 'customer_id', 'title', 'lines', 'offer_terms'), 'trade update')
+        _keys(data, ('request_key', 'version', 'customer_id', 'title', 'lines', 'offer_terms', 'physical_intake_id', 'physical_manifest_hash'), 'trade update')
         version = _integer(data.get('version'), 'Trade version', 0, 2**63-1)
         customer = _uuid(data['customer_id'], 'Customer ID') if 'customer_id' in data else None
         title = _text(data['title'], 'Trade title', 150, required=True) if 'title' in data else None
@@ -264,6 +280,8 @@ class Trades:
         if change:require_role(actor, *ACCEPT_ROLES)
         intent = {'op': 'trade_update', 'trade_id': str(ident), 'version': version, 'customer_id': str(customer) if customer else None,
                   'title': title, 'lines': lines, 'offer_terms': change};key = data.get('request_key')
+        binding = self._binding(data)
+        if binding:intent.update(binding)
         with self.database.transaction() as db:
             self._staff(db, actor, BUY_ROLES)
             hashed, old = self.ledger._begin_request(db, tenant, key, intent)
@@ -281,6 +299,12 @@ class Trades:
             values = self._offer_fields(row)
             if change:values.update(change)
             lines = self._materialize(lines) if lines is not None else self._lines(db, tenant, ident)
+            if binding and row['physical_intake_id'] and (str(row['physical_intake_id']) != binding['physical_intake_id'] or row['physical_manifest_hash'] != binding['physical_manifest_hash']):
+                raise IntakeError('A draft cannot be rebound to a different physical delivery.', physical_intake_id=row['physical_intake_id'])
+            active_binding = binding or ({'physical_intake_id': row['physical_intake_id'], 'physical_manifest_hash': row['physical_manifest_hash']} if row['physical_intake_id'] else None)
+            if active_binding:
+                claim = claim_for_trade(db, tenant, active_binding['physical_intake_id'], active_binding['physical_manifest_hash'], lines)
+                if claim['state'] != 'open':raise IntakeError('This physical delivery has already been accepted.', physical_intake_id=claim['id'])
             totals = self._calculate(lines, values)
             db.execute('''UPDATE ss_trade_receipts SET customer_id=%s,title=%s,cash_bps=%s,credit_bps=%s,
                           cash_override_cents=%s,credit_override_cents=%s,override_reason=%s,intake_total_cents=%s,
@@ -290,12 +314,15 @@ class Trades:
                         values['credit_override_cents'], values['override_reason'], totals['intake_total_cents'],
                         totals['cash_offer_cents'], totals['credit_offer_cents'], evidence_hash(lines), actor['staff_id'], tenant, ident))
             self._write_lines(db, tenant, ident, lines)
+            if binding:
+                db.execute('UPDATE ss_trade_receipts SET physical_intake_id=%s,physical_manifest_hash=%s WHERE tenant_id=%s AND id=%s',
+                           (binding['physical_intake_id'], binding['physical_manifest_hash'], tenant, ident))
             audit(db, tenant, actor['staff_id'], 'trade-draft-updated', ident, {'version': version + 1, 'line_count': len(lines)})
             return self.ledger._finish(db, tenant, key, hashed, {'trade_id': str(ident), 'state': 'draft', 'version': version + 1}, operation='trade')
 
     def accept(self, actor, trade_id, data):
         require_role(actor, *ACCEPT_ROLES);ident = _uuid(trade_id, 'Trade ID');tenant = actor['tenant_id']
-        _keys(data, ('request_key', 'version', 'customer_id', 'offer_type', 'expected_offer_cents', 'customer_agreed', 'items_received'), 'trade acceptance')
+        _keys(data, ('request_key', 'version', 'customer_id', 'offer_type', 'expected_offer_cents', 'customer_agreed', 'items_received', 'claim_reviewed'), 'trade acceptance')
         version = _integer(data.get('version'), 'Trade version', 0, 2**63-1)
         customer_id = _uuid(data.get('customer_id'), 'Customer ID')
         offer = data.get('offer_type')
@@ -305,6 +332,9 @@ class Trades:
             raise ServiceError('Confirm the customer agreed and the store received the included items before acceptance.')
         intent = {'op': 'trade_accept', 'trade_id': str(ident), 'version': version, 'customer_id': str(customer_id),
                   'offer_type': offer, 'expected_offer_cents': expected, 'customer_agreed': True, 'items_received': True}
+        if 'claim_reviewed' in data:
+            if type(data['claim_reviewed']) is not bool:raise ServiceError('Original physical claim review must be an explicit boolean.')
+            intent['claim_reviewed'] = data['claim_reviewed']
         key = data.get('request_key')
         with self.database.transaction() as db:
             self._staff(db, actor, ACCEPT_ROLES)
@@ -324,6 +354,12 @@ class Trades:
             if row['state'] != 'draft':raise ServiceError('A voided trade cannot be accepted.', 409)
             if row['version'] != version:raise ServiceError('The trade changed. Refresh before accepting.', 409)
             lines = self._lines(db, tenant, ident)
+            claim = claim_for_trade(db, tenant, row['physical_intake_id'], row['physical_manifest_hash'], lines, lock=True)
+            if claim['state'] != 'open':raise IntakeError('This physical delivery has already been accepted. Recover its original trade instead.', physical_intake_id=claim['id'])
+            if data.get('claim_reviewed') is not True:
+                raise IntakeError('Review the full original physical claim, selected quantities and excluded items. This claim supports one acceptance only.',
+                                  428, code='PHYSICAL_INTAKE_REVIEW_REQUIRED', physical_intake_id=claim['id'])
+            current_authority(db, actor, fresh_mfa=True)
             # Revalidate stored line facts and derive money from the locked receipt.
             checked = normalize_lines([{key: value for key, value in line.items() if key != 'line_total_cents'} for line in lines])
             if checked != lines or evidence_hash(lines) != row['lines_hash']:
@@ -335,6 +371,8 @@ class Trades:
             value = totals[offer + '_offer_cents']
             if value <= 0 or value != expected:raise ServiceError('The agreed offer changed. Refresh the trade before accepting.', 409)
             at = db.execute('SELECT now() AS at').fetchone()['at']
+            db.execute("UPDATE ss_intake_claims SET state='consumed',version=1,bound_trade_id=%s,consumed_at=%s,consumed_by=%s WHERE tenant_id=%s AND id=%s",
+                       (ident, at, actor['staff_id'], tenant, claim['id']))
             entry = None;balance = customer['balance_cents']
             if offer == 'credit':
                 source = 'trade:' + str(ident)
@@ -346,7 +384,7 @@ class Trades:
                               VALUES (%s,%s,%s,%s,%s,'trade_credit',%s,%s,'Accepted hosted trade receipt',%s)''',
                            (entry, tenant, customer['id'], value, balance, source, str(ident), actor['staff_id']))
                 record_credit_lot(db, tenant, customer['id'], entry, origin_code='trade_unreviewed')
-            receipt = {'trade_schema_version': 1, 'trade_id': str(ident), 'version_before_acceptance': version, 'receipt_version': version + 1,
+            receipt = {'trade_schema_version': 2, 'trade_id': str(ident), 'version_before_acceptance': version, 'receipt_version': version + 1,
                        'customer': {'id': str(customer['id']), 'display_name': customer['display_name']},
                        'title': row['title'], 'source_reference': row['source_reference'], 'currency': 'USD',
                        'lines': [line for line in lines if line['included']], 'lines_hash': row['lines_hash'],
@@ -358,6 +396,16 @@ class Trades:
                        'inventory_received': False, 'cash_payment_executed': False,
                        'credit_policy_state': 'unreviewed' if entry else 'not_applicable',
                        'credit_entry_id': str(entry) if entry else None}
+            receipt['physical_intake'] = {'id': str(claim['id']), 'manifest_hash': claim['manifest_hash'], 'semantic_hash': claim['semantic_hash'],
+                                          'selected_quantities': {line['source_line_key']: sum(other['quantity'] for other in lines if other['included'] and other['source_line_key']==line['source_line_key'])
+                                                                  for line in lines if line['included']},
+                                          'all_original_rows_claimed': True, 'excluded_rows_reusable': False, 'claim_reviewed': True}
+            receipt['physical_intake_id'] = str(claim['id'])
+            receipt['physical_manifest_hash'] = claim['manifest_hash']
+            original_quantities = {line['source_line_key']: line['quantity'] for line in source_lines(claim['source_manifest'])}
+            receipt['physical_intake']['original_quantities'] = original_quantities
+            receipt['physical_intake']['excluded_quantities'] = {key: quantity - receipt['physical_intake']['selected_quantities'].get(key, 0)
+                                                                 for key, quantity in original_quantities.items()}
             hashed_receipt = evidence_hash(receipt)
             result = {'trade_id': str(ident), 'state': 'accepted_' + offer, 'version': version + 1,
                       'accepted_amount_cents': value, 'offer_type': offer, 'receipt_hash': hashed_receipt,
@@ -372,6 +420,14 @@ class Trades:
                   'credit_entry_id': str(entry) if entry else None, 'receipt_hash': hashed_receipt})
             return self.ledger._finish(db, tenant, key, hashed, result, operation='trade')
 
+    @staticmethod
+    def _binding(data):
+        if 'physical_intake_id' not in data and 'physical_manifest_hash' not in data:return None
+        ident = str(_uuid(data.get('physical_intake_id'), 'Physical intake ID'))
+        hashed = data.get('physical_manifest_hash')
+        if not isinstance(hashed, str) or not re.fullmatch(r'[a-f0-9]{64}', hashed):raise ServiceError('Original physical manifest hash is invalid.')
+        return {'physical_intake_id': ident, 'physical_manifest_hash': hashed}
+
     def void(self, actor, trade_id, data):
         require_role(actor, *BUY_ROLES);ident = _uuid(trade_id, 'Trade ID');tenant = actor['tenant_id']
         _keys(data, ('request_key', 'version', 'reason'), 'trade void')
@@ -380,6 +436,7 @@ class Trades:
         intent = {'op': 'trade_void', 'trade_id': str(ident), 'version': version, 'reason': reason}
         with self.database.transaction() as db:
             self._staff(db, actor, BUY_ROLES)
+            current_authority(db, actor, allowed_roles=BUY_ROLES)
             hashed, old = self.ledger._begin_request(db, tenant, key, intent)
             if old:return old
             row = db.execute('SELECT * FROM ss_trade_receipts WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant, ident)).fetchone()

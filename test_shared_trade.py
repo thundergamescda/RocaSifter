@@ -16,15 +16,63 @@ from station_shared_trade import fingerprint,locked,lines_for
 from station_store import StationError
 from test_station_cloud import SharedFixtureTransport,response
 from hosted.trades import normalize_lines,calculate_offer
+from intake_manifest import validate_manifest,manifest_digest,semantic_fingerprint,source_lines
 
 
 class TradeFixtureTransport(SharedFixtureTransport):
     """A strict local fixture; real hosted transactions have separate PG tests."""
     def __init__(self):
         super().__init__();self.lock=threading.RLock();self.trades={};self.drop_after=set();self.issuances=0
+        self.claims={};self.mfa_fresh=True
+
+    def claim_request(self,method,path,headers,body):
+        if self.offline:raise requests.ConnectionError('Fictional outage')
+        with self.lock:
+            self.calls.append((method,path));actor=self.sessions.get(headers.get('Authorization','').removeprefix('Bearer '))
+            if not actor:return response(401,{'error':'Sign in'})
+            if actor['role'] not in ('owner','manager'):return response(403,{'error':'Current manager required'})
+            store=actor['store']
+            if path.startswith('/api/intake-claims/requests/'):
+                saved=self.requests.get((store,path.rsplit('/',1)[1]));return response(200,{'found':bool(saved),'result':saved[1] if saved else None})
+            if method=='GET':
+                claim=self.claims.get((store,path.rsplit('/',1)[1]));return response(200,claim) if claim else response(404,{'error':'Intake missing'})
+            key=(store,body['request_key'])
+            if key in self.requests:
+                previous,result=self.requests[key];return response(200,result) if previous==body else response(409,{'error':'Changed intake request'})
+            manifest=validate_manifest(body['source_manifest']);hashed=manifest_digest(manifest);semantic=semantic_fingerprint(manifest)
+            reference=body['physical_reference'].strip().casefold();additional=body.get('additional_delivery_of')
+            matches=[value for (tenant,_),value in self.claims.items() if tenant==store and not value['additional_delivery_of'] and (value['semantic_hash']==semantic or value['source_manifest'].get('raw_csv_sha256')==manifest.get('raw_csv_sha256') and manifest.get('raw_csv_sha256'))]
+            same_ref=next((value for (tenant,_),value in self.claims.items() if tenant==store and value['physical_reference']==reference),None)
+            if same_ref:
+                if same_ref['manifest_hash']!=hashed or same_ref['additional_delivery_of']!=additional:return response(409,{'error':'Physical reference conflict','code':'PHYSICAL_INTAKE_CONFLICT','physical_intake_id':same_ref['physical_intake_id']})
+                result=same_ref
+            elif additional:
+                if not self.mfa_fresh:return response(403,{'error':'Enroll MFA and sign in with a fresh proof','code':'MFA_STEP_UP_REQUIRED'})
+                prior=self.claims.get((store,additional))
+                if not prior or prior['semantic_hash']!=semantic:return response(409,{'error':'Separate delivery must link the original matching source','code':'PHYSICAL_INTAKE_CONFLICT'})
+                result=None
+            elif matches:
+                if len(matches)!=1 or matches[0]['manifest_hash']!=hashed:return response(409,{'error':'Recover the existing central intake','code':'PHYSICAL_INTAKE_CONFLICT','physical_intake_id':matches[0]['physical_intake_id']})
+                result=matches[0]
+            else:result=None
+            if result is None:
+                ident=str(uuid.uuid4());result={'physical_intake_id':ident,'version':0,'state':'open','physical_reference':reference,
+                    'manifest_hash':hashed,'semantic_hash':semantic,'source_manifest':copy.deepcopy(manifest),'bound_trade_id':None,
+                    'additional_delivery_of':additional,'policy':{'one_operation_per_claim':True,'new_acceptance_requires_fresh_mfa':True,
+                    'excluded_rows_reusable':False,'physical_identity_proven_by_hash':False}}
+                self.claims[(store,ident)]=result
+            self.requests[key]=(copy.deepcopy(body),copy.deepcopy(result))
+            if 'claim' in self.drop_after:self.drop_after.remove('claim');raise requests.Timeout('Fictional claim response lost')
+            return response(200,result)
 
     def request(self,method,url,*,headers,json=None,**options):
         path=urlsplit(url).path
+        if path=='/api/me' and method=='GET':
+            result=super().request(method,url,headers=headers,json=json,**options)
+            if result.status_code==200:
+                data=result.json();data['capabilities']={'physical_intake_claims':1,'trade_claim_required':True,'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False};return response(200,data)
+            return result
+        if path.startswith('/api/intake-claims'):return self.claim_request(method,path,headers,json)
         if not path.startswith('/api/trades'):
             result=super().request(method,url,headers=headers,json=json,**options)
             if path=='/api/auth/login' and json['email'].startswith('buyer') and result.status_code==200:
@@ -54,17 +102,24 @@ class TradeFixtureTransport(SharedFixtureTransport):
                     ident=str(uuid.uuid4());lines=normalize_lines(json['lines']);totals=calculate_offer(lines,3500,5000)
                     trade={'id':ident,'customer_id':json['customer_id'],'title':json['title'],'source_reference':json['source_reference'],
                            'state':'draft','version':0,'lines':lines,'lines_hash':fingerprint(lines),'cash_bps':3500,'credit_bps':5000,
-                           'cash_override_cents':None,'credit_override_cents':None,'override_reason':'',**totals}
+                           'cash_override_cents':None,'credit_override_cents':None,'override_reason':'',
+                           **{field:json[field] for field in ('physical_intake_id','physical_manifest_hash') if field in json},**totals}
                     self.trades[(store,ident)]=trade;result={'trade_id':ident,'state':'draft','version':0,'source_deduplicated':False}
             elif not trade:return response(404,{'error':'Trade missing'})
             elif operation=='accept':
                 if actor['role'] not in ('manager','owner'):return response(403,{'error':'Manager required'})
                 if trade['state']=='accepted_credit':result=trade['acceptance_result']
                 else:
+                    claim=self.claims.get((store,trade.get('physical_intake_id')))
+                    if not claim:return response(428,{'error':'Create or recover the central physical intake','code':'PHYSICAL_INTAKE_CLAIM_REQUIRED'})
+                    if not self.mfa_fresh:return response(403,{'error':'Enroll MFA and sign in with a fresh proof','code':'MFA_STEP_UP_REQUIRED'})
+                    if claim['state']!='open':return response(409,{'error':'Physical intake already consumed','code':'PHYSICAL_INTAKE_CONFLICT','physical_intake_id':claim['physical_intake_id']})
+                    if json.get('claim_reviewed') is not True:return response(428,{'error':'Review the physical intake claim','code':'PHYSICAL_INTAKE_REVIEW_REQUIRED'})
                     if trade['state']!='draft' or trade['version']!=json['version']:return response(409,{'error':'Trade changed'})
                     if json['customer_agreed'] is not True or json['items_received'] is not True or json['customer_id']!=trade['customer_id'] or json['expected_offer_cents']!=trade['credit_offer_cents']:return response(409,{'error':'Agreement changed'})
                     amount=trade['credit_offer_cents'];customer=self.customers[trade['customer_id']];customer['balance_cents']+=amount;customer['available_cents']+=amount;customer['version']+=1;self.issuances+=1
                     entry=str(uuid.uuid4());evidence={'trade_schema_version':1,'trade_id':ident,'version_before_acceptance':trade['version'],
+                        'physical_intake_id':trade['physical_intake_id'],'physical_manifest_hash':trade['physical_manifest_hash'],
                         'receipt_version':trade['version']+1,'customer':{'id':customer['id'],'display_name':customer['display_name']},
                         'title':trade['title'],'source_reference':trade['source_reference'],'currency':'USD','lines':[line for line in trade['lines'] if line['included']],
                         'lines_hash':trade['lines_hash'],'intake_total_cents':trade['intake_total_cents'],'cash_offer_cents':trade['cash_offer_cents'],
@@ -75,6 +130,7 @@ class TradeFixtureTransport(SharedFixtureTransport):
                         'receipt_hash':fingerprint(evidence),'credit_entry_id':entry,'cash_payment_executed':False,'inventory_received':False,
                         'credit_policy_state':'unreviewed','checkout_eligible':False,'balance_after_cents':customer['balance_cents']}
                     trade.update(state='accepted_credit',version=trade['version']+1,accepted_amount_cents=amount,receipt_hash=result['receipt_hash'],accepted_receipt=evidence,acceptance_result=result)
+                    claim.update(state='consumed',bound_trade_id=ident,version=claim['version']+1)
             elif operation=='void':
                 if trade['state']!='draft' or trade['version']!=json['version']:return response(409,{'error':'Cannot void current state'})
                 trade.update(state='voided',version=trade['version']+1);result={'trade_id':ident,'state':'voided','version':trade['version']}
@@ -105,10 +161,12 @@ class SharedTradeTests(unittest.TestCase):
 
     def prepare(self,receipt=None):
         receipt=receipt or self.receipt()
+        if not receipt.get('intake_claim'):
+            receipt=self.service.intake_claims.prepare(receipt['id'],{'revision':receipt['revision'],'physicalReference':'TAG-'+receipt['id'],'physicalDeliveryVerified':True},self.session['sessionId'])['receipt']
         return self.service.shared_trades.prepare(receipt['id'],{'revision':receipt['revision'],'customerId':self.customer},self.session['sessionId'])
 
     def accept(self,prepared):
-        return self.service.shared_trades.accept(prepared['receipt']['id'],{'confirmationHash':prepared['confirmationHash'],'customerAgreed':True,'itemsReceived':True},self.session['sessionId'])
+        return self.service.shared_trades.accept(prepared['receipt']['id'],{'confirmationHash':prepared['confirmationHash'],'customerAgreed':True,'itemsReceived':True,'claimReviewed':True},self.session['sessionId'])
 
     def assert_no_local_credit(self):
         with self.service.store.db() as db:
@@ -314,6 +372,7 @@ class SharedTradeTests(unittest.TestCase):
             other=self.restart();other.store.put('preferences',other.preferences()|{'pricingEnabled':False})
             session=other.cloud.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
             copied=copy.deepcopy(original);copied.pop('shared_trade',None);copied['purchase']=None;other.store.save_receipt(copied)
+            copied=other.intake_claims.prepare(copied['id'],{'revision':copied['revision'],'physicalIntakeId':first['receipt']['intake_claim']['physical_intake_id'],'physicalDeliveryVerified':True},session['sessionId'])['receipt']
             bound=other.shared_trades.prepare(copied['id'],{'revision':copied['revision'],'customerId':self.customer},session['sessionId'])
             self.assertEqual(bound['receipt']['shared_trade']['source_reference'],source)
             self.assertEqual(bound['receipt']['shared_trade']['trade_id'],first['trade']['id']);self.assertEqual(self.remote.issuances,1)
@@ -322,8 +381,10 @@ class SharedTradeTests(unittest.TestCase):
         with patch.object(core,'SETTINGS_FILE',str(self.root/'collision-desktop'/'settings.json')):
             other=self.restart();other.store.put('preferences',other.preferences()|{'pricingEnabled':False})
             session=other.cloud.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
-            collision=copy.deepcopy(original);collision['source_hash']='different-fictional-source';collision['cards'][0]['row_id']=uuid.uuid4().hex
+            collision=other.import_csv('Name,Game,Price,Quantity\nDifferent original stack,Riftbound,8.13,2\n','different.csv','trade')['receipt']
+            collision['id']=original['id'];collision['cards'][0]['reviewed']=True
             other.store.save_receipt(collision)
+            collision=other.intake_claims.prepare(collision['id'],{'revision':collision['revision'],'physicalReference':'TAG-DIFFERENT-STACK','physicalDeliveryVerified':True},session['sessionId'])['receipt']
             result=other.shared_trades.prepare(collision['id'],{'revision':collision['revision'],'customerId':self.customer},session['sessionId'])
             self.assertNotEqual(result['receipt']['shared_trade']['source_reference'],source)
             self.assertNotEqual(result['trade']['id'],first['trade']['id']);self.assertEqual(self.remote.issuances,1)

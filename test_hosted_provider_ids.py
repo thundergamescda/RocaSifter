@@ -32,6 +32,8 @@ class SquareOpaqueIDTests(unittest.TestCase):
     def setUp(self):
         self.db=MagicMock();self.cursor=self.db.transaction.return_value.__enter__.return_value
         self.transport=Mock();self.tenant=uuid.uuid4()
+        self.transport.get.return_value.status_code=200
+        self.transport.post.return_value.status_code=200
         self.square=Square(self.db,{'PUBLIC_BASE_URL':'https://fixture.invalid','SQUARE_ENVIRONMENT':'sandbox',
                                    'APP_ENCRYPTION_KEYS':'fictional-provider-id-encryption-key-1234',
                                    'SQUARE_APPLICATION_ID':'fixture-app','SQUARE_APPLICATION_SECRET':'fixture-secret',

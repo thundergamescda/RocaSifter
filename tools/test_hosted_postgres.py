@@ -20,15 +20,14 @@ from urllib.parse import unquote, urlsplit
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-ALLOWED=('hosted.integration','test_hosted_settlement_postgres',
-         'test_hosted_reconciliation_postgres','test_hosted_trades_postgres',
-         'test_hosted_mfa_postgres','test_hosted_privacy_postgres')
+ALLOWED=('hosted.integration',)+tuple(sorted(p.stem for p in ROOT.glob('test_*_postgres.py')))
+EVIDENCE_ROOT=ROOT/'Testing'/'oauth-receiving'
 
 
 def fingerprints():
-    paths=[p for p in (ROOT/'hosted').rglob('*') if p.is_file() and p.suffix in ('.py','.sql','.js','.html','.css')]
+    paths=[p for p in (ROOT/'hosted').rglob('*') if p.is_file() and p.suffix in ('.py','.sql','.js','.html','.css','.png','.ico','.svg')]
     paths.extend(p for p in ROOT.glob('test_hosted*.py') if p.is_file())
-    paths.extend(ROOT/name for name in ('requirements-hosted.txt','render.yaml','tools/test_hosted_postgres.py'))
+    paths.extend(ROOT/name for name in ('intake_manifest.py','requirements-hosted.txt','render.yaml','tools/test_hosted_postgres.py'))
     return {p.relative_to(ROOT).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(set(paths)) if p.exists()}
 
 
@@ -43,6 +42,13 @@ def scrub(value):
         except ValueError:
             pass
     return value
+
+
+def write_log(path, log):
+    payload=log.encode('utf-8')
+    path.write_bytes(payload)
+    return {'log_sha256':hashlib.sha256(payload).hexdigest(),
+            'log_hash_convention':'SHA-256 of delivered UTF-8 log bytes, LF line endings, no BOM'}
 
 
 def test_ids(suite):
@@ -100,7 +106,7 @@ def main():
     if len(args.modules)!=len(set(args.modules)):
         parser.error('Select each acceptance module once.')
     started=datetime.now(timezone.utc)
-    output=ROOT/'Testing'/'next-security'/'postgres-runs'/started.strftime('%Y%m%dT%H%M%S%fZ')
+    output=EVIDENCE_ROOT/'postgres-runs'/started.strftime('%Y%m%dT%H%M%S%fZ')
     output.mkdir(parents=True)
     initial=fingerprints()
     buffer=io.StringIO()
@@ -127,7 +133,7 @@ def main():
     unusual=bool(result and (result.expectedFailures or result.unexpectedSuccesses))
     started_ids=result.started_ids if result else []
     passed_ids=[case['id'] for case in result.results if case['status']=='passed'] if result else []
-    coverage_complete=bool(expected and result and result.testsRun==len(expected)
+    coverage_complete=bool(expected and len(set(expected))==len(expected) and result and result.testsRun==len(expected)
                            and Counter(started_ids)==Counter(expected)
                            and Counter(passed_ids)==Counter(expected))
     passed=bool(configured and result and result.wasSuccessful() and coverage_complete
@@ -146,10 +152,10 @@ def main():
              'source_sha256_at_start':initial,'source_sha256':final,
              'source_snapshot_stable':not changed,'changed_during_run':changed,
              'live_square_contacted':False,'production_migration_run':False,
-             'log_sha256':hashlib.sha256(log.encode()).hexdigest(),'passed':passed,'exit_code':exit_code}
-    (output/'postgres-tests.log').write_text(log,encoding='utf-8')
+             **write_log(output/'postgres-tests.log',log),
+             'passed':passed,'exit_code':exit_code}
     (output/'postgres-summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
-    latest=ROOT/'Testing'/'next-security'/'postgres-latest.json'
+    latest=EVIDENCE_ROOT/'postgres-latest.json'
     latest.write_text(json.dumps(summary|{'run_directory':str(output)},indent=2),encoding='utf-8')
     print(log[-4500:])
     print(f'PostgreSQL acceptance: {summary["tests_run"]} run, {skipped} skipped, {failures} failed, {errors} errors; stable={not changed}; passed={passed}')

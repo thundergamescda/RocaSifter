@@ -110,7 +110,7 @@ def make_handler(core):
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css'):
+                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css','/intake-claim.js','/intake-claim.css'):
                     filename=Path(core.APP_DIR)/path[1:]
                 elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
@@ -130,7 +130,7 @@ def make_handler(core):
                     self.send_header('Content-Disposition',f'attachment; filename="{filename.name}"')
                 self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id},exc.status)
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -179,7 +179,7 @@ def make_handler(core):
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
                     return self.dispatch_post(data)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id},exc.status)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -214,6 +214,10 @@ def make_handler(core):
                 if path=='/api/cloud/customer':return self.send_json(service.cloud.create_customer(data,expected_session_id=expected))
                 if path=='/api/cloud/adjust':return self.send_json(service.cloud.adjust(data.get('customerId'),data,expected_session_id=expected))
                 if path=='/api/cloud/recover':return self.send_json(service.cloud.recover(data.get('requestKey'),retry=data.get('retry') is True,expected_session_id=expected))
+                if path=='/api/cloud/intake-prepare':return self.send_json(service.intake_claims.prepare(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/intake-status':return self.send_json(service.intake_claims.status(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/intake-select':return self.send_json(service.intake_claims.select_existing(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/intake-additional':return self.send_json(service.intake_claims.additional(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/trade-prepare':return self.send_json(service.shared_trades.prepare(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/trade-status':return self.send_json(service.shared_trades.status(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/trade-accept':return self.send_json(service.shared_trades.accept(str(data.get('receiptId','')),data,expected))

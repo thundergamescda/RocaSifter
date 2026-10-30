@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 import sys
+import uuid
 from unittest.mock import Mock
 from cryptography.fernet import Fernet
 from playwright.sync_api import sync_playwright,expect,Error as BrowserError
@@ -19,10 +20,11 @@ from hosted.app import create_app
 from hosted.privacy import Limits
 from hosted.privacy_test_fixtures import Database
 from test_hosted_privacy import decode
+from intake_manifest import capture_manifest
 
-REPORT=ROOT/'Testing'/'next-security'/'privacy-export'
-SOURCES=('hosted/privacy.py','hosted/privacy_test_fixtures.py','hosted/app.py','hosted/auth.py','hosted/mfa.py',
-         'hosted/schema.sql','hosted/static/privacy.js','hosted/static/privacy.css','hosted/templates/privacy.html',
+REPORT=ROOT/'Testing'/'oauth-receiving'/'privacy-export'
+SOURCES=('hosted/privacy.py','hosted/privacy_test_fixtures.py','hosted/app.py','hosted/auth.py','hosted/mfa.py','intake_manifest.py',
+         'hosted/schema.sql','hosted/static/privacy.js','hosted/static/privacy.css','hosted/static/brand-icon.png','hosted/templates/privacy.html',
          'hosted/static/portal.js','tools/user_acceptance_privacy.py')
 
 
@@ -31,9 +33,15 @@ def fingerprints():return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdige
 
 def run():
     REPORT.mkdir(parents=True,exist_ok=True)
-    before=fingerprints();results=[];downloads=[];errors=[];external=[]
+    before=fingerprints();results=[];downloads=[];errors=[];external=[];failed_assets=[]
     db=Database(entries=275)
     db.rows['idempotency_records']=[{'key':'fictional-request','result':{'customer_id':str(db.customer),'access_token':'FICTIONAL-SECRET-NEVER-EXPORT'}}]
+    original=capture_manifest('manual',[
+        {'identity':{'name':'Fictional selected card','game':'pokemon','kind':'card'},'quantity':2},
+        {'identity':{'name':'Fictional excluded card','game':'pokemon','kind':'card'},'quantity':1}])
+    claim_id=uuid.uuid4()
+    db.rows['physical_intakes']=[{'id':claim_id,'source_manifest':original,'manifest_hash':original['sha256'],'state':'consumed'}]
+    db.rows['physical_intake_requests']=[{'request_key':'fictional-browser-intake','claim_id':claim_id,'result':{'source_manifest':original}}]
     server=make_server('127.0.0.1',0,lambda *_:[],threaded=True)
     origin='http://127.0.0.1:'+str(server.server_port)
     app=create_app({'TESTING':True,'PUBLIC_BASE_URL':origin,'APP_ENCRYPTION_KEYS':Fernet.generate_key().decode()},database=db)
@@ -55,8 +63,13 @@ def run():
             context=browser.new_context(accept_downloads=True,viewport={'width':1440,'height':1100})
             context.add_cookies([{'name':'ss_session','value':'fictional-cookie-first','url':origin}])
             page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
+            page.on('response',lambda response:failed_assets.append({'url':response.url,'status':response.status})
+                    if response.url.startswith(origin+'/static/') and response.status>=400 else None)
             page.on('download',lambda download:downloads.append(download))
-            context.on('request',lambda req:external.append(req.url) if not req.url.startswith(origin+'/') else None)
+            def restrict_browser(route):
+                if route.request.url.startswith(origin+'/'):route.continue_()
+                else:external.append(route.request.url);route.abort()
+            context.route('**/*',restrict_browser)
 
             def open_form():
                 page.goto(origin+'/privacy');expect(page.locator('#privacyWorkspace')).to_be_visible()
@@ -80,13 +93,16 @@ def run():
             assert download.failure() is None
             manifest,records,footer=decode(target.read_bytes().splitlines(keepends=True))
             assert len(records['credit_entries'])==275 and footer['record_counts']['credit_entries']==275
+            assert manifest['version']==footer['version']==2 and len(footer['record_counts'])==18
+            assert records['physical_intakes'][0]['source_manifest']==original
+            assert len(records['physical_intake_requests'])==1
             assert b'FICTIONAL-SECRET-NEVER-EXPORT' not in target.read_bytes()
             assert verified_count()==1
             expect(page.locator('#privacyProgress')).to_contain_text('Verified hosted copy prepared')
             page.screenshot(path=str(REPORT/'privacy-verified-download.png'),full_page=True)
             outcome['download']={'bytes':target.stat().st_size,'sha256':hashlib.sha256(target.read_bytes()).hexdigest(),
                                  'credit_entries':275,'record_counts':footer['record_counts'],'footer_hash_verified':True}
-            results.append('PASS actual Chrome NDJSON download contains all275 entries; counts/hash verified; credential-like value excluded; audit confirms verification, not customer delivery.')
+            results.append('PASS actual Chrome v2 download verifies18 collection counts/hash, all275 entries and original selected/excluded intake evidence; credential-like value excluded; audit confirms verification, not customer delivery.')
 
             pattern='**/api/privacy/customers/*/export'
             for mode in ('truncated','hash'):
@@ -182,6 +198,7 @@ def run():
                 page.screenshot(path=str(REPORT/('privacy-layout-'+str(width)+'.png')),full_page=True)
             assert not errors,errors
             assert not external,external
+            assert not failed_assets,failed_assets
             assert db.active_transactions==0 and db.open_cursors==0
             results.append('PASS desktop/mobile layouts have no horizontal overflow; no JavaScript errors/external requests; all snapshots/cursors released.')
             outcome['passed']=True;browser.close()
@@ -194,6 +211,7 @@ def run():
         outcome['source_stable']=outcome['sources_before']==outcome['sources_after']
         outcome['passed']=outcome['passed'] and outcome['source_stable']
         outcome['javascript_errors']=errors;outcome['external_requests']=external
+        outcome['failed_static_assets']=failed_assets
         (REPORT/'privacy-user-acceptance.json').write_text(json.dumps(outcome,indent=2)+'\n',encoding='utf-8')
         (REPORT/'privacy-user-acceptance.log').write_text('\n'.join(results)+('\nFAIL '+outcome['failure'] if 'failure' in outcome else '')+'\n',encoding='utf-8')
     print('\n'.join(results))

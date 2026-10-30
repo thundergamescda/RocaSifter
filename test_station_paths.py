@@ -112,15 +112,19 @@ class DesktopFoundationTests(unittest.TestCase):
     def test_readiness_does_not_create_store_or_read_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for name in ('station.js', 'station.css', 'preview.js', 'cloud.js', 'cloud.css', 'intake.js', 'import.js', 'import.css', 'shared-trade.js', 'shared-trade.css', 'roca_square_label_app.html', 'roca_edition.json', 'product_brand.json'):
+            for name in ('station.js', 'station.css', 'preview.js', 'cloud.js', 'cloud.css', 'intake.js', 'import.js', 'import.css', 'shared-trade.js', 'shared-trade.css', 'intake-claim.js', 'intake-claim.css', 'roca_square_label_app.html', 'roca_edition.json', 'product_brand.json'):
                 (root / name).write_text('fixture')
             data = root / 'uncreated'
             report = readiness(StationPaths(root, data, False))
             self.assertTrue(report['ready'])
             self.assertFalse(report['square_contacted'])
             self.assertFalse(data.exists())
-            (root / 'station.css').unlink()
-            self.assertFalse(readiness(StationPaths(root, data, False))['ready'])
+            for name in ('station.css','intake-claim.js','intake-claim.css'):
+                with self.subTest(missing_asset=name):
+                    (root/name).unlink()
+                    self.assertFalse(readiness(StationPaths(root, data, False))['ready'])
+                    self.assertFalse(data.exists())
+                    (root/name).write_text('fixture')
 
     def test_self_check_exits_without_initializing_a_station(self):
         import os
