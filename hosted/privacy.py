@@ -17,10 +17,13 @@ from psycopg.types.json import Jsonb
 from .security import ServiceError
 
 EXPORT_SCHEMA = 'stock-and-sleeve.hosted-customer-export'
-EXPORT_VERSION = 2
+EXPORT_VERSION = 4
 SCOPE_LIMITATIONS = [
     'Only records structurally linked to this customer in this hosted store are selected, as of one database snapshot. Duplicate accounts and incidental free-text mentions are not searched.',
     'Original physical-intake manifests and claim requests are selected only through a consumed claim bound to this customer\'s accepted trade. Unconsumed claims and competing draft references have unconfirmed ownership and require separate owner review.',
+    'Receiving operations, plan revisions, requests, outcomes, exceptions and safe step/proof metadata are selected only for accepted-trade receiving on that same consumed, customer-bound claim. Inventory-only operations, unlinked operations and competing drafts are withheld for separate owner review.',
+    'Plan-intent hashes and retirement metadata require an explicitly classified accepted-trade intent matching that consumed claim\'s bound trade and receipt hash. Legacy unclassified intents, inventory-only intents, competing drafts and unregistered retirement tombstones are withheld for separate owner review.',
+    'Receiving JSON is an explicit reviewed-field projection. Raw catalog parents/siblings, encrypted provider bodies, staff session bindings and authorization material are excluded; stored plan/receipt/proof hashes refer to original evidence, not the projected copy.',
     'Local desktop databases, pending journals, scanner files, printer queues, generated files and previous downloads are not inspected.',
     'Backups, support copies, unlinked events and records held by Square or other providers are not searched. This export makes no provider calls.',
     'Staff credentials, passwords, sessions, MFA/recovery material and provider tokens are excluded. Customer-related audit details use an explicit field projection.',
@@ -49,6 +52,14 @@ OWN_INTAKES = '''SELECT i.id FROM ss_intake_claims i JOIN ss_trade_receipts t
     ON t.tenant_id=i.tenant_id AND t.id=i.bound_trade_id AND t.physical_intake_id=i.id
     WHERE i.tenant_id=%(tenant)s AND t.customer_id=%(customer)s AND i.state='consumed'
     AND t.state IN ('accepted_cash','accepted_credit')'''
+OWN_RECEIVING = f'''SELECT r.id FROM ss_receiving_operations r
+    WHERE r.tenant_id=%(tenant)s AND r.workflow_kind='accepted_trade' AND r.claim_id IN ({OWN_INTAKES})'''
+OWN_PLAN_INTENTS = '''SELECT p.request_key FROM ss_receiving_plan_intents p
+    JOIN ss_intake_claims i ON i.tenant_id=p.tenant_id AND i.id=p.claim_id
+    JOIN ss_trade_receipts t ON t.tenant_id=i.tenant_id AND t.id=i.bound_trade_id AND t.physical_intake_id=i.id
+    WHERE p.tenant_id=%(tenant)s AND t.customer_id=%(customer)s AND i.state='consumed'
+    AND t.state IN ('accepted_cash','accepted_credit') AND p.workflow_kind='accepted_trade'
+    AND p.accepted_trade_id=t.id AND p.accepted_receipt_hash=t.receipt_hash'''
 DATASETS = (
     dataset('customer', 'id,display_name,contact,square_customer_id,privacy_basis,balance_cents,version,created_at',
             'ss_customers', 'tenant_id=%(tenant)s AND id=%(customer)s', 'id'),
@@ -82,6 +93,29 @@ DATASETS = (
             'ss_intake_claims i', f'i.tenant_id=%(tenant)s AND i.id IN ({OWN_INTAKES})', 'i.created_at,i.id'),
     dataset('physical_intake_requests', 'q.request_key,q.intent_hash,q.claim_id,q.result,q.created_at',
             'ss_intake_requests q', f'q.tenant_id=%(tenant)s AND q.claim_id IN ({OWN_INTAKES})', 'q.created_at,q.request_key'),
+    dataset('receiving_plan_intents', '''p.request_key,p.intent_hash,p.wire_hash,p.claim_id,p.workflow_kind,p.accepted_trade_id,
+            p.accepted_receipt_hash,p.created_by,p.created_at,q.operation_id,q.created_at AS outcome_recorded_at,
+            CASE WHEN q.result->>'retired'='true' THEN 'retired_before_creation'
+                 WHEN q.operation_id IS NOT NULL THEN 'plan_created' ELSE 'registered' END AS request_state,
+            CASE WHEN q.result->>'retired'='true' THEN q.result->>'original_plan_sha256' END AS retired_original_plan_sha256,
+            CASE WHEN q.result->>'retired'='true' THEN q.result->>'retirement_basis' END AS retirement_basis''',
+            'ss_receiving_plan_intents p LEFT JOIN ss_receiving_requests q ON q.tenant_id=p.tenant_id AND q.request_key=p.request_key AND q.action=\'plan\'',
+            f'p.tenant_id=%(tenant)s AND p.request_key IN ({OWN_PLAN_INTENTS})', 'p.created_at,p.request_key'),
+    dataset('receiving_operations', 'r.id,r.claim_id,r.workflow_kind,r.revision,r.plan_hash,r.plan,r.state,r.first_admitted_at,r.inventory_proof,r.catalog_proof,r.catalog_resolutions,r.receipt,r.created_by,r.updated_by,r.created_at,r.updated_at',
+            'ss_receiving_operations r', f'r.tenant_id=%(tenant)s AND r.id IN ({OWN_RECEIVING})', 'r.created_at,r.id'),
+    dataset('receiving_plan_revisions', 'r.operation_id,r.revision,r.plan_hash,r.plan,r.created_by,r.created_at',
+            'ss_receiving_plan_revisions r', f'r.tenant_id=%(tenant)s AND r.operation_id IN ({OWN_RECEIVING})', 'r.operation_id,r.revision'),
+    dataset('receiving_steps', 's.operation_id,s.ordinal,s.endpoint,s.api_version,s.body_hash,s.provider_key,s.occurred_at,s.authorized_by,s.admitted_at',
+            'ss_receiving_steps s', f's.tenant_id=%(tenant)s AND s.operation_id IN ({OWN_RECEIVING})', 's.operation_id,s.ordinal'),
+    dataset('receiving_requests', 'q.request_key,q.action,q.intent_hash,q.operation_id,q.result,q.created_at',
+            'ss_receiving_requests q', f'q.tenant_id=%(tenant)s AND q.operation_id IN ({OWN_RECEIVING})', 'q.created_at,q.request_key'),
+    dataset('receiving_request_outcomes', 'o.request_key,q.operation_id,o.result,o.created_at',
+            'ss_receiving_request_outcomes o JOIN ss_receiving_requests q ON q.tenant_id=o.tenant_id AND q.request_key=o.request_key',
+            f'o.tenant_id=%(tenant)s AND q.operation_id IN ({OWN_RECEIVING})', 'o.created_at,o.request_key'),
+    dataset('receiving_attempts', 'a.id,a.operation_id,a.generation,a.action,a.evidence,a.created_at',
+            'ss_receiving_attempts a', f'a.tenant_id=%(tenant)s AND a.operation_id IN ({OWN_RECEIVING})', 'a.created_at,a.id'),
+    dataset('receiving_exceptions', 'x.operation_id,x.code,x.occurrences,x.first_seen_at,x.last_seen_at',
+            'ss_receiving_exceptions x', f'x.tenant_id=%(tenant)s AND x.operation_id IN ({OWN_RECEIVING})', 'x.first_seen_at,x.operation_id,x.code'),
     dataset('idempotency_records', 'q.key,q.operation,q.body_hash,q.result,q.at', 'ss_requests q',
             f'''q.tenant_id=%(tenant)s AND ((q.operation='ledger' AND
                 (q.result->>'customer_id'=%(customer_text)s OR q.result->>'entry_id' IN (SELECT id::text FROM ss_credit_entries WHERE {CUSTOMER})
@@ -101,15 +135,46 @@ DATASETS = (
                 OR a.entity_id IN (SELECT id::text FROM ss_credit_entries WHERE {CUSTOMER})
                 OR a.entity_id IN (SELECT id::text FROM ss_reservations WHERE {CUSTOMER})
                 OR a.entity_id IN (SELECT id::text FROM ss_trade_receipts WHERE {CUSTOMER})
-                OR a.entity_id IN (SELECT linked.id::text FROM ({OWN_INTAKES}) linked))''', 'a.at,a.id'),
+                OR a.entity_id IN (SELECT linked.id::text FROM ({OWN_INTAKES}) linked)
+                OR a.entity_id IN (SELECT linked.id::text FROM ({OWN_RECEIVING}) linked)
+                OR (a.action='receiving-plan-request-retired' AND a.entity_id IN ({OWN_PLAN_INTENTS})))''', 'a.at,a.id'),
 )
 DATASET_NAMES = tuple(item.name for item in DATASETS)
 AUDIT_DETAIL_FIELDS = frozenset(('customer_id','entry_id','credit_entry_id','reservation_id','amount_cents','restored_cents',
     'kind','offer_type','code','order_version','version','line_count','receipt_hash','terms_hash','proof_hash','discount_uid',
     'policy_reference','export_id','purpose','verification_method','case_reference_sha256','outcome','failure_code',
     'record_counts','content_chain_sha256','start_audit_id','redacted_fields',
-    'manifest_hash','physical_intake_id','physical_manifest_hash','semantic_hash','additional_delivery_of'))
+    'manifest_hash','physical_intake_id','physical_manifest_hash','semantic_hash','additional_delivery_of',
+    'plan_hash','body_hash','receiving_id','revision','original_plan_sha256'))
 FORBIDDEN_KEY = re.compile(r'password|passwd|secret|token|credential|session|csrf|mfa|recovery|authorization', re.I)
+
+# Receiving's stored JSON may gain catalog snapshots or provider payloads later.
+# New keys never become exportable merely because the business schema adds them.
+RECEIVING_LINE_FIELDS = frozenset(('review_line_id','source_line_key','accepted_line_id','identity','identity_hash',
+    'quantity','selling_cents','zero_price_confirmed','reviewed','binding_id','binding_version','binding_evidence_hash',
+    'source_sku','target_sku','variation_id','parent_id','currency','action','confirmed_quantity','template_id','template_version',
+    'source_binding_id','source_binding_evidence_hash','template_evidence_hash','binding_role','review_line_ids'))
+RECEIVING_IDENTITY_FIELDS = frozenset(('name','game','game_label','kind','set','number','condition','language','printing',
+    'grading_company','grade','grade_qualifier','certification','sport','year','league','manufacturer','team','player','serial_number'))
+RECEIVING_PROVIDER_FIELDS = frozenset(('merchant_id','environment','application_id','location_id'))
+RECEIVING_PROOF_FIELDS = frozenset(('kind','request_hash','response_hash','evidence_hash'))
+RECEIVING_VIEW_FIELDS = frozenset(('physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind',
+    'accepted_trade_id','accepted_receipt_hash','receiving_id','revision','state','plan_hash','inventory_confirmed',
+    'catalog_write_performed','receipt_schema_version','received_at','receipt_hash','provider_proof_hash',
+    'new_inventory_confirmed','excluded_not_received_ack','external_ownership_confirmed','location_id',
+    'requires_fresh_mfa','blocked_reasons','catalog_confirmed','catalog_proof_hash','catalog_resolutions_hash'))
+RECEIVING_RECORD_FIELDS = {
+    'receiving_plan_intents':frozenset(('request_key','intent_hash','wire_hash','claim_id','workflow_kind','accepted_trade_id',
+        'accepted_receipt_hash','created_by','created_at','operation_id','outcome_recorded_at','request_state',
+        'retired_original_plan_sha256','retirement_basis')),
+    'receiving_operations':frozenset(('id','claim_id','workflow_kind','revision','plan_hash','plan','state','first_admitted_at','inventory_proof','catalog_proof','catalog_resolutions','receipt','created_by','updated_by','created_at','updated_at')),
+    'receiving_plan_revisions':frozenset(('operation_id','revision','plan_hash','plan','created_by','created_at')),
+    'receiving_steps':frozenset(('operation_id','ordinal','endpoint','api_version','body_hash','provider_key','occurred_at','authorized_by','admitted_at')),
+    'receiving_requests':frozenset(('request_key','action','intent_hash','operation_id','result','created_at')),
+    'receiving_request_outcomes':frozenset(('request_key','operation_id','result','created_at')),
+    'receiving_attempts':frozenset(('id','operation_id','generation','action','evidence','created_at')),
+    'receiving_exceptions':frozenset(('operation_id','code','occurrences','first_seen_at','last_seen_at')),
+}
 
 
 def json_line(value):
@@ -287,6 +352,21 @@ class Export:
             'SELECT 1 FROM ss_square_settlements s JOIN ss_reservations r ON r.tenant_id=s.tenant_id AND r.id=s.reservation_id JOIN ss_credit_entries e ON e.tenant_id=s.tenant_id AND e.id=s.entry_id WHERE s.tenant_id=%(tenant)s AND (r.customer_id=%(customer)s OR e.customer_id=%(customer)s) AND r.customer_id<>e.customer_id LIMIT 1',
             'SELECT 1 FROM ss_credit_returns k JOIN ss_square_settlements s ON s.tenant_id=k.tenant_id AND s.source_order_id=k.source_order_id JOIN ss_reservations r ON r.tenant_id=s.tenant_id AND r.id=s.reservation_id JOIN ss_credit_entries e ON e.tenant_id=k.tenant_id AND e.id=k.entry_id WHERE k.tenant_id=%(tenant)s AND (r.customer_id=%(customer)s OR e.customer_id=%(customer)s) AND r.customer_id<>e.customer_id LIMIT 1',
             'SELECT 1 FROM ss_trade_receipts t JOIN ss_credit_entries e ON e.tenant_id=t.tenant_id AND e.id=t.ledger_entry_id WHERE t.tenant_id=%(tenant)s AND (t.customer_id=%(customer)s OR e.customer_id=%(customer)s) AND t.customer_id<>e.customer_id LIMIT 1',
+            f'''SELECT 1 FROM ss_receiving_operations r JOIN ss_intake_claims i ON i.tenant_id=r.tenant_id AND i.id=r.claim_id
+                JOIN ss_trade_receipts t ON t.tenant_id=i.tenant_id AND t.id=i.bound_trade_id
+                WHERE r.tenant_id=%(tenant)s AND r.id IN ({OWN_RECEIVING}) AND
+                (r.plan->>'accepted_trade_id' IS DISTINCT FROM t.id::text OR
+                 r.plan->>'accepted_receipt_hash' IS DISTINCT FROM t.receipt_hash OR
+                 r.plan->>'physical_intake_id' IS DISTINCT FROM i.id::text OR
+                 r.plan->>'physical_manifest_hash' IS DISTINCT FROM i.manifest_hash) LIMIT 1''',
+            f'''SELECT 1 FROM ss_receiving_plan_intents p JOIN ss_receiving_requests q
+                ON q.tenant_id=p.tenant_id AND q.request_key=p.request_key AND q.action='plan'
+                WHERE p.tenant_id=%(tenant)s AND p.request_key IN ({OWN_PLAN_INTENTS}) AND q.result->>'retired'='true'
+                AND (q.operation_id IS NOT NULL OR q.result->>'state' IS DISTINCT FROM 'retired_before_creation'
+                     OR q.result->>'request_key' IS DISTINCT FROM p.request_key
+                     OR q.result->>'original_plan_sha256' IS DISTINCT FROM p.wire_hash
+                     OR q.result->>'receiving_id' IS NOT NULL
+                     OR q.result->>'retirement_basis' IS DISTINCT FROM 'registered_original_wire') LIMIT 1''',
         )
         for query in checks:
             self.check()
@@ -318,6 +398,52 @@ class Export:
             return result
         if isinstance(value,(list,tuple)):return [self.clean(item,depth+1) for item in value]
         return value
+
+    def receiving(self, value, form='view'):
+        """No raw provider/catalog JSON is exported, including future fields."""
+        if value is None:return None
+        if not isinstance(value,dict):raise ServiceError('Receiving export evidence is inconsistent.',409)
+        forms={'proof':RECEIVING_PROOF_FIELDS,'line':RECEIVING_LINE_FIELDS,'identity':RECEIVING_IDENTITY_FIELDS,
+               'provider':RECEIVING_PROVIDER_FIELDS,'evidence':frozenset(('code','proof'))}
+        allowed=RECEIVING_RECORD_FIELDS.get(form,forms.get(form,RECEIVING_VIEW_FIELDS|
+            {'lines','targets','confirmed_targets','catalog_resolutions','catalog_proof','provider','selected_quantities','excluded_quantities','receipt','client_label_profile'}))
+        result={}
+        for key,item in value.items():
+            if key not in allowed:
+                self.redacted+=1;continue
+            if key in ('plan','result','receipt'):result[key]=self.receiving(item)
+            elif key in ('inventory_proof','catalog_proof','proof'):result[key]=self.receiving(item,'proof')
+            elif key=='evidence':result[key]=self.receiving(item,'evidence')
+            elif key=='identity':result[key]=self.receiving(item,'identity')
+            elif key=='provider':result[key]=self.receiving(item,'provider')
+            elif key=='client_label_profile':
+                if (not isinstance(item,dict) or set(item)!={'stock','layout','dpi'} or item['stock'] not in ('2x1','3x1','4x2')
+                    or item['layout'] not in ('standard','fold','side') or type(item['dpi']) is not int or item['dpi'] not in (203,300)):
+                    raise ServiceError('Receiving label profile needs owner review before export.',409)
+                result[key]=dict(item)
+            elif key=='catalog_resolutions' and item is None:result[key]=None
+            elif key in ('lines','targets','confirmed_targets','catalog_resolutions'):
+                if not isinstance(item,list) or len(item)>1000:raise ServiceError('Receiving rows need owner review before export.',409)
+                result[key]=[self.receiving(row,'line') for row in item]
+            elif key in ('selected_quantities','excluded_quantities'):
+                if not isinstance(item,dict) or any(not isinstance(k,str) or not re.fullmatch('[a-f0-9]{64}',k) or type(v) is not int or v<0 for k,v in item.items()):
+                    raise ServiceError('Receiving quantity evidence needs owner review before export.',409)
+                result[key]=dict(item)
+            elif key=='blocked_reasons':
+                if not isinstance(item,list) or any(not isinstance(entry,str) or len(entry)>200 for entry in item):
+                    raise ServiceError('Receiving outcome evidence needs owner review before export.',409)
+                result[key]=list(item)
+            elif key=='review_line_ids':
+                if not isinstance(item,list) or not 1<=len(item)<=1000 or len(set(item))!=len(item):
+                    raise ServiceError('Receiving row aliases need owner review before export.',409)
+                try:result[key]=[str(uuid.UUID(entry)) for entry in item]
+                except (ValueError,TypeError,AttributeError):raise ServiceError('Receiving row aliases are inconsistent.',409) from None
+            elif isinstance(item,(dict,list,tuple)):
+                raise ServiceError('Receiving scalar evidence is inconsistent. No complete export was generated.',409)
+            elif key.endswith(('_hash','_sha256')) and item is not None and (not isinstance(item,str) or not re.fullmatch('[a-f0-9]{64}',item)):
+                raise ServiceError('Receiving hash evidence is inconsistent. No complete export was generated.',409)
+            else:result[key]=item
+        return result
 
     def line(self, value, *, chained=True):
         content=json_line(value)
@@ -359,6 +485,7 @@ class Export:
                                 self.redacted+=len(set(details)-AUDIT_DETAIL_FIELDS)
                                 value['details']={key:entry for key,entry in details.items() if key in AUDIT_DETAIL_FIELDS}
                             value=self.clean(value)
+                            if item.name in RECEIVING_RECORD_FIELDS:value=self.receiving(value,item.name)
                             record_bytes=len(json_line(value))
                             if record_bytes>self.service.limits.max_record_bytes:
                                 raise ServiceError('A linked record exceeds the export limit. No complete export was generated.',413)

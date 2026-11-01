@@ -356,6 +356,10 @@ class Trades:
             lines = self._lines(db, tenant, ident)
             claim = claim_for_trade(db, tenant, row['physical_intake_id'], row['physical_manifest_hash'], lines, lock=True)
             if claim['state'] != 'open':raise IntakeError('This physical delivery has already been accepted. Recover its original trade instead.', physical_intake_id=claim['id'])
+            inventory = db.execute("SELECT id FROM ss_receiving_operations WHERE tenant_id=%s AND claim_id=%s AND workflow_kind='inventory_only' AND first_admitted_at IS NOT NULL",(tenant,claim['id'])).fetchone()
+            if inventory:
+                raise IntakeError('This delivery already has an admitted inventory-only receiving operation. Recover its receiving record; it cannot create a new trade agreement or credit.',
+                                  physical_intake_id=claim['id'])
             if data.get('claim_reviewed') is not True:
                 raise IntakeError('Review the full original physical claim, selected quantities and excluded items. This claim supports one acceptance only.',
                                   428, code='PHYSICAL_INTAKE_REVIEW_REQUIRED', physical_intake_id=claim['id'])

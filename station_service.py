@@ -22,6 +22,7 @@ from scanner_adapters import (ALIASES, GAME_LABELS, IntakeValidationError, ident
 import station_edition
 from station_shared_trade import SharedTrade, require_editable as require_trade_editable
 from station_intake_claim import IntakeClaims, capture_original, append_original_manual, centrally_bound, require_editable as require_intake_editable
+from station_hosted_receive import HostedReceive,require_editable as require_receiving_editable
 
 MODES = ('bulk', 'trade', 'labels', 'online')
 CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
@@ -33,6 +34,7 @@ CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'la
 def require_shared_editable(receipt):
     require_trade_editable(receipt)
     require_intake_editable(receipt)
+    require_receiving_editable(receipt)
 
 
 def money(value):
@@ -66,6 +68,7 @@ class StationService:
         self.lock = threading.RLock()
         self.shared_trades = SharedTrade(self)
         self.intake_claims = IntakeClaims(self)
+        self.hosted_receiving = HostedReceive(self)
         self.stop_event = threading.Event()
         edition_root = Path(core.SETTINGS_FILE).parent
         if not (edition_root / 'roca_edition.json').exists():
@@ -416,6 +419,9 @@ class StationService:
 
     def validate_card(self, card):
         result = dict(card)
+        # Browser/manual/scanner input is never authority for a hosted SKU.
+        # Only a verified immutable server receipt can reconstruct this marker.
+        result.pop('hosted_sku_resolution',None)
         for key in ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language', 'storage_location', 'sku_override',
                     'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number',
                     'year', 'manufacturer', 'team', 'player'):
@@ -559,6 +565,10 @@ class StationService:
                     card.pop('price_approval', None)
                     card['reviewed'] = False
             self.prepare_pricing(old)
+            if old.get('hosted_receive',{}).get('state')=='confirmed':
+                included=self.hosted_receiving.confirmed_cards(old,[card for card in old['cards'] if card.get('include',True)])
+                authoritative={card['row_id']:card for card in included}
+                old['cards']=[authoritative.get(card['row_id'],card) for card in old['cards']]
             self.store.save_receipt(old, ('saved', f'Receipt saved in {mode}.'))
             if old['inventory_status'] != 'received':
                 self.pricing.enqueue_receipt(old)
@@ -673,9 +683,10 @@ class StationService:
             raise StationError('Enter or explicitly confirm a selling price for every included card before labels or inventory.')
         if any(not c['reviewed'] for c in cards):
             raise StationError('Review the identity, condition, finish and price of every included card first.')
-        if receipt.get('requires_purchase') and not receipt['purchase']:
+        confirmed_hosted=receipt.get('hosted_receive',{}).get('state')=='confirmed'
+        if receipt.get('requires_purchase') and not receipt['purchase'] and not confirmed_hosted:
             raise StationError('Record an accepted buy before receiving or labeling a trade-in.')
-        return cards
+        return self.hosted_receiving.confirmed_cards(receipt,cards) if confirmed_hosted else cards
 
     def accept_buy(self, receipt_id, offer_type):
         with self.lock:
@@ -760,7 +771,7 @@ class StationService:
             if receipt['inventory_status'] == 'received':
                 return receipt
             if centrally_bound(receipt):
-                raise StationError('This batch belongs to central hosted intake. Hosted Square receiving is not available yet; it cannot fall back to a local Square token. No stock was added. Recover existing legacy batches only through their original saved provider requests.')
+                raise StationError('This batch belongs to central hosted intake. Open Hosted receiving to review its original server plan. It cannot fall back to a local Square token. No stock was added by this action.')
             if receipt['mode'] == 'bulk':
                 raise StationError('Bulk sift does not receive inventory. Move this receipt to a receiving workflow.')
             if receipt['inventory_intent'] == 'existing':
@@ -834,11 +845,18 @@ class StationService:
                 raise StationError('Move this receipt to Price & label before printing retail labels.')
             config = self.preferences()
             layout, dpi = layout or config['labelLayout'], int(dpi or config['printerDpi'])
+            dimensions={}
+            if receipt.get('hosted_receive',{}).get('state')=='confirmed':
+                from hosted_labels import profile,STOCKS
+                chosen=profile(receipt['hosted_receive']['label_profile'])
+                if layout!=chosen['layout'] or dpi!=chosen['dpi']:
+                    raise StationError('Use the label stock, layout and DPI frozen in the confirmed hosted receiving plan. An uncertain or received operation cannot silently change its profile.')
+                width,height=STOCKS[chosen['stock']];dimensions={'width_in':width,'height_in':height}
             prefix = receipt_id + '-' + uuid.uuid4().hex[:6]
             root = Path(self.core.OUTPUT_DIR)
             root.mkdir(parents=True, exist_ok=True)
-            self.core.generate_zebra_pdf_labels(cards,str(root/(prefix+'.pdf')),layout=layout,dpi=dpi)
-            self.core.generate_zebra_zpl(cards,str(root/(prefix+'.zpl')),layout=layout,dpi=dpi)
+            self.core.generate_zebra_pdf_labels(cards,str(root/(prefix+'.pdf')),layout=layout,dpi=dpi,**dimensions)
+            self.core.generate_zebra_zpl(cards,str(root/(prefix+'.zpl')),layout=layout,dpi=dpi,**dimensions)
             receipt['files'].update(pdf=prefix+'.pdf', zpl=prefix+'.zpl')
             self.store.save_receipt(receipt, ('labels', f'Labels generated for {sum(c["qty"] for c in cards)} copies. No inventory changed.'))
             return receipt
@@ -851,6 +869,8 @@ class StationService:
                 raise StationError('Open Online preparation to create a listing batch.')
             if not receipt['storage_location'] and any(not c['storage_location'] for c in cards):
                 raise StationError('Assign a bin or display-case location before preparing this batch.')
+            if any(c.get('hosted_sku_resolution') and spreadsheet_safe(self.core.barcode_value(c))!=self.core.barcode_value(c) for c in cards):
+                raise StationError('An exact hosted SKU begins with a spreadsheet formula character. CSV preparation is blocked because making it spreadsheet-safe would change the SKU. Use the exact PDF/ZPL labels; do not alter the provider SKU.')
             root = Path(self.core.OUTPUT_DIR)
             root.mkdir(parents=True, exist_ok=True)
             prefix = receipt_id + '-listing-' + uuid.uuid4().hex[:6]

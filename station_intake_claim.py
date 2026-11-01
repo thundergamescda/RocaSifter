@@ -99,7 +99,7 @@ def locked(receipt):
 
 
 def centrally_bound(receipt):
-    return bool(receipt.get('intake_claim') or receipt.get('shared_trade',{}).get('claim_binding_version')
+    return bool(receipt.get('hosted_receive') or receipt.get('intake_claim') or receipt.get('shared_trade',{}).get('claim_binding_version')
                 or (receipt.get('purchase') or {}).get('scope')=='hosted'
                 or (receipt.get('purchase') or {}).get('physical_intake_id'))
 

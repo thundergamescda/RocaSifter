@@ -1,4 +1,10 @@
-# Source access report — October 26, 2026
+# Source access report — rechecked November 1, 2026
+
+Public primary documentation is now reachable. PriceCharting's [API documentation](https://www.pricecharting.com/api-documentation) requires written commercial permission for sharing data through software used by other stores. Its current-value API does not provide historical sale transactions. The [Legendary plan](https://www.pricecharting.com/pricecharting-pro) displays $49/month; that is not a commercial redistribution quote. Keep activation disabled pending written terms, coverage and purge requirements.
+
+TCGplayer's [getting-started page](https://docs.tcgplayer.com/docs/getting-started) currently says new API access is unavailable. [TCGCSV](https://tcgcsv.com/) provides product/printing aggregates without SKU condition/language data; its [FAQ](https://tcgcsv.com/faq) confirms individual listings and sales are unavailable. English/NM filtering does not turn this reference into verified condition-specific evidence. The structured recheck and owner decisions are saved in the project's `Planning/PRICING_ACCESS_RECHECK_2026-11-01.json`.
+
+The October 26 implementation/access history below is retained. Its connection failures do not describe the November 1 documentation recheck. No source was purchased or activated.
 
 The active target is **PriceCharting guide values, TCGplayer recent individual sold prices and TCGplayer lowest matching listings**. eBay is no longer part of the active policy. No subscription or API access has been purchased.
 

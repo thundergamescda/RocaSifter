@@ -15,7 +15,7 @@ async function confirmAction(title,text,label='Confirm'){const d=$('confirmDialo
 function included(){return(state.receipt?.cards||[]).filter(c=>c.include)}
 function frozen(){return !!(state.receipt?.purchase||state.receipt?.inventory_status==='received'||['needs_attention','committing'].includes(state.receipt?.inventory_status)||window.sharedTradeLocked?.(state.receipt))}
 function priceLocked(){return state.receipt?.inventory_status==='received'||locked()}
-function locked(){return ['needs_attention','committing'].includes(state.receipt?.inventory_status)||!!window.sharedTradeLocked?.(state.receipt)}
+function locked(){return ['needs_attention','committing'].includes(state.receipt?.inventory_status)||!!window.sharedTradeLocked?.(state.receipt)||!!window.hostedReceiveLocked?.(state.receipt)}
 function markDirty(){if(!state.receipt)return;state.dirty=true;$('saveState').textContent='Unsaved changes';clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveReceipt().catch(e=>toast(e.message,true)),1200)}
 let saving=null;
 async function saveReceipt(){clearTimeout(saveTimer);if(saving){await saving;if(state.dirty)return saveReceipt();return}if(!state.dirty||!state.receipt)return;const receipt=structuredClone(state.receipt);state.dirty=false;$('saveState').textContent='Saving…';saving=(async()=>{try{const data=await api('/api/receipts/'+receipt.id,receipt);if(state.receipt?.id===receipt.id){if(!state.dirty)state.receipt=data.receipt;else state.receipt.revision=data.receipt.revision}$('saveState').textContent=state.dirty?'Unsaved changes':'All changes saved'}catch(e){state.dirty=true;$('saveState').textContent='Save needs attention';throw e}finally{saving=null}})();await saving}
@@ -132,7 +132,7 @@ async function importFile(file){
   data.receipt=await acknowledgePickup(data.receipt);adoptReceipt(data.receipt);await refreshReceipts();toast(data.duplicate?'Opened the saved batch. No stock changed.':'Cards imported. Check them before continuing.');
  }finally{$('csvFile').value=''}});
 }
-function receiptStatus(r){return r.inventory_status==='received'?'IN SQUARE':r.inventory_status==='needs_attention'?'NEEDS ATTENTION':r.inventory_status==='committing'?'ADDING TO SQUARE':r.shared_trade?.state==='confirmed'?'SHARED CREDIT ISSUED':(r.shared_trade&&!['confirmed','cancelled'].includes(r.shared_trade.state))?'SHARED TRADE PENDING':r.prepared?'FILES READY':r.files?.pdf?'LABELS READY':r.purchase?'BUY RECORDED':r.all_reviewed||(r.cards?.some(c=>c.include)&&r.cards.filter(c=>c.include).every(c=>c.reviewed&&!c.price_missing))?'CHECKED':'IN PROGRESS'}
+function receiptStatus(r){return r.inventory_status==='received'?'IN SQUARE':(r.hosted_receive&&!['confirmed','cancelled_before_write','retired_before_creation'].includes(r.hosted_receive.state))?'HOSTED RECEIVING PENDING':r.inventory_status==='needs_attention'?'NEEDS ATTENTION':r.inventory_status==='committing'?'ADDING TO SQUARE':r.shared_trade?.state==='confirmed'?'SHARED CREDIT ISSUED':(r.shared_trade&&!['confirmed','cancelled'].includes(r.shared_trade.state))?'SHARED TRADE PENDING':r.prepared?'FILES READY':r.files?.pdf?'LABELS READY':r.purchase?'BUY RECORDED':r.all_reviewed||(r.cards?.some(c=>c.include)&&r.cards.filter(c=>c.include).every(c=>c.reviewed&&!c.price_missing))?'CHECKED':'IN PROGRESS'}
 function renderReceipt(){
  renderIntakeSummary();
  $('addManualItem').disabled=state.busy||frozen();
@@ -140,7 +140,7 @@ function renderReceipt(){
  if(!r){$('reviewStep').classList.remove('active');$('finishStep').classList.remove('active');$('importStep').classList.add('active');$('finishStepText').textContent='Finish';return;}
  $('receiptReference').textContent=`${r.source_name} · ${r.id}`;$('receiptTitle').value=r.title;$('receiptStatus').textContent=receiptStatus(r);
  $('receiptError').hidden=!r.error;$('receiptError').textContent=r.error||'';$('receiptNotes').value=r.notes||'';$('saveState').textContent=state.dirty?'Unsaved changes':'All changes saved';
- const buying=state.mode==='trade'&&!r.purchase;
+ const buying=state.mode==='trade'&&!r.purchase&&r.hosted_receive?.state!=='confirmed';
  $('tradePanel').hidden=!buying;renderTradeSummary();
  $('labelsPanel').hidden=state.mode==='bulk'||buying;$('onlinePanel').hidden=state.mode!=='online';
  $('customerReference').value=r.customer_reference||'';$('cashPercent').value=r.cash_percent;$('creditPercent').value=r.credit_percent;
@@ -185,7 +185,7 @@ function renderTable(){if(!state.receipt)return;const all=filteredCards(),pages=
 function renderActions(){
  window.renderSharedTrade?.();
  const r=state.receipt;$('newReceipt').disabled=state.busy;$('addManualItem').disabled=state.busy||frozen()||!!r?.intake_claim;$('openNextPickup').disabled=state.busy;if(!r)return;
- const reviewed=included().length>0&&included().every(c=>c.reviewed&&!c.price_missing),buying=state.mode==='trade'&&!r.purchase,received=r.inventory_status==='received';
+ const reviewed=included().length>0&&included().every(c=>c.reviewed&&!c.price_missing),buying=state.mode==='trade'&&!r.purchase&&r.hosted_receive?.state!=='confirmed',received=r.inventory_status==='received';
  document.querySelectorAll('[data-intent]').forEach(b=>b.disabled=state.busy||received||locked());
  for(const id of ['saveReceipt','deleteReceipt','moveReceipt','receiptTitle','receiptNotes'])$(id).disabled=state.busy||locked();
  $('backToReview').disabled=$('doneReview').disabled=$('nextBatch').disabled=state.busy;
@@ -216,8 +216,9 @@ function renderActions(){
   main.disabled=true;main.textContent='Hosted receiving is not available';$('actionHint').textContent='This batch uses central hosted intake. Its stock cannot be sent through a local Square connection. Keep its saved reference until hosted receiving is available.';
  }
  if(state.busy)main.textContent='Working…';
+ window.renderHostedReceiving?.();
 }
-function renderFiles(){const files=state.receipt?.files||{},labels={pdf:'Open label PDF',zpl:'Download Zebra ZPL',listing:'Download listing review CSV',ticket:'Open storage ticket',buy:'Open accepted buy receipt'};const items=Object.entries(files).filter(([key])=>labels[key]);$('outputFiles').hidden=!items.length;$('outputFiles').innerHTML=items.map(([key,file])=>`<a href="/files/${encodeURIComponent(file)}" target="_blank" rel="noopener">${icon(key==='listing'?'globe':'printer')}${labels[key]}</a>`).join('')}
+function renderFiles(){const files=window.hostedReceiveLocked?.(state.receipt)?{}:state.receipt?.files||{},labels={pdf:'Open label PDF',zpl:'Download Zebra ZPL',listing:'Download listing review CSV',ticket:'Open storage ticket',buy:'Open accepted buy receipt'};const items=Object.entries(files).filter(([key])=>labels[key]);$('outputFiles').hidden=!items.length;$('outputFiles').innerHTML=items.map(([key,file])=>`<a href="/files/${encodeURIComponent(file)}" target="_blank" rel="noopener">${icon(key==='listing'?'globe':'printer')}${labels[key]}</a>`).join('')}
 async function moveReceipt(mode){if(!state.receipt||mode===state.receipt.mode)return;await saveReceipt();state.receipt.mode=mode;markDirty();await saveReceipt();state.stage='review';$('batchOptions').open=false;$('reviewOptions').open=mode==='bulk';setMode(mode);await refreshReceipts();toast('Same batch, next workflow. No stock changed.')}
 async function labelsWithoutStock(){await busyWork(async()=>{if(state.receipt.inventory_status!=='received'){state.receipt.inventory_intent='existing';markDirty();await saveReceipt()}await createLabels()})}
 async function prepareWithoutStock(){await busyWork(async()=>{if(state.receipt.inventory_status!=='received'){state.receipt.inventory_intent='existing';markDirty();await saveReceipt()}await action('prepare');state.stage='done';renderReceipt()})}
@@ -225,6 +226,7 @@ async function action(name,data={}){await saveReceipt();const result=await api(`
 async function createLabels(){const receipt=await action('labels',{layout:state.labelLayout,dpi:Number(state.printerDpi)});state.stage='done';renderReceipt();window.scrollTo(0,0);toast('Labels ready. Open them to print.');return receipt}
 async function primaryAction(){
  if(!state.receipt||state.stage!=='finish')return;
+ if(state.receipt.inventory_status!=='received'&&(state.receipt.hosted_receive||state.receipt.intake_claim||state.receipt.purchase?.scope==='hosted')&&(state.mode!=='trade'||state.receipt.purchase)){await window.openHostedReceiving?.();return;}
  await busyWork(async()=>{
   const r=state.receipt;
   if(included().some(c=>c.price_missing))throw Error('Resolve missing selling prices before finishing this batch.');
@@ -235,7 +237,7 @@ async function primaryAction(){
    await createLabels();return;
   }
   if(!included().length||!included().every(c=>c.reviewed&&!c.price_missing))throw Error('Check every included card before finishing.');
-  if(state.mode==='trade'&&!r.purchase){
+  if(state.mode==='trade'&&!r.purchase&&r.hosted_receive?.state!=='confirmed'){
    const amount=state.offer==='cash'?$('cashAmount').textContent:$('creditAmount').textContent;
    if(await confirmAction('Record the agreed purchase?',`Record ${amount} ${state.offer==='cash'?'cash':'store credit'} as the agreed buy. Card details will be locked. Handle payment separately; no stock is added yet.`,'Record purchase')){await action('accept-buy',{offerType:state.offer});toast('Buy recorded. Choose how to finish this batch.')}return;
   }

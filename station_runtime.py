@@ -22,6 +22,10 @@ def build_input_hashes(root):
             path.suffix=='.py' and not path.name.startswith('test_'))]
     files.extend(root/name for name in ('product_brand.json','roca_edition.json',
                                       'assets/stock-and-sleeve.png','assets/stock-and-sleeve.ico'))
+    notice_root=root/'third_party_notices'
+    if notice_root.exists():
+        from distribution_notices import validate_notice_payload
+        files.extend(validate_notice_payload(notice_root).values())
     return {path.relative_to(root).as_posix():hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(set(files)) if path.is_file()}
 

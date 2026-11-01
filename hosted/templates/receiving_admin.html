@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Catalog identity review · Stock &amp; Sleeve</title><link rel="icon" href="/static/brand-icon.png">
+<link rel="stylesheet" href="/static/privacy.css"><link rel="stylesheet" href="/static/receiving_admin.css">
+<script src="/static/receiving_admin.js" defer></script></head><body><main>
+<header><a href="/" class="brand"><img src="/static/brand-icon.png" width="32" height="32" alt="">Stock &amp; Sleeve</a><a href="/">Back to workspace</a></header>
+<section class="intro"><span class="eyebrow">Owner workspace</span><h1>Catalog identity review</h1>
+<p>Connect reviewed card details to an existing Square variation. Keep its current SKU, price and stock settings.</p>
+<p id="receivingAdminSession" class="status" role="status">Checking your owner session…</p>
+<button type="button" id="receivingAdminRefresh" class="quiet">Refresh owner session</button></section>
+<section class="scope"><h2>Review first. Receiving stays gated.</h2>
+<p>Approving a mapping records your identity review in Stock &amp; Sleeve. This page does not change Square items, taxes, prices or inventory.</p>
+<p id="receivingAdminReadiness" class="help">Hosted receiving writes are disabled until the server and store rollout gates are approved.</p>
+<p class="help">Approval needs enrolled MFA and a sign-in proof from the last 15 minutes. This does not authenticate a grading certificate or approve tax treatment.</p></section>
+<section class="card" id="receivingAdminOAuth" hidden><h2>Square receiving permissions</h2>
+<p>Hosted receiving needs permission to create catalog price variants and add selected incoming inventory. The standard Square connection requests read access only.</p>
+<p class="help">The additional permissions are <strong>ITEMS_WRITE</strong> and <strong>INVENTORY_WRITE</strong>. Square will ask the account owner to review consent. This does not enable receiving, replace existing stock prices, or approve a tax policy.</p>
+<form id="receivingAdminOAuthForm"><label class="check"><input type="checkbox" name="permissions_confirmed" required><span>I understand why Stock &amp; Sleeve requests catalog and inventory write permissions for hosted receiving.</span></label>
+<button type="submit" id="receivingAdminOAuthButton">Review receiving access in Square</button></form><p class="status" id="receivingAdminOAuthStatus" role="status"></p>
+<p><a href="/receiving/price-templates">Review owner price-family templates</a></p></section>
+<section class="card" id="receivingAdminWorkspace" hidden><div class="heading"><h2>Match one catalog variation</h2><span class="pill" id="receivingAdminStore"></span></div>
+<form id="receivingAdminForm"><div class="columns"><label>Square variation reference<input name="variation_id" maxlength="150" required autocomplete="off" placeholder="Existing variation ID"></label>
+<label>Receiving location<select name="location_id" required><option value="">Choose a Square location</option></select></label></div>
+<div class="columns"><label>Card or player name<input name="name" maxlength="200" required autocomplete="off"></label><label>Game or sport category<input name="game" maxlength="100" required autocomplete="off" placeholder="Pokémon, Magic, Sports…"></label></div>
+<div class="columns"><label>Item type<select name="kind"><option value="card">Raw card</option><option value="slab">Graded slab</option></select></label><label>Additional game label<input name="game_label" maxlength="100" autocomplete="off"></label></div>
+<details><summary>Set, printing and card identity</summary><div class="columns" id="receivingAdminIdentityFields"></div></details>
+<details><summary>Grading, certificate and sports details</summary><div class="columns" id="receivingAdminSlabFields"></div></details>
+<p class="help">Use the exact reviewed identity from intake, including grade qualifiers, certificate and serial details where applicable. A matching SKU alone does not prove identity.</p>
+<button type="submit" id="receivingAdminPreview">Read current Square target</button></form>
+<p id="receivingAdminProgress" class="status" role="status" aria-live="polite"></p>
+<section class="selection" id="receivingAdminReview" hidden><h2>Confirm this exact mapping</h2><dl id="receivingAdminFacts"></dl>
+<form id="receivingAdminApproveForm"><label class="check"><input type="checkbox" name="identity_confirmed" required><span>I reviewed the full physical card identity and confirm it belongs to this Square variation.</span></label>
+<label>Internal review reason<input name="reason" minlength="10" maxlength="200" required autocomplete="off" placeholder="Reviewed this card against the store catalog"></label>
+<p class="help">Use an internal card/catalog reason. Do not enter customer contact, identity-document or payment details.</p>
+<button type="submit" id="receivingAdminApprove">Approve mapping in Stock &amp; Sleeve</button></form></section>
+</section><footer>Development prototype · Owner-reviewed catalog mapping · Receiving activation is separate</footer></main></body></html>

@@ -1,0 +1,2 @@
+#receivingAdminOAuth{margin-bottom:24px}
+details{border-top:1px solid #e3dcd1;margin-top:20px;padding:18px 0 0}summary{cursor:pointer;font-size:14px;font-weight:650;line-height:1.5}dl{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,2fr);gap:9px 18px;font-size:14px;line-height:1.5}dt{font-weight:650;color:#6d645b}dd{margin:0;overflow-wrap:anywhere}select{min-width:0}input,button{max-width:100%}.selection h2{margin-top:0}.selection label{color:#3d352d}@media(max-width:620px){dl{grid-template-columns:1fr;gap:4px}dd{margin-bottom:9px}summary{font-size:15px}}

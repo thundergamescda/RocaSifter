@@ -13,6 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from station_runtime import build_input_hashes
+from distribution_notices import validate_notice_payload
 
 EVIDENCE_ALLOWLIST = frozenset({
     'READ_ME_FIRST.md', 'hosted-v3-acceptance.json', 'hosted-v3-provider-observed.log',
@@ -43,6 +44,16 @@ EVIDENCE_ALLOWLIST = frozenset({
     'privacy-user-acceptance.json', 'privacy-user-acceptance.log',
     'restore-drill.json', 'restore-drill.log', 'packaged-security-readiness.json',
     'SECURITY_PILOT_README.md',
+    'RECEIVING_PILOT_README.md',
+    'receiving-user-acceptance.json', 'receiving-user-acceptance.log',
+    'owner-template-acceptance.json', 'owner-template-acceptance.log',
+    'owner-template-postgres-acceptance.json', 'owner-template-postgres-acceptance.log',
+    'desktop-hosted-postgres-acceptance.json', 'desktop-hosted-postgres-acceptance.log',
+    'migration-summary.json', 'migration-tests.log',
+    'label-verification.json', 'label-verification.log',
+    'notice-validation-tests.json', 'notice-validation-tests.log',
+    'distribution-notice-verification.json', 'runtime-environment.json',
+    'packaged-receiving-readiness.json',
 })
 FORBIDDEN_PARTS = frozenset({
     '.git', '.venv', '__pycache__', 'station_data', 'outputs', 'backups',
@@ -51,7 +62,8 @@ FORBIDDEN_PARTS = frozenset({
     'roca_settings.json', 'installed_release.json', 'runtime.json', 'runtime.lock',
 })
 FORBIDDEN_SUFFIXES = {'.db', '.sqlite', '.sqlite3', '.csv', '.log', '.secret', '.key', '.token', '.pfx', '.p12', '.pdf', '.zpl'}
-PROGRAM_JSON = {'_internal/desktop_build.json', '_internal/product_brand.json', '_internal/roca_edition.json'}
+PROGRAM_JSON = {'_internal/desktop_build.json', '_internal/product_brand.json', '_internal/roca_edition.json',
+                '_internal/third_party_notices/source-manifest.json'}
 CRYPTOGRAPHY_VERSION = '50.0.2'
 # These exact upstream metadata files are code-supply-chain evidence, not a
 # general JSON exception. A dependency upgrade requires a fresh path review.
@@ -191,6 +203,16 @@ def validate_build(files, source_root):
                 '_internal/assets/stock-and-sleeve.ico'}
     if not required.issubset(files):
         raise PackageError('Build the complete current desktop program with build identity and icon.')
+    notice_source=Path(source_root)/'third_party_notices'
+    notice_prefix='_internal/third_party_notices/'
+    notices={name.removeprefix(notice_prefix):path for name,path in files.items() if name.startswith(notice_prefix)}
+    if notice_source.exists() or notices:
+        try:
+            expected=validate_notice_payload(notice_source)
+            if set(notices)!=set(expected):raise ValueError('Incomplete reviewed notice file set.')
+            validate_notice_payload(notices['source-manifest.json'].parent)
+        except (ValueError,OSError) as error:
+            raise PackageError('Reviewed third-party notices are missing, changed or unapproved. Rebuild the complete verified payload.') from error
     metadata = json_object(files['_internal/desktop_build.json'].read_text(encoding='utf-8'))
     if type(metadata.get('format_version')) is not int or metadata['format_version'] != 1 or metadata.get('channel') != 'private-pilot':
         raise PackageError('The build is not a supported private pilot.')
@@ -274,6 +296,16 @@ def verify_archive(path):
             raise PackageError('Duplicate archive entries or failed ZIP integrity.')
         program = json_object(archive.read('ProgramSHA256.json'))
         evidence = json_object(archive.read('EvidenceSHA256.json'))
+        notice_prefix='_internal/third_party_notices/'
+        notice_names={name.removeprefix(notice_prefix) for name in program if name.startswith(notice_prefix)}
+        if notice_names:
+            try:
+                reviewed=validate_notice_payload(ROOT/'third_party_notices')
+                if notice_names!=set(reviewed):raise ValueError('Unapproved notice file set.')
+                if any(program[notice_prefix+name]!=digest_file(path) for name,path in reviewed.items()):
+                    raise ValueError('Unapproved notice hash.')
+            except (ValueError,OSError) as error:
+                raise PackageError('Archived third-party notices differ from the reviewed payload.') from error
         expected = set(TOP_FILES)
         for name, hashed in program.items():
             safe_payload_path(name)

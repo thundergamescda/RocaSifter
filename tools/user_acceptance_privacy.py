@@ -1,5 +1,6 @@
 """Actual Chrome download/race checks with fictional loopback-only export data."""
 from datetime import datetime,timezone
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -18,11 +19,11 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from hosted.app import create_app
 from hosted.privacy import Limits
-from hosted.privacy_test_fixtures import Database
+from hosted.privacy_test_fixtures import Database, receiving_rows
 from test_hosted_privacy import decode
 from intake_manifest import capture_manifest
 
-REPORT=ROOT/'Testing'/'oauth-receiving'/'privacy-export'
+REPORT=ROOT/'Testing'/'receiving-saga'/'privacy-v4'
 SOURCES=('hosted/privacy.py','hosted/privacy_test_fixtures.py','hosted/app.py','hosted/auth.py','hosted/mfa.py','intake_manifest.py',
          'hosted/schema.sql','hosted/static/privacy.js','hosted/static/privacy.css','hosted/static/brand-icon.png','hosted/templates/privacy.html',
          'hosted/static/portal.js','tools/user_acceptance_privacy.py')
@@ -42,6 +43,9 @@ def run():
     claim_id=uuid.uuid4()
     db.rows['physical_intakes']=[{'id':claim_id,'source_manifest':original,'manifest_hash':original['sha256'],'state':'consumed'}]
     db.rows['physical_intake_requests']=[{'request_key':'fictional-browser-intake','claim_id':claim_id,'result':{'source_manifest':original}}]
+    receiving_id=receiving_rows(db)
+    saved=db.rows['receiving_requests'][0]
+    db.rows['receiving_requests']=[deepcopy(saved)|{'request_key':'browser-receiving-'+str(i)} for i in range(127)]
     server=make_server('127.0.0.1',0,lambda *_:[],threaded=True)
     origin='http://127.0.0.1:'+str(server.server_port)
     app=create_app({'TESTING':True,'PUBLIC_BASE_URL':origin,'APP_ENCRYPTION_KEYS':Fernet.generate_key().decode()},database=db)
@@ -93,31 +97,52 @@ def run():
             assert download.failure() is None
             manifest,records,footer=decode(target.read_bytes().splitlines(keepends=True))
             assert len(records['credit_entries'])==275 and footer['record_counts']['credit_entries']==275
-            assert manifest['version']==footer['version']==2 and len(footer['record_counts'])==18
+            assert manifest['version']==footer['version']==4 and len(footer['record_counts'])==26
             assert records['physical_intakes'][0]['source_manifest']==original
             assert len(records['physical_intake_requests'])==1
+            assert records['receiving_operations'][0]['id']==receiving_id
+            assert len(records['receiving_requests'])==127
+            assert records['receiving_operations'][0]['receipt']['confirmed_targets'][0]['target_sku']=='SKU>^~'
+            assert records['receiving_operations'][0]['catalog_proof']=={'kind':'catalog_batch_ack','request_hash':'5'*64,'response_hash':'6'*64}
+            assert records['receiving_operations'][0]['catalog_resolutions'][0]['template_version']==2
+            assert records['receiving_plan_intents'][0]['retirement_basis']=='registered_original_wire'
+            assert records['receiving_plan_intents'][0]['retired_original_plan_sha256']==records['receiving_plan_intents'][0]['wire_hash']
+            assert records['receiving_attempts'][0]['evidence']['proof']['evidence_hash']=='c'*64
             assert b'FICTIONAL-SECRET-NEVER-EXPORT' not in target.read_bytes()
+            assert b'DO-NOT-EXPORT' not in target.read_bytes()
             assert verified_count()==1
             expect(page.locator('#privacyProgress')).to_contain_text('Verified hosted copy prepared')
             page.screenshot(path=str(REPORT/'privacy-verified-download.png'),full_page=True)
             outcome['download']={'bytes':target.stat().st_size,'sha256':hashlib.sha256(target.read_bytes()).hexdigest(),
                                  'credit_entries':275,'record_counts':footer['record_counts'],'footer_hash_verified':True}
-            results.append('PASS actual Chrome v2 download verifies18 collection counts/hash, all275 entries and original selected/excluded intake evidence; credential-like value excluded; audit confirms verification, not customer delivery.')
+            results.append('PASS actual Chrome v4 download verifies26 collection counts/hash, all275 credit entries,127 receiving requests, classified intent/retirement hashes, selected/excluded original intake and projected catalog/inventory proof; raw provider/catalog/credential values excluded; audit confirms verification, not customer delivery.')
+
+            open_form();prior_downloads=len(downloads);prior_verified=verified_count()
+            snapshot=deepcopy(db.rows)
+            db.rows['receiving_operations'][0]['plan']['future_catalog']={'customer_id':str(uuid.uuid4()),'name':'FOREIGN-RECEIVING-SENTINEL'}
+            page.locator('#privacyDownload').click()
+            expect(page.locator('#privacyProgress')).to_contain_text('No complete export was generated')
+            expect(page.locator('#privacyDownload')).to_be_enabled()
+            assert len(downloads)==prior_downloads and verified_count()==prior_verified
+            db.rows=snapshot
+            results.append('PASS foreign-customer data nested in an unprojected future receiving catalog field stops the server stream; no completed download or verification audit.')
 
             pattern='**/api/privacy/customers/*/export'
-            for mode in ('truncated','hash'):
+            for mode in ('truncated','hash','version'):
                 open_form();prior_downloads=len(downloads);prior_verified=verified_count()
-                def corrupt(route,mode=mode):
+                def corrupt(route):
                     response=route.fetch();lines=response.body().splitlines(keepends=True)
                     if mode=='truncated':lines=lines[:-1]
-                    else:
+                    elif mode=='hash':
                         for index,line in enumerate(lines):
                             value=json.loads(line)
                             if value['kind']=='page' and value['dataset']=='credit_entries':
                                 value['records'][0]['reason']='ALTERED-FICTIONAL-PAYLOAD';lines[index]=(json.dumps(value)+'\n').encode();break
+                    else:
+                        value=json.loads(lines[0]);value['version']=3;lines[0]=(json.dumps(value)+'\n').encode()
                     route.fulfill(response=response,body=b''.join(lines))
                 page.route(pattern,corrupt);page.locator('#privacyDownload').click()
-                expect(page.locator('#privacyProgress')).to_contain_text('footer' if mode=='truncated' else 'hash did not verify')
+                expect(page.locator('#privacyProgress')).to_contain_text('footer' if mode=='truncated' else 'hash did not verify' if mode=='hash' else 'manifest is invalid')
                 expect(page.locator('#privacyDownload')).to_be_enabled()
                 assert len(downloads)==prior_downloads and verified_count()==prior_verified
                 page.screenshot(path=str(REPORT/('privacy-'+mode+'-rejected.png')),full_page=True)

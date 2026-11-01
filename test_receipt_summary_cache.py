@@ -30,6 +30,8 @@ class ReceiptSummaryCacheTests(unittest.TestCase):
                 'intent': {'items': ['not public']}, 'customer_reference': 'not needed for history',
                 'shared_trade': {'state': 'pending', 'trade_id': 'trade-fixture', 'message': 'Review needed',
                                  'body': {'customer_id': 'never-list'}, 'intent': {'items': ['never-list']}},
+                'hosted_receive':{'state':'needs_attention','receiving_id':'fictional-operation','message':'Check original',
+                                  'plan_body':{'identity':'never-list'},'server_receipt':{'customer':'never-list'}},
                 'files': {'buy': 'fictional.pdf'}}
 
     def snapshot(self):
@@ -45,6 +47,7 @@ class ReceiptSummaryCacheTests(unittest.TestCase):
         self.assertEqual((public['rows'], public['units'], public['retail']), (2, 5, 8.55))
         self.assertEqual(public['purchase'], {'type': 'credit', 'amount': 12.34, 'at': 'fixture-time', 'intake_total': 20.0, 'scope': 'hosted'})
         self.assertEqual(public['shared_trade'], {'state': 'pending', 'trade_id': 'trade-fixture', 'message': 'Review needed'})
+        self.assertEqual(public['hosted_receive'],{'state':'needs_attention','receiving_id':'fictional-operation','message':'Check original'})
         self.assertNotIn('cards', public)
         self.assertNotIn('intent', public)
         self.assertNotIn('customer_reference', public)

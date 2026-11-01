@@ -84,4 +84,4 @@ class IntakeHTTPTests(unittest.TestCase):
         result=self.client.get('/api/me',base_url=self.base,headers=self.headers)
         self.assertEqual(result.status_code,200)
         self.assertEqual(result.json['capabilities'],{'physical_intake_claims':1,'trade_claim_required':True,
-                         'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False})
+                         'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False,'receiving_plans':1})

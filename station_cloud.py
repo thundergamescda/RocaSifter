@@ -14,14 +14,30 @@ ORIGIN='https://stock-and-sleeve-api.onrender.com'
 ROLES=('owner','manager','buyer','cashier')
 
 
+def response_budget(method,path):
+    """Only typed receiving projections may carry their repeated final receipt.
+
+    Auth, customers, locations, readiness and retirement retain the old cap.
+    This changes no request, provider-body or generic API input limit.
+    """
+    operation=r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+    if (method=='POST' and path=='/api/receiving/plans'
+        or method=='GET' and re.fullmatch(r'/api/receiving/(?:'+operation+r'|requests/[A-Za-z0-9_-]{1,150})',path)
+        or method=='POST' and re.fullmatch(r'/api/receiving/'+operation+r'/(?:commit|recover|authorize|cancel)',path)
+        or method=='PUT' and re.fullmatch(r'/api/receiving/'+operation+r'/plan',path)):
+        return 8*1024*1024
+    return 2_000_000
+
+
 class CloudError(StationError):
-    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False,mfa_restart=False,code=None,physical_intake_id=None):
+    def __init__(self,message,*,status=400,offline=False,pending=False,session_changed=False,mfa_restart=False,code=None,physical_intake_id=None,receiving_id=None):
         super().__init__(message);self.status=status;self.offline=offline;self.pending=pending;self.session_changed=session_changed;self.mfa_restart=mfa_restart
         self.code=code;self.physical_intake_id=physical_intake_id
+        self.receiving_id=receiving_id
 
 
 class CloudClient:
-    def __init__(self,root,*,transport=None,vault=None,pending_vault=None,clock=None,intake_vault=None):
+    def __init__(self,root,*,transport=None,vault=None,pending_vault=None,clock=None,intake_vault=None,receiving_vault=None):
         self.vault=vault or Vault(root)
         if vault is None:self.vault.path=self.vault.root/'cloud.session'
         self.pending_vault=pending_vault or Vault(root)
@@ -36,6 +52,8 @@ class CloudClient:
         # password/MFA challenge or reuse a one-time proof from a disk journal.
         self._mfa=None
         self._mfa_completed=None
+        from station_hosted_receive import ReceivingJournal
+        self.receiving=ReceivingJournal(self,root,receiving_vault)
 
     def _saved(self):
         raw=self.vault.read()
@@ -136,17 +154,19 @@ class CloudClient:
 
     def pending(self,*,expected_session_id=None):
         with self.lock:
-            saved=self._saved();rows=self._pending();intakes=self._intake_pending()
+            saved=self._saved();rows=self._pending();intakes=self._intake_pending();receiving=self.receiving.read()
             if saved and saved['expires_at']<=self.clock():self._clear();saved=None
             if saved:self._expected(saved,expected_session_id)
-            if not saved:return {'pending':[],'hasOtherPending':bool(rows or intakes)}
+            if not saved:return {'pending':[],'hasOtherPending':bool(rows or intakes or receiving)}
             visible=[{'requestKey':row['request_key'],'action':row['kind'],'customerId':row.get('customer_id'),
                       'amount_cents':row['body'].get('amount_cents'),'entryKind':row['body'].get('kind'),
                       'reference':row['body'].get('reference'),'createdAt':row['created_at'],
                       'receiptId':row.get('receipt_id'),'tradeId':row.get('trade_id')} for row in rows if row['store']==saved['store']]
             visible.extend({'requestKey':row['request_key'],'action':'intake_claim','receiptId':row['receipt_id'],
                             'createdAt':row['created_at']} for row in intakes if row['store']==saved['store'])
-            return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows+intakes)}
+            visible.extend({'requestKey':row['request_key'],'action':'hosted_receiving','receiptId':row['receipt_id'],
+                            'receivingId':row['receiving_id'],'createdAt':row['created_at']} for row in receiving if row['store']==saved['store'])
+            return {'pending':visible,'hasOtherPending':any(row['store']!=saved['store'] for row in rows+intakes+receiving)}
 
     def recover(self,key,*,retry=False,expected_session_id=None):
         with self.lock:
@@ -177,7 +197,7 @@ class CloudClient:
             raise CloudError('Cloud service is unavailable. Shared credit cannot be changed offline. Retry the same saved action when connected.',status=503,offline=True) from None
         if 300<=response.status_code<400:
             raise CloudError('The cloud service returned an unexpected redirect. Contact support.',status=502)
-        if len(response.content)>2_000_000:
+        if len(response.content)>response_budget(method,path):
             raise CloudError('The cloud response was too large. Contact support.',status=502)
         try:result=response.json()
         except (ValueError,TypeError):
@@ -189,7 +209,9 @@ class CloudClient:
             code=result.get('code');code=code if isinstance(code,str) and re.fullmatch(r'[A-Z_]{1,80}',code) else None
             try:intake=str(uuid.UUID(str(result['physical_intake_id']))) if result.get('physical_intake_id') else None
             except (ValueError,TypeError,AttributeError):intake=None
-            raise CloudError(message,status=response.status_code,offline=response.status_code>=500,code=code,physical_intake_id=intake)
+            try:receiving=str(uuid.UUID(str(result['receiving_id']))) if result.get('receiving_id') else None
+            except (ValueError,TypeError,AttributeError):receiving=None
+            raise CloudError(message,status=response.status_code,offline=response.status_code>=500,code=code,physical_intake_id=intake,receiving_id=receiving)
         return result
 
     def _authenticated(self,method,path,*,data=None,expected_session_id=None):
@@ -519,3 +541,20 @@ class CloudClient:
             saved=self._saved();self._expected(saved,expected_session_id)
             if not saved:raise CloudError('Sign in to the store that owns this physical intake.',status=401)
             self._save_intake_pending([row for row in self._intake_pending() if (row['store'],row['request_key'])!=(saved['store'],key)])
+
+    def receiving_readiness(self,*,expected_session_id=None):
+        return self._authenticated('GET','/api/receiving/readiness',expected_session_id=expected_session_id)
+
+    def receiving_locations(self,*,expected_session_id=None):
+        return self._authenticated('GET','/api/receiving/locations',expected_session_id=expected_session_id)
+
+    def receiving_get(self,ident,*,expected_session_id=None):
+        from station_hosted_receive import uuid_value
+        return self._authenticated('GET','/api/receiving/'+uuid_value(ident),expected_session_id=expected_session_id)
+
+    def receiving_request(self,key,*,expected_session_id=None):
+        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}',key):raise CloudError('Invalid saved receiving request.')
+        return self._authenticated('GET','/api/receiving/requests/'+quote(key,safe=''),expected_session_id=expected_session_id)
+
+    def receiving_mutate(self,kind,body,receipt_id,label_profile,*,expected_session_id=None,receiving_id=None):
+        return self.receiving.mutate(kind,body,receipt_id,label_profile,expected_session_id,receiving_id)

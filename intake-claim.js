@@ -23,7 +23,10 @@ window.renderIntakeClaim=(receipt,claim=null)=>{
  intakeClaimSection.hidden=legacyFinal;if(legacyFinal)return;
  const supported=context.capabilities?.physical_intake_claims===1&&context.capabilities?.trade_claim_required===true;
  const ready=intent?.state==='confirmed',pending=!!intent&&!ready,valid=supported&&!!receipt.source_manifest&&!receipt.source_manifest_error,manager=['owner','manager'].includes(context.role);
- $('intakeClaimFacts').textContent=!supported?'The hosted service must be upgraded for central physical intake before a new trade can be accepted.':!valid?(receipt.source_manifest_error||'This older batch has no original intake manifest. Reimport its verified original CSV or have the owner review a new manual intake. Current edited cards cannot become an original source.'):ready?`Central tag ${claim?.physical_reference||intent.physical_reference} · ${intent.physical_intake_id} · ${claim?.state||intent.server_state}. ${intakeClaimCounts(receipt)}`:pending?`Saved tag ${intent.requested_reference||intent.selected_id} needs confirmation. ${intakeClaimCounts(receipt)}`:intakeClaimCounts(receipt);
+ const creditRecorded=receipt.shared_trade?.state==='confirmed'&&receipt.purchase?.scope==='hosted';
+ const consumptionProved=creditRecorded&&intent?.server_state==='consumed'&&intent.bound_trade_id===receipt.shared_trade.trade_id;
+ const shownState=creditRecorded?(consumptionProved?'Credit recorded · intake consumed':'Credit recorded · refresh intake consumption'):(claim?.state||intent?.server_state);
+ $('intakeClaimFacts').textContent=!supported?'The hosted service must be upgraded for central physical intake before a new trade can be accepted.':!valid?(receipt.source_manifest_error||'This older batch has no original intake manifest. Reimport its verified original CSV or have the owner review a new manual intake. Current edited cards cannot become an original source.'):ready?`Central tag ${claim?.physical_reference||intent.physical_reference} · ${intent.physical_intake_id} · ${shownState}. ${intakeClaimCounts(receipt)}`:pending?`Saved tag ${intent.requested_reference||intent.selected_id} needs confirmation. ${intakeClaimCounts(receipt)}`:intakeClaimCounts(receipt);
  $('intakeClaimInputs').hidden=ready||!valid;
  $('intakePhysicalReference').disabled=pending||!manager;
  $('intakePhysicalVerified').disabled=ready||!manager;
