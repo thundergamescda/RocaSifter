@@ -167,6 +167,9 @@ def parse_roca_csv(file_path: str, target_bin: str = "1", min_price: float = 0.7
 
 def barcode_value(item):
     """Short numeric Code 128-C payload; use the same value as Square's SKU."""
+    if 'hosted_sku_resolution' in item:
+        from hosted_labels import trusted_resolution
+        return trusted_resolution(item)['sku']
     original = str(item.get("sku") or "").strip()
     if not original:
         raise ValueError("Each card needs a SKU before labels or uploads can be generated.")
@@ -192,6 +195,10 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
         raise RuntimeError("PDF labels require reportlab: pip install reportlab")
     if layout not in ("standard", "fold", "side") or dpi not in (203, 300):
         raise ValueError("Use standard/fold/side layout and 203/300 DPI.")
+    if any('hosted_sku_resolution' in card for card in cards):
+        from hosted_labels import from_dimensions,render_pdf
+        if not all('hosted_sku_resolution' in card for card in cards):raise ValueError('Keep confirmed hosted labels separate from unresolved legacy labels.')
+        return render_pdf(cards,output_pdf_path,from_dimensions(width_in,height_in,layout,dpi))
     width, height = width_in * inch, height_in * inch
     c = canvas.Canvas(output_pdf_path, pagesize=(width, height))
     for item in cards:
@@ -264,9 +271,13 @@ def generate_zebra_pdf_labels(cards, output_pdf_path, width_in=2.0, height_in=1.
     print(f"[✓] Generated PDF thermal labels: {output_pdf_path}")
 
 
-def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="side"):
+def generate_zebra_zpl(cards, output_zpl_path, dpi=203, layout="side", width_in=2.0, height_in=1.0):
     if dpi not in (203, 300) or layout not in ("standard", "fold", "side"):
         raise ValueError("Use standard/fold/side layout and 203/300 DPI.")
+    if any('hosted_sku_resolution' in card for card in cards):
+        from hosted_labels import from_dimensions,render_zpl
+        if not all('hosted_sku_resolution' in card for card in cards):raise ValueError('Keep confirmed hosted labels separate from unresolved legacy labels.')
+        return render_zpl(cards,output_zpl_path,from_dimensions(width_in,height_in,layout,dpi))
     pw, ll = dpi * 2, dpi
     scale = dpi / 203
     dot = lambda n: round(n * scale)

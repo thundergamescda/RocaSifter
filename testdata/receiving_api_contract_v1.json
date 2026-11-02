@@ -1,0 +1,1824 @@
+{
+  "fixture_schema_version": 1,
+  "provenance": {
+    "source_path": "Testing/receiving-saga/contract-20261101T215919689190Z/fictional-newprice-api-contract.json",
+    "source_sha256": "773ebcc1d32125453ea59a5ec957672d71855f4009bef0062da54ffa4ca60675",
+    "generated_utc": "2026-11-01T21:59:21.965581+00:00",
+    "scope": "Four actual Flask API/PostgreSQL scenarios in a disposable ss_test namespace with fictional MFA sessions and injected fictional Square provider. No live Square or login/enrollment proof.",
+    "source_stable": true,
+    "generator": "tools/export_fictional_receiving_contract.py",
+    "note": "Exact fictional API projections retained. Game text is preserved verbatim from provider fixture, including its existing mojibake; no identity or hash was repaired or invented."
+  },
+  "cases": [
+    {
+      "name": "inventory_single",
+      "physical_claim": {
+        "version": 0,
+        "state": "open",
+        "physical_reference": "fictional-batch-base",
+        "manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "semantic_hash": "415dbf5d3d048c2828e66ca688ff80063d5d5b35946b1367b86e0b7625af6e20",
+        "source_manifest": {
+          "kind": "manual",
+          "rows": [
+            {
+              "identity": {
+                "set": "Fictional set",
+                "game": "Pokémon",
+                "kind": "card",
+                "name": "Fictional card",
+                "number": "001"
+              },
+              "quantity": 2
+            }
+          ],
+          "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "version": 1
+        },
+        "bound_trade_id": null,
+        "additional_delivery_of": null,
+        "created_at": "2026-11-01T13:59:20.278250-08:00",
+        "consumed_at": null,
+        "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+        "policy": {
+          "one_operation_per_claim": true,
+          "new_acceptance_requires_fresh_mfa": true,
+          "excluded_rows_reusable": false,
+          "physical_identity_proven_by_hash": false
+        }
+      },
+      "source_manifest": {
+        "version": 1,
+        "kind": "manual",
+        "rows": [
+          {
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "set": "Fictional set",
+              "number": "001",
+              "kind": "card"
+            },
+            "quantity": 2
+          }
+        ],
+        "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9"
+      },
+      "original_request": {
+        "request_key": "plan-7f74811105a247588cf2d606f0d4c19e",
+        "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflow_kind": "inventory_only",
+        "location_id": "fixture-location",
+        "new_inventory_confirmed": true,
+        "client_label_profile": {
+          "stock": "2x1",
+          "layout": "standard",
+          "dpi": 203
+        },
+        "excluded_not_received_ack": true,
+        "external_ownership_confirmed": true,
+        "lines": [
+          {
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "kind": "card",
+              "set": "Fictional set",
+              "number": "001"
+            },
+            "quantity": 2,
+            "selling_cents": 1250,
+            "zero_price_confirmed": false,
+            "reviewed": true
+          }
+        ]
+      },
+      "ready": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": false,
+        "catalog_proof": null,
+        "catalog_proof_hash": null,
+        "catalog_resolutions": [],
+        "catalog_resolutions_hash": null,
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "28e192243741a45698767db74795015ea995411430086c004633e803b93e8218",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-baa1449cf22841279814129a8136b393"
+        },
+        "receipt": null,
+        "receiving_id": "72d6dd20-4b64-4a51-89f1-6eaf045fe600",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "ready",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "0caa8128bc311826bd572c21815c6e60c65b10f21eeafb6e8f552c44251671f9",
+            "binding_id": "333f52fd-c868-4fa0-9f44-060acade1882",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "6e0958358ad3d915ed903833f3d1a95eff2021b5042069fbc7c58bce1bd28a5d",
+            "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "catalog_confirmed": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "6fc3eee8f4b4ad377832f8f65c01e26b3bfcfd03c95622d1f58ceacacd425605",
+          "response_hash": "49f5ee1085652d9c8c2f77c95d82fe8c0ef8a7b49fdbc66b473bc0ae4e037053"
+        },
+        "catalog_proof_hash": "2d2e24c6290e4699355c656a999a4822a2bec26292b2e6e34185d04f54809f3d",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "0af838ff73c53653bbf7bf0659be68ebd6a197488d11be881f0636331fac8100",
+            "binding_id": "39d9b585-750b-4b9a-a3a8-f6aa25ae9868",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "review_line_ids": [
+              "72a6eed9-7006-4148-a69f-7f0605cfcdd4"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+            "template_version": 1,
+            "variation_id": "fixture-price-9d1985bc06a44e1db82ec639db6d8311"
+          }
+        ],
+        "catalog_resolutions_hash": "85e4cef5c453b9507c80a5bda6bf134f65dbd01d74bbedd643c3402e7601e1d5",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "28e192243741a45698767db74795015ea995411430086c004633e803b93e8218",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-baa1449cf22841279814129a8136b393"
+        },
+        "receipt": null,
+        "receiving_id": "72d6dd20-4b64-4a51-89f1-6eaf045fe600",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "catalog_confirmed",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "0caa8128bc311826bd572c21815c6e60c65b10f21eeafb6e8f552c44251671f9",
+            "binding_id": "333f52fd-c868-4fa0-9f44-060acade1882",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "6e0958358ad3d915ed903833f3d1a95eff2021b5042069fbc7c58bce1bd28a5d",
+            "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "received": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "6fc3eee8f4b4ad377832f8f65c01e26b3bfcfd03c95622d1f58ceacacd425605",
+          "response_hash": "49f5ee1085652d9c8c2f77c95d82fe8c0ef8a7b49fdbc66b473bc0ae4e037053"
+        },
+        "catalog_proof_hash": "2d2e24c6290e4699355c656a999a4822a2bec26292b2e6e34185d04f54809f3d",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "0af838ff73c53653bbf7bf0659be68ebd6a197488d11be881f0636331fac8100",
+            "binding_id": "39d9b585-750b-4b9a-a3a8-f6aa25ae9868",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "review_line_ids": [
+              "72a6eed9-7006-4148-a69f-7f0605cfcdd4"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+            "template_version": 1,
+            "variation_id": "fixture-price-9d1985bc06a44e1db82ec639db6d8311"
+          }
+        ],
+        "catalog_resolutions_hash": "85e4cef5c453b9507c80a5bda6bf134f65dbd01d74bbedd643c3402e7601e1d5",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": true,
+        "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "28e192243741a45698767db74795015ea995411430086c004633e803b93e8218",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-baa1449cf22841279814129a8136b393"
+        },
+        "receipt": {
+          "accepted_receipt_hash": null,
+          "accepted_trade_id": null,
+          "catalog_proof_hash": "2d2e24c6290e4699355c656a999a4822a2bec26292b2e6e34185d04f54809f3d",
+          "catalog_resolutions": [
+            {
+              "binding_evidence_hash": "0af838ff73c53653bbf7bf0659be68ebd6a197488d11be881f0636331fac8100",
+              "binding_id": "39d9b585-750b-4b9a-a3a8-f6aa25ae9868",
+              "binding_version": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+              "review_line_ids": [
+                "72a6eed9-7006-4148-a69f-7f0605cfcdd4"
+              ],
+              "selling_cents": 1250,
+              "target_sku": "903059372656",
+              "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+              "template_version": 1,
+              "variation_id": "fixture-price-9d1985bc06a44e1db82ec639db6d8311"
+            }
+          ],
+          "catalog_resolutions_hash": "85e4cef5c453b9507c80a5bda6bf134f65dbd01d74bbedd643c3402e7601e1d5",
+          "catalog_write_performed": true,
+          "client_label_profile": {
+            "dpi": 203,
+            "layout": "standard",
+            "stock": "2x1"
+          },
+          "confirmed_targets": [
+            {
+              "action": "create_price",
+              "binding_evidence_hash": "0af838ff73c53653bbf7bf0659be68ebd6a197488d11be881f0636331fac8100",
+              "binding_id": "39d9b585-750b-4b9a-a3a8-f6aa25ae9868",
+              "binding_role": "resolved_target",
+              "binding_version": 1,
+              "confirmed_quantity": 2,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "quantity": 2,
+              "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+              "selling_cents": 1250,
+              "source_binding_evidence_hash": "0caa8128bc311826bd572c21815c6e60c65b10f21eeafb6e8f552c44251671f9",
+              "source_binding_id": "333f52fd-c868-4fa0-9f44-060acade1882",
+              "source_binding_version": 1,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "source_sku": "000000001234",
+              "target_sku": "903059372656",
+              "template_evidence_hash": "6e0958358ad3d915ed903833f3d1a95eff2021b5042069fbc7c58bce1bd28a5d",
+              "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+              "template_version": 1,
+              "variation_id": "fixture-price-9d1985bc06a44e1db82ec639db6d8311"
+            }
+          ],
+          "excluded_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+          },
+          "inventory_confirmed": true,
+          "physical_intake_id": "39bc946c-f32d-4191-9981-7a1d1df3398e",
+          "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "plan_hash": "28e192243741a45698767db74795015ea995411430086c004633e803b93e8218",
+          "provider": {
+            "application_id": "fixture-application",
+            "environment": "sandbox",
+            "location_id": "fixture-location",
+            "merchant_id": "fixture-merchant-baa1449cf22841279814129a8136b393"
+          },
+          "provider_proof_hash": "1b8bf6978a0b6c6493d6b1a9e9d73d2245bed6c47bb5ede99cc02e713c1a46fb",
+          "receipt_hash": "5d41736baccdfa084a2e2f9e033227f8ae1942bdf4f4a14f3fb070d95d18660e",
+          "receipt_schema_version": 1,
+          "received_at": "2026-11-01T21:59:20.648648+00:00",
+          "receiving_id": "72d6dd20-4b64-4a51-89f1-6eaf045fe600",
+          "revision": 0,
+          "selected_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+          },
+          "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "workflow_kind": "inventory_only"
+        },
+        "receiving_id": "72d6dd20-4b64-4a51-89f1-6eaf045fe600",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "received",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "0caa8128bc311826bd572c21815c6e60c65b10f21eeafb6e8f552c44251671f9",
+            "binding_id": "333f52fd-c868-4fa0-9f44-060acade1882",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "72a6eed9-7006-4148-a69f-7f0605cfcdd4",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "6e0958358ad3d915ed903833f3d1a95eff2021b5042069fbc7c58bce1bd28a5d",
+            "template_id": "7f8f5778-5816-435a-93ec-c7bc1e0cd875",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      }
+    },
+    {
+      "name": "inventory_coalesced",
+      "physical_claim": {
+        "version": 0,
+        "state": "open",
+        "physical_reference": "fictional-batch-base",
+        "manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "semantic_hash": "415dbf5d3d048c2828e66ca688ff80063d5d5b35946b1367b86e0b7625af6e20",
+        "source_manifest": {
+          "kind": "manual",
+          "rows": [
+            {
+              "identity": {
+                "set": "Fictional set",
+                "game": "Pokémon",
+                "kind": "card",
+                "name": "Fictional card",
+                "number": "001"
+              },
+              "quantity": 2
+            }
+          ],
+          "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "version": 1
+        },
+        "bound_trade_id": null,
+        "additional_delivery_of": null,
+        "created_at": "2026-11-01T13:59:20.662954-08:00",
+        "consumed_at": null,
+        "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+        "policy": {
+          "one_operation_per_claim": true,
+          "new_acceptance_requires_fresh_mfa": true,
+          "excluded_rows_reusable": false,
+          "physical_identity_proven_by_hash": false
+        }
+      },
+      "source_manifest": {
+        "version": 1,
+        "kind": "manual",
+        "rows": [
+          {
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "set": "Fictional set",
+              "number": "001",
+              "kind": "card"
+            },
+            "quantity": 2
+          }
+        ],
+        "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9"
+      },
+      "original_request": {
+        "request_key": "plan-907af3d06d85403cb36e1cd1cb7a7028",
+        "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflow_kind": "inventory_only",
+        "location_id": "fixture-location",
+        "new_inventory_confirmed": true,
+        "client_label_profile": {
+          "stock": "2x1",
+          "layout": "standard",
+          "dpi": 203
+        },
+        "excluded_not_received_ack": true,
+        "external_ownership_confirmed": true,
+        "lines": [
+          {
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "kind": "card",
+              "set": "Fictional set",
+              "number": "001"
+            },
+            "quantity": 1,
+            "selling_cents": 1250,
+            "zero_price_confirmed": false,
+            "reviewed": true
+          },
+          {
+            "review_line_id": "8a30839f-4118-40c4-aea9-698c996947ab",
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "kind": "card",
+              "set": "Fictional set",
+              "number": "001"
+            },
+            "quantity": 1,
+            "selling_cents": 1250,
+            "zero_price_confirmed": false,
+            "reviewed": true
+          }
+        ]
+      },
+      "ready": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": false,
+        "catalog_proof": null,
+        "catalog_proof_hash": null,
+        "catalog_resolutions": [],
+        "catalog_resolutions_hash": null,
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "c8c038dcbfa4575e54b606464339635a0ff4f4aa078040248de0b16191871530",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-226e6f8370ae47edb524d738202f6ea8"
+        },
+        "receipt": null,
+        "receiving_id": "13d78df0-6a62-465e-ad2c-516afd34b55c",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "ready",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          },
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "8a30839f-4118-40c4-aea9-698c996947ab",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "catalog_confirmed": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "9e4e968b0e063f40155c932aaefefce9ad2fc0af3f18ec32e38973db491dad1a",
+          "response_hash": "a2e3993b6c12d213cbb27df579486ff31572d4a9572ed6a467f4bc5dce47be44"
+        },
+        "catalog_proof_hash": "d1f3ebb0ef2e64b0a7ab354a5bc2d59a3721b81b1a45d67a34b2141e5f3ba3cc",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "2634c3bd7a82032818e44da205706daa3918e6346f6442532cd036e3a31ec4bd",
+            "binding_id": "2ed2e3ec-ac21-4de1-b20f-6a6bdd03efcb",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "review_line_ids": [
+              "58928702-6b20-488d-8883-4dea29343bb9",
+              "8a30839f-4118-40c4-aea9-698c996947ab"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": "fixture-price-3108138e985e430aa5d3f666c3defe6c"
+          }
+        ],
+        "catalog_resolutions_hash": "960745a1b86eaa6a81cfde2f5801d3d791a590a5acb17bc776a300f95be9952c",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "c8c038dcbfa4575e54b606464339635a0ff4f4aa078040248de0b16191871530",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-226e6f8370ae47edb524d738202f6ea8"
+        },
+        "receipt": null,
+        "receiving_id": "13d78df0-6a62-465e-ad2c-516afd34b55c",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "catalog_confirmed",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          },
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "8a30839f-4118-40c4-aea9-698c996947ab",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "received": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "9e4e968b0e063f40155c932aaefefce9ad2fc0af3f18ec32e38973db491dad1a",
+          "response_hash": "a2e3993b6c12d213cbb27df579486ff31572d4a9572ed6a467f4bc5dce47be44"
+        },
+        "catalog_proof_hash": "d1f3ebb0ef2e64b0a7ab354a5bc2d59a3721b81b1a45d67a34b2141e5f3ba3cc",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "2634c3bd7a82032818e44da205706daa3918e6346f6442532cd036e3a31ec4bd",
+            "binding_id": "2ed2e3ec-ac21-4de1-b20f-6a6bdd03efcb",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "review_line_ids": [
+              "58928702-6b20-488d-8883-4dea29343bb9",
+              "8a30839f-4118-40c4-aea9-698c996947ab"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": "fixture-price-3108138e985e430aa5d3f666c3defe6c"
+          }
+        ],
+        "catalog_resolutions_hash": "960745a1b86eaa6a81cfde2f5801d3d791a590a5acb17bc776a300f95be9952c",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": true,
+        "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "c8c038dcbfa4575e54b606464339635a0ff4f4aa078040248de0b16191871530",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-226e6f8370ae47edb524d738202f6ea8"
+        },
+        "receipt": {
+          "accepted_receipt_hash": null,
+          "accepted_trade_id": null,
+          "catalog_proof_hash": "d1f3ebb0ef2e64b0a7ab354a5bc2d59a3721b81b1a45d67a34b2141e5f3ba3cc",
+          "catalog_resolutions": [
+            {
+              "binding_evidence_hash": "2634c3bd7a82032818e44da205706daa3918e6346f6442532cd036e3a31ec4bd",
+              "binding_id": "2ed2e3ec-ac21-4de1-b20f-6a6bdd03efcb",
+              "binding_version": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+              "review_line_ids": [
+                "58928702-6b20-488d-8883-4dea29343bb9",
+                "8a30839f-4118-40c4-aea9-698c996947ab"
+              ],
+              "selling_cents": 1250,
+              "target_sku": "903059372656",
+              "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+              "template_version": 1,
+              "variation_id": "fixture-price-3108138e985e430aa5d3f666c3defe6c"
+            }
+          ],
+          "catalog_resolutions_hash": "960745a1b86eaa6a81cfde2f5801d3d791a590a5acb17bc776a300f95be9952c",
+          "catalog_write_performed": true,
+          "client_label_profile": {
+            "dpi": 203,
+            "layout": "standard",
+            "stock": "2x1"
+          },
+          "confirmed_targets": [
+            {
+              "action": "create_price",
+              "binding_evidence_hash": "2634c3bd7a82032818e44da205706daa3918e6346f6442532cd036e3a31ec4bd",
+              "binding_id": "2ed2e3ec-ac21-4de1-b20f-6a6bdd03efcb",
+              "binding_role": "resolved_target",
+              "binding_version": 1,
+              "confirmed_quantity": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "quantity": 1,
+              "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+              "selling_cents": 1250,
+              "source_binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+              "source_binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+              "source_binding_version": 1,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "source_sku": "000000001234",
+              "target_sku": "903059372656",
+              "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+              "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+              "template_version": 1,
+              "variation_id": "fixture-price-3108138e985e430aa5d3f666c3defe6c"
+            },
+            {
+              "action": "create_price",
+              "binding_evidence_hash": "2634c3bd7a82032818e44da205706daa3918e6346f6442532cd036e3a31ec4bd",
+              "binding_id": "2ed2e3ec-ac21-4de1-b20f-6a6bdd03efcb",
+              "binding_role": "resolved_target",
+              "binding_version": 1,
+              "confirmed_quantity": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "quantity": 1,
+              "review_line_id": "8a30839f-4118-40c4-aea9-698c996947ab",
+              "selling_cents": 1250,
+              "source_binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+              "source_binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+              "source_binding_version": 1,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "source_sku": "000000001234",
+              "target_sku": "903059372656",
+              "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+              "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+              "template_version": 1,
+              "variation_id": "fixture-price-3108138e985e430aa5d3f666c3defe6c"
+            }
+          ],
+          "excluded_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+          },
+          "inventory_confirmed": true,
+          "physical_intake_id": "929b3926-7d64-4d71-8fb8-9fa53e98caf6",
+          "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "plan_hash": "c8c038dcbfa4575e54b606464339635a0ff4f4aa078040248de0b16191871530",
+          "provider": {
+            "application_id": "fixture-application",
+            "environment": "sandbox",
+            "location_id": "fixture-location",
+            "merchant_id": "fixture-merchant-226e6f8370ae47edb524d738202f6ea8"
+          },
+          "provider_proof_hash": "16746530bf58e85cf99bde67973c625788b0733780094fc2b368d36173c9aca9",
+          "receipt_hash": "51a30dc688563274dbfea22bde89707221e987ef77198bb97313a4a03a1d8773",
+          "receipt_schema_version": 1,
+          "received_at": "2026-11-01T21:59:20.949239+00:00",
+          "receiving_id": "13d78df0-6a62-465e-ad2c-516afd34b55c",
+          "revision": 0,
+          "selected_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+          },
+          "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "workflow_kind": "inventory_only"
+        },
+        "receiving_id": "13d78df0-6a62-465e-ad2c-516afd34b55c",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "received",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "58928702-6b20-488d-8883-4dea29343bb9",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          },
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "32f9f152ef74faa5388a71cade477f5571d631e83b021071b8917d5097c97ab9",
+            "binding_id": "5f65130c-d26c-443f-9a73-6c560338ca8b",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 1,
+            "review_line_id": "8a30839f-4118-40c4-aea9-698c996947ab",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "16673055b205c94236a17a73df692bb09907ec7211e970a804dd2db577909aac",
+            "template_id": "d2c67fd4-4666-41c0-b409-c97896a9ab12",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      }
+    },
+    {
+      "name": "accepted_trade_single",
+      "physical_claim": {
+        "version": 0,
+        "state": "open",
+        "physical_reference": "fictional-batch-base",
+        "manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "semantic_hash": "415dbf5d3d048c2828e66ca688ff80063d5d5b35946b1367b86e0b7625af6e20",
+        "source_manifest": {
+          "kind": "manual",
+          "rows": [
+            {
+              "identity": {
+                "set": "Fictional set",
+                "game": "Pokémon",
+                "kind": "card",
+                "name": "Fictional card",
+                "number": "001"
+              },
+              "quantity": 2
+            }
+          ],
+          "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "version": 1
+        },
+        "bound_trade_id": null,
+        "additional_delivery_of": null,
+        "created_at": "2026-11-01T13:59:20.959316-08:00",
+        "consumed_at": null,
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "policy": {
+          "one_operation_per_claim": true,
+          "new_acceptance_requires_fresh_mfa": true,
+          "excluded_rows_reusable": false,
+          "physical_identity_proven_by_hash": false
+        }
+      },
+      "source_manifest": {
+        "version": 1,
+        "kind": "manual",
+        "rows": [
+          {
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "set": "Fictional set",
+              "number": "001",
+              "kind": "card"
+            },
+            "quantity": 2
+          }
+        ],
+        "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9"
+      },
+      "original_request": {
+        "request_key": "plan-159a2beb3cfe4f078f97dec245f40fd7",
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflow_kind": "accepted_trade",
+        "location_id": "fixture-location",
+        "new_inventory_confirmed": true,
+        "client_label_profile": {
+          "stock": "2x1",
+          "layout": "standard",
+          "dpi": 203
+        },
+        "excluded_not_received_ack": true,
+        "lines": [
+          {
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "quantity": 2,
+            "selling_cents": 1250,
+            "zero_price_confirmed": false,
+            "reviewed": true,
+            "accepted_line_id": "d119658a-05df-4a1d-ac40-013c25facfce"
+          }
+        ],
+        "accepted_trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+        "accepted_receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7"
+      },
+      "ready": {
+        "accepted_receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7",
+        "accepted_trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+        "blocked_reasons": [],
+        "catalog_confirmed": false,
+        "catalog_proof": null,
+        "catalog_proof_hash": null,
+        "catalog_resolutions": [],
+        "catalog_resolutions_hash": null,
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "7e07b538b914f38d605bfcaca276e0eaffbac5a87eff7b84e3a1bb4f82084314",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-72478d86b4944720a18aa9be9488de17"
+        },
+        "receipt": null,
+        "receiving_id": "a93daac5-6ae6-4dfd-bd37-5c20784672b7",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "ready",
+        "targets": [
+          {
+            "accepted_line_id": "d119658a-05df-4a1d-ac40-013c25facfce",
+            "action": "create_price",
+            "binding_evidence_hash": "9752b19f2c58ad9e2ba4f6e40257469bc8ba6c75aac3ce02000e617a9c002467",
+            "binding_id": "3912777a-21f8-47e1-ad20-988979def471",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "03482a9063c7bdd9936df0d0a9825626925964cbb6cb1bf92c4a9cb7e1e907ac",
+            "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "accepted_trade"
+      },
+      "catalog_confirmed": {
+        "accepted_receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7",
+        "accepted_trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "ce0387ed6dc7f700510e657c7177e5381ad9044d00084ec0b8c89555ec60f190",
+          "response_hash": "667df4483c51accb2a2260473a0089f66814b8b79a63dd3b813efe60cb24a398"
+        },
+        "catalog_proof_hash": "87dcf25142cdff81622c7f49979f9628d721821498f4fdc1b4ba6778f7271683",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "c173cdd55eea0ff119b931de1b5759c71b70411d905b14671cf4026b25f68e9e",
+            "binding_id": "be5d815d-7ad5-4c31-8892-29044fcd8415",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "review_line_ids": [
+              "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+            "template_version": 1,
+            "variation_id": "fixture-price-2075fbe1452a42e788ea5ef6f064de91"
+          }
+        ],
+        "catalog_resolutions_hash": "3bb18b4c60ab7bb4f26ffac312f6c7203f2f87db19850673a825e975703737ca",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "7e07b538b914f38d605bfcaca276e0eaffbac5a87eff7b84e3a1bb4f82084314",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-72478d86b4944720a18aa9be9488de17"
+        },
+        "receipt": null,
+        "receiving_id": "a93daac5-6ae6-4dfd-bd37-5c20784672b7",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "catalog_confirmed",
+        "targets": [
+          {
+            "accepted_line_id": "d119658a-05df-4a1d-ac40-013c25facfce",
+            "action": "create_price",
+            "binding_evidence_hash": "9752b19f2c58ad9e2ba4f6e40257469bc8ba6c75aac3ce02000e617a9c002467",
+            "binding_id": "3912777a-21f8-47e1-ad20-988979def471",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "03482a9063c7bdd9936df0d0a9825626925964cbb6cb1bf92c4a9cb7e1e907ac",
+            "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "accepted_trade"
+      },
+      "received": {
+        "accepted_receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7",
+        "accepted_trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "kind": "catalog_batch_ack",
+          "request_hash": "ce0387ed6dc7f700510e657c7177e5381ad9044d00084ec0b8c89555ec60f190",
+          "response_hash": "667df4483c51accb2a2260473a0089f66814b8b79a63dd3b813efe60cb24a398"
+        },
+        "catalog_proof_hash": "87dcf25142cdff81622c7f49979f9628d721821498f4fdc1b4ba6778f7271683",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "c173cdd55eea0ff119b931de1b5759c71b70411d905b14671cf4026b25f68e9e",
+            "binding_id": "be5d815d-7ad5-4c31-8892-29044fcd8415",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "review_line_ids": [
+              "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+            "template_version": 1,
+            "variation_id": "fixture-price-2075fbe1452a42e788ea5ef6f064de91"
+          }
+        ],
+        "catalog_resolutions_hash": "3bb18b4c60ab7bb4f26ffac312f6c7203f2f87db19850673a825e975703737ca",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": true,
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "7e07b538b914f38d605bfcaca276e0eaffbac5a87eff7b84e3a1bb4f82084314",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-72478d86b4944720a18aa9be9488de17"
+        },
+        "receipt": {
+          "accepted_receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7",
+          "accepted_trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+          "catalog_proof_hash": "87dcf25142cdff81622c7f49979f9628d721821498f4fdc1b4ba6778f7271683",
+          "catalog_resolutions": [
+            {
+              "binding_evidence_hash": "c173cdd55eea0ff119b931de1b5759c71b70411d905b14671cf4026b25f68e9e",
+              "binding_id": "be5d815d-7ad5-4c31-8892-29044fcd8415",
+              "binding_version": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+              "review_line_ids": [
+                "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6"
+              ],
+              "selling_cents": 1250,
+              "target_sku": "903059372656",
+              "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+              "template_version": 1,
+              "variation_id": "fixture-price-2075fbe1452a42e788ea5ef6f064de91"
+            }
+          ],
+          "catalog_resolutions_hash": "3bb18b4c60ab7bb4f26ffac312f6c7203f2f87db19850673a825e975703737ca",
+          "catalog_write_performed": true,
+          "client_label_profile": {
+            "dpi": 203,
+            "layout": "standard",
+            "stock": "2x1"
+          },
+          "confirmed_targets": [
+            {
+              "accepted_line_id": "d119658a-05df-4a1d-ac40-013c25facfce",
+              "action": "create_price",
+              "binding_evidence_hash": "c173cdd55eea0ff119b931de1b5759c71b70411d905b14671cf4026b25f68e9e",
+              "binding_id": "be5d815d-7ad5-4c31-8892-29044fcd8415",
+              "binding_role": "resolved_target",
+              "binding_version": 1,
+              "confirmed_quantity": 2,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "quantity": 2,
+              "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+              "selling_cents": 1250,
+              "source_binding_evidence_hash": "9752b19f2c58ad9e2ba4f6e40257469bc8ba6c75aac3ce02000e617a9c002467",
+              "source_binding_id": "3912777a-21f8-47e1-ad20-988979def471",
+              "source_binding_version": 1,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "source_sku": "000000001234",
+              "target_sku": "903059372656",
+              "template_evidence_hash": "03482a9063c7bdd9936df0d0a9825626925964cbb6cb1bf92c4a9cb7e1e907ac",
+              "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+              "template_version": 1,
+              "variation_id": "fixture-price-2075fbe1452a42e788ea5ef6f064de91"
+            }
+          ],
+          "excluded_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+          },
+          "inventory_confirmed": true,
+          "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+          "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "plan_hash": "7e07b538b914f38d605bfcaca276e0eaffbac5a87eff7b84e3a1bb4f82084314",
+          "provider": {
+            "application_id": "fixture-application",
+            "environment": "sandbox",
+            "location_id": "fixture-location",
+            "merchant_id": "fixture-merchant-72478d86b4944720a18aa9be9488de17"
+          },
+          "provider_proof_hash": "9dffcacadf1532e569abf43acc1da9bc8d5ae2dca6ff97fbce7e889accc6b088",
+          "receipt_hash": "1cc2a704bbb413c5e4375885c020e7382f408beccbd5d2af20ce0b6114992355",
+          "receipt_schema_version": 1,
+          "received_at": "2026-11-01T21:59:21.306568+00:00",
+          "receiving_id": "a93daac5-6ae6-4dfd-bd37-5c20784672b7",
+          "revision": 0,
+          "selected_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+          },
+          "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "workflow_kind": "accepted_trade"
+        },
+        "receiving_id": "a93daac5-6ae6-4dfd-bd37-5c20784672b7",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "received",
+        "targets": [
+          {
+            "accepted_line_id": "d119658a-05df-4a1d-ac40-013c25facfce",
+            "action": "create_price",
+            "binding_evidence_hash": "9752b19f2c58ad9e2ba4f6e40257469bc8ba6c75aac3ce02000e617a9c002467",
+            "binding_id": "3912777a-21f8-47e1-ad20-988979def471",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "d1a4cdbd-6703-4bef-8d4b-f69de12d7be6",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "03482a9063c7bdd9936df0d0a9825626925964cbb6cb1bf92c4a9cb7e1e907ac",
+            "template_id": "78c63243-292a-4297-9240-cc446f1db8a3",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "accepted_trade"
+      },
+      "accepted_trade": {
+        "id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+        "state": "accepted_credit",
+        "receipt_hash": "423c2b956257bdd033c433271d44e4652593ee0522b31d33e37bec59b70863f7",
+        "accepted_receipt": {
+          "lines": [
+            {
+              "id": "d119658a-05df-4a1d-ac40-013c25facfce",
+              "identity": {
+                "set": "Fictional set",
+                "game": "Pokémon",
+                "kind": "card",
+                "name": "Fictional card",
+                "number": "001"
+              },
+              "included": true,
+              "quantity": 2,
+              "reviewed": true,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "line_total_cents": 2000,
+              "unit_intake_cents": 1000
+            }
+          ],
+          "title": "Fictional customer trade",
+          "currency": "USD",
+          "customer": {
+            "id": "24b927a7-7f09-472f-9d1a-f5aa1804348f",
+            "display_name": "Fictional receiving customer"
+          },
+          "trade_id": "2b66ac58-922a-451e-8874-a9acd2e563f7",
+          "lines_hash": "10474b7740e84881f52514d0140cae267340951fd8950b5f6a74ebca455c3d30",
+          "accepted_at": "2026-11-01T13:59:20.990656-08:00",
+          "accepted_by": "f9d18eb4-2303-497f-a7d2-7432ba24ff9a",
+          "offer_terms": {
+            "cash_bps": 3500,
+            "credit_bps": 5000,
+            "override_reason": "",
+            "cash_override_cents": null,
+            "credit_override_cents": null
+          },
+          "items_received": true,
+          "selected_offer": "credit",
+          "credit_entry_id": "e23e7625-a9a9-4648-9cf6-103782616379",
+          "customer_agreed": true,
+          "physical_intake": {
+            "id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+            "manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+            "semantic_hash": "415dbf5d3d048c2828e66ca688ff80063d5d5b35946b1367b86e0b7625af6e20",
+            "claim_reviewed": true,
+            "excluded_quantities": {
+              "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+            },
+            "original_quantities": {
+              "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+            },
+            "selected_quantities": {
+              "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+            },
+            "excluded_rows_reusable": false,
+            "all_original_rows_claimed": true
+          },
+          "receipt_version": 1,
+          "accepted_by_role": "owner",
+          "cash_offer_cents": 700,
+          "source_reference": "pc-receipt-008946921afe40f8a269201bd94df610",
+          "credit_offer_cents": 1000,
+          "intake_total_cents": 2000,
+          "inventory_received": false,
+          "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+          "credit_policy_state": "unreviewed",
+          "trade_schema_version": 2,
+          "accepted_amount_cents": 1000,
+          "cash_payment_executed": false,
+          "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "version_before_acceptance": 0
+        },
+        "physical_intake_id": "012a40e6-ed83-429c-a306-fc6f4bed30d9",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9"
+      }
+    },
+    {
+      "name": "inventory_lost_catalog",
+      "physical_claim": {
+        "version": 0,
+        "state": "open",
+        "physical_reference": "fictional-batch-base",
+        "manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "semantic_hash": "415dbf5d3d048c2828e66ca688ff80063d5d5b35946b1367b86e0b7625af6e20",
+        "source_manifest": {
+          "kind": "manual",
+          "rows": [
+            {
+              "identity": {
+                "set": "Fictional set",
+                "game": "Pokémon",
+                "kind": "card",
+                "name": "Fictional card",
+                "number": "001"
+              },
+              "quantity": 2
+            }
+          ],
+          "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "version": 1
+        },
+        "bound_trade_id": null,
+        "additional_delivery_of": null,
+        "created_at": "2026-11-01T13:59:21.316655-08:00",
+        "consumed_at": null,
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "policy": {
+          "one_operation_per_claim": true,
+          "new_acceptance_requires_fresh_mfa": true,
+          "excluded_rows_reusable": false,
+          "physical_identity_proven_by_hash": false
+        }
+      },
+      "source_manifest": {
+        "version": 1,
+        "kind": "manual",
+        "rows": [
+          {
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "set": "Fictional set",
+              "number": "001",
+              "kind": "card"
+            },
+            "quantity": 2
+          }
+        ],
+        "sha256": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9"
+      },
+      "original_request": {
+        "request_key": "plan-0377be2897d946409bb61f0452044e36",
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflow_kind": "inventory_only",
+        "location_id": "fixture-location",
+        "new_inventory_confirmed": true,
+        "client_label_profile": {
+          "stock": "2x1",
+          "layout": "standard",
+          "dpi": 203
+        },
+        "excluded_not_received_ack": true,
+        "external_ownership_confirmed": true,
+        "lines": [
+          {
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "identity": {
+              "name": "Fictional card",
+              "game": "Pokémon",
+              "kind": "card",
+              "set": "Fictional set",
+              "number": "001"
+            },
+            "quantity": 2,
+            "selling_cents": 1250,
+            "zero_price_confirmed": false,
+            "reviewed": true
+          }
+        ]
+      },
+      "ready": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": false,
+        "catalog_proof": null,
+        "catalog_proof_hash": null,
+        "catalog_resolutions": [],
+        "catalog_resolutions_hash": null,
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "6c27b475b077d301aad3ff5779e73bd6cba0e0dd7cac9540ecc6ef599779cc2f",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-aec9bf2d69604681a434d81eedd97b27"
+        },
+        "receipt": null,
+        "receiving_id": "c62f624b-75b4-42b4-88e2-f35dc9c4a974",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "ready",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "8254685ff79c06a72e1172ac837a3c4328e99c094df3d286c4b2ab841bb78c15",
+            "binding_id": "ba6ed533-c195-4c42-b176-899200c809ae",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "ff499c739d85798a402478d26be6893f76be954e4343b0b5f6f9a93e706431a0",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "catalog_confirmed": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "evidence_hash": "b8d5f2412988bcda4dcc9329dbd088350ded66541884616f6f0859d3c22cbfa7",
+          "kind": "catalog_state_match",
+          "request_hash": "cc1e782eb700c9f497ba0312b158e2839936251991ae331b4a346f0b282c1fb1"
+        },
+        "catalog_proof_hash": "ee7f5a6829ea5db2df771495986e9ce5ff81e106807b40670837b41766f38444",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "21e24ba33a204625e270dd19bb74e50280b3ecdc08186afb9e204e6ed84e54e4",
+            "binding_id": "53fe1bdb-3489-4efa-8bb4-d634c3bc8591",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "review_line_ids": [
+              "84c5aed1-299b-454a-b25d-243670f09d2b"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": "fixture-price-a9edc641bdd443f88d3e26a476ba9556"
+          }
+        ],
+        "catalog_resolutions_hash": "a36be86b12b795b6b2dcd811d082ee985ab45dbc0e045eb07d3a181fb34e8f6f",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "6c27b475b077d301aad3ff5779e73bd6cba0e0dd7cac9540ecc6ef599779cc2f",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-aec9bf2d69604681a434d81eedd97b27"
+        },
+        "receipt": null,
+        "receiving_id": "c62f624b-75b4-42b4-88e2-f35dc9c4a974",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "catalog_confirmed",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "8254685ff79c06a72e1172ac837a3c4328e99c094df3d286c4b2ab841bb78c15",
+            "binding_id": "ba6ed533-c195-4c42-b176-899200c809ae",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "ff499c739d85798a402478d26be6893f76be954e4343b0b5f6f9a93e706431a0",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "received": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [],
+        "catalog_confirmed": true,
+        "catalog_proof": {
+          "evidence_hash": "b8d5f2412988bcda4dcc9329dbd088350ded66541884616f6f0859d3c22cbfa7",
+          "kind": "catalog_state_match",
+          "request_hash": "cc1e782eb700c9f497ba0312b158e2839936251991ae331b4a346f0b282c1fb1"
+        },
+        "catalog_proof_hash": "ee7f5a6829ea5db2df771495986e9ce5ff81e106807b40670837b41766f38444",
+        "catalog_resolutions": [
+          {
+            "binding_evidence_hash": "21e24ba33a204625e270dd19bb74e50280b3ecdc08186afb9e204e6ed84e54e4",
+            "binding_id": "53fe1bdb-3489-4efa-8bb4-d634c3bc8591",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "review_line_ids": [
+              "84c5aed1-299b-454a-b25d-243670f09d2b"
+            ],
+            "selling_cents": 1250,
+            "target_sku": "903059372656",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": "fixture-price-a9edc641bdd443f88d3e26a476ba9556"
+          }
+        ],
+        "catalog_resolutions_hash": "a36be86b12b795b6b2dcd811d082ee985ab45dbc0e045eb07d3a181fb34e8f6f",
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": true,
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "6c27b475b077d301aad3ff5779e73bd6cba0e0dd7cac9540ecc6ef599779cc2f",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-aec9bf2d69604681a434d81eedd97b27"
+        },
+        "receipt": {
+          "accepted_receipt_hash": null,
+          "accepted_trade_id": null,
+          "catalog_proof_hash": "ee7f5a6829ea5db2df771495986e9ce5ff81e106807b40670837b41766f38444",
+          "catalog_resolutions": [
+            {
+              "binding_evidence_hash": "21e24ba33a204625e270dd19bb74e50280b3ecdc08186afb9e204e6ed84e54e4",
+              "binding_id": "53fe1bdb-3489-4efa-8bb4-d634c3bc8591",
+              "binding_version": 1,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+              "review_line_ids": [
+                "84c5aed1-299b-454a-b25d-243670f09d2b"
+              ],
+              "selling_cents": 1250,
+              "target_sku": "903059372656",
+              "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+              "template_version": 1,
+              "variation_id": "fixture-price-a9edc641bdd443f88d3e26a476ba9556"
+            }
+          ],
+          "catalog_resolutions_hash": "a36be86b12b795b6b2dcd811d082ee985ab45dbc0e045eb07d3a181fb34e8f6f",
+          "catalog_write_performed": true,
+          "client_label_profile": {
+            "dpi": 203,
+            "layout": "standard",
+            "stock": "2x1"
+          },
+          "confirmed_targets": [
+            {
+              "action": "create_price",
+              "binding_evidence_hash": "21e24ba33a204625e270dd19bb74e50280b3ecdc08186afb9e204e6ed84e54e4",
+              "binding_id": "53fe1bdb-3489-4efa-8bb4-d634c3bc8591",
+              "binding_role": "resolved_target",
+              "binding_version": 1,
+              "confirmed_quantity": 2,
+              "currency": "USD",
+              "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "parent_id": "fixture-parent",
+              "quantity": 2,
+              "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+              "selling_cents": 1250,
+              "source_binding_evidence_hash": "8254685ff79c06a72e1172ac837a3c4328e99c094df3d286c4b2ab841bb78c15",
+              "source_binding_id": "ba6ed533-c195-4c42-b176-899200c809ae",
+              "source_binding_version": 1,
+              "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+              "source_sku": "000000001234",
+              "target_sku": "903059372656",
+              "template_evidence_hash": "ff499c739d85798a402478d26be6893f76be954e4343b0b5f6f9a93e706431a0",
+              "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+              "template_version": 1,
+              "variation_id": "fixture-price-a9edc641bdd443f88d3e26a476ba9556"
+            }
+          ],
+          "excluded_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+          },
+          "inventory_confirmed": true,
+          "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+          "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+          "plan_hash": "6c27b475b077d301aad3ff5779e73bd6cba0e0dd7cac9540ecc6ef599779cc2f",
+          "provider": {
+            "application_id": "fixture-application",
+            "environment": "sandbox",
+            "location_id": "fixture-location",
+            "merchant_id": "fixture-merchant-aec9bf2d69604681a434d81eedd97b27"
+          },
+          "provider_proof_hash": "bc32cc6003526f5038decfa88aec25d056d1ff101267d01db032758778fe1bb9",
+          "receipt_hash": "41b3f523a206c1287d36286b9b2a2b985d1d0574da5ec7cb5ea88145e030eb77",
+          "receipt_schema_version": 1,
+          "received_at": "2026-11-01T21:59:21.596098+00:00",
+          "receiving_id": "c62f624b-75b4-42b4-88e2-f35dc9c4a974",
+          "revision": 0,
+          "selected_quantities": {
+            "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+          },
+          "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "workflow_kind": "inventory_only"
+        },
+        "receiving_id": "c62f624b-75b4-42b4-88e2-f35dc9c4a974",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "received",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "8254685ff79c06a72e1172ac837a3c4328e99c094df3d286c4b2ab841bb78c15",
+            "binding_id": "ba6ed533-c195-4c42-b176-899200c809ae",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "ff499c739d85798a402478d26be6893f76be954e4343b0b5f6f9a93e706431a0",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      },
+      "catalog_unknown": {
+        "accepted_receipt_hash": null,
+        "accepted_trade_id": null,
+        "blocked_reasons": [
+          "PROVIDER_OUTCOME_UNKNOWN"
+        ],
+        "catalog_confirmed": false,
+        "catalog_proof": null,
+        "catalog_proof_hash": null,
+        "catalog_resolutions": [],
+        "catalog_resolutions_hash": null,
+        "client_label_profile": {
+          "dpi": 203,
+          "layout": "standard",
+          "stock": "2x1"
+        },
+        "excluded_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 0
+        },
+        "inventory_confirmed": false,
+        "physical_intake_id": "b4a65afe-33f7-4891-bcce-700c68d8c065",
+        "physical_manifest_hash": "eac53487e82ca8c3ecfb96bfc0c7b40b17b2ca938b576841cd386633a92865f9",
+        "plan_hash": "6c27b475b077d301aad3ff5779e73bd6cba0e0dd7cac9540ecc6ef599779cc2f",
+        "provider": {
+          "application_id": "fixture-application",
+          "environment": "sandbox",
+          "location_id": "fixture-location",
+          "merchant_id": "fixture-merchant-aec9bf2d69604681a434d81eedd97b27"
+        },
+        "receipt": null,
+        "receiving_id": "c62f624b-75b4-42b4-88e2-f35dc9c4a974",
+        "requires_fresh_mfa": true,
+        "revision": 0,
+        "selected_quantities": {
+          "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0": 2
+        },
+        "source_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "outcome_unknown",
+        "targets": [
+          {
+            "action": "create_price",
+            "binding_evidence_hash": "8254685ff79c06a72e1172ac837a3c4328e99c094df3d286c4b2ab841bb78c15",
+            "binding_id": "ba6ed533-c195-4c42-b176-899200c809ae",
+            "binding_role": "source_family",
+            "binding_version": 1,
+            "currency": "USD",
+            "identity_hash": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "parent_id": "fixture-parent",
+            "quantity": 2,
+            "review_line_id": "84c5aed1-299b-454a-b25d-243670f09d2b",
+            "selling_cents": 1250,
+            "source_line_key": "0408c3ab448ca3f140bd59730a3e2eef4a689b2735beb97af08b73c90b6a2cd0",
+            "source_sku": "000000001234",
+            "target_sku": "903059372656",
+            "template_evidence_hash": "ff499c739d85798a402478d26be6893f76be954e4343b0b5f6f9a93e706431a0",
+            "template_id": "0f924e95-0bfc-4c13-96a7-555f63a41e81",
+            "template_version": 1,
+            "variation_id": null
+          }
+        ],
+        "workflow_kind": "inventory_only"
+      }
+    }
+  ]
+}

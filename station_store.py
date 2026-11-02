@@ -37,12 +37,13 @@ def private_write(path, data):
 
 
 class Store:
-    SUMMARY_VERSION = 2
+    SUMMARY_VERSION = 3
     SUMMARY_FIELDS = frozenset(('id', 'title', 'source_name', 'mode', 'created', 'updated', 'revision',
         'inventory_status', 'inventory_intent', 'prepared', 'pickup_pending', 'pricing_game', 'mixed_games',
         'requires_purchase', 'cash_percent', 'credit_percent', 'channel', 'storage_strategy', 'storage_location', 'error'))
     PURCHASE_FIELDS = frozenset(('type', 'amount', 'at', 'intake_total', 'scope'))
     SHARED_FIELDS = frozenset(('state', 'trade_id', 'message'))
+    RECEIVING_FIELDS = frozenset(('state','receiving_id','message'))
 
     def __init__(self, root):
         self.root = Path(root)
@@ -160,6 +161,9 @@ class Store:
         if isinstance(shared, dict):
             result['shared_trade'] = {key: shared[key][:1000] for key in cls.SHARED_FIELDS
                                      if isinstance(shared.get(key), str)}
+        receiving=receipt.get('hosted_receive')
+        if isinstance(receiving,dict):
+            result['hosted_receive']={key:receiving[key][:1000] for key in cls.RECEIVING_FIELDS if isinstance(receiving.get(key),str)}
         return result
 
     @classmethod
@@ -177,7 +181,7 @@ class Store:
                     or not isinstance(body, str) or hashlib.sha256(body.encode()).hexdigest() != row['digest']):
                 return None
             result = json.loads(body)
-            allowed = cls.SUMMARY_FIELDS | {'rows', 'units', 'retail', 'all_reviewed', 'purchase', 'files', 'shared_trade'}
+            allowed = cls.SUMMARY_FIELDS | {'rows', 'units', 'retail', 'all_reviewed', 'purchase', 'files', 'shared_trade','hosted_receive'}
             if not isinstance(result, dict) or not set(result) <= allowed or result.get('id') != row['id']:
                 return None
             if type(result.get('rows')) is not int or result['rows'] < 0:
@@ -202,6 +206,8 @@ class Store:
             if not isinstance(shared, dict) or not set(shared) <= cls.SHARED_FIELDS or any(
                     not isinstance(value, str) or len(value) > 1000 for value in shared.values()):
                 return None
+            receiving=result.get('hosted_receive',{})
+            if not isinstance(receiving,dict) or not set(receiving)<=cls.RECEIVING_FIELDS or any(not isinstance(value,str) or len(value)>1000 for value in receiving.values()):return None
             return result
         except (ValueError, TypeError, KeyError):
             return None

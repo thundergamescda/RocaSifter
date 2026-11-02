@@ -158,8 +158,25 @@ class SharedTrade:
     def _confirmation(trade):
         return fingerprint({key:trade.get(key) for key in ('id','customer_id','source_reference','version','lines_hash','credit_offer_cents','cash_offer_cents','intake_total_cents','state','physical_intake_id','physical_manifest_hash')})
 
-    def _reconcile(self,receipt,trade,expected):
+    def _confirmed_claim(self,receipt,trade,expected,claim=None):
+        intent=receipt['shared_trade']
+        if intent.get('claim_binding_version')!=1:return None
+        saved=receipt.get('intake_claim') or {}
+        if (claim is None and saved.get('server_state')=='consumed' and saved.get('bound_trade_id')==trade['id']
+            and saved.get('consumed_trade_receipt_hash')==trade.get('receipt_hash')
+            and saved.get('physical_intake_id')==intent['physical_intake_id'] and saved.get('manifest_hash')==intent['physical_manifest_hash']):
+            return {'physical_intake_id':saved['physical_intake_id'],'state':'consumed','bound_trade_id':trade['id'],
+                    'manifest_hash':saved['manifest_hash'],'version':saved['server_version']}
+        claim=claim or self.cloud.intake_get(intent['physical_intake_id'],expected_session_id=expected)
+        self.service.intake_claims._verify(receipt,claim)
+        if (claim.get('physical_intake_id')!=intent['physical_intake_id'] or claim.get('state')!='consumed'
+            or claim.get('bound_trade_id')!=trade['id'] or claim.get('manifest_hash')!=intent['physical_manifest_hash']):
+            raise StationError('The accepted credit receipt and physical intake consumption do not agree. Keep the original receipt for owner recovery; no new credit will be issued.')
+        return claim
+
+    def _reconcile(self,receipt,trade,expected,claim=None):
         self._verify(receipt,trade);intent=receipt['shared_trade'];evidence=trade.get('accepted_receipt');result=trade.get('acceptance_result')
+        claim=self._confirmed_claim(receipt,trade,expected,claim)
         if (trade.get('state')!='accepted_credit' or not isinstance(evidence,dict) or not isinstance(result,dict)
             or fingerprint(evidence)!=trade.get('receipt_hash') or evidence.get('selected_offer')!='credit'
             or evidence.get('customer',{}).get('id')!=intent['customer_id'] or evidence.get('source_reference')!=intent.get('source_reference',receipt['id'])
@@ -187,6 +204,7 @@ class SharedTrade:
                 'store':intent['store'],'credit_policy_state':'unreviewed','checkout_eligible':False}
             receipt['shared_trade'].update(state='confirmed',server_version=trade['version'],receipt_hash=trade['receipt_hash'],
                 credit_entry_id=result['credit_entry_id'],message='Shared credit confirmed once. Square checkout is not enabled; tax policy remains unreviewed.')
+            if claim:receipt['intake_claim'].update(server_state='consumed',server_version=claim['version'],bound_trade_id=trade['id'],consumed_trade_receipt_hash=trade['receipt_hash'])
             self._save(receipt,'shared_trade_confirmed','Confirmed hosted trade credit mirrored locally. No local wallet entry or Square stock changed.')
         for key in ('create_key','accept_key','void_key'):
             if intent.get(key):self.cloud.trade_finish(intent[key],expected_session_id=expected)
@@ -203,6 +221,8 @@ class SharedTrade:
             account=self.cloud.account(customer,expected_session_id=expected)
             if account.get('customer',{}).get('id')!=customer:raise CloudError('The shared customer response did not match your selection.',status=502)
             preview=self._read(ident)
+            if preview.get('hosted_receive',{}).get('state') not in (None,'cancelled_before_write','retired_before_creation'):
+                raise StationError('This physical intake has a saved hosted receiving operation. Its financial route is locked; recover the original operation instead of creating new trade credit.')
             claim=self.service.intake_claims.for_trade(preview,expected,allow_consumed=True)
             bound_trade=self.cloud.trade_get(claim['bound_trade_id'],expected_session_id=expected) if claim.get('state')=='consumed' else None
             with self.service.lock:
@@ -228,7 +248,7 @@ class SharedTrade:
                     self._verify(receipt,trade)
                     if trade.get('state')!='accepted_credit':raise StationError('This intake belongs to another final hosted agreement. Open its original hosted receipt; no new shared credit can be issued.')
                     self._save(receipt,'shared_trade_recovery','Existing consumed intake matched this exact copied source. Recovering its original accepted receipt without creating another draft.')
-                    receipt=self._reconcile(receipt,trade,expected)
+                    receipt=self._reconcile(receipt,trade,expected,claim)
                     return self._view(receipt,trade,account)
                 self._save(receipt,'shared_trade_intent','Shared trade intent saved before network mutation. Local source locked.')
             receipt=self._ensure_created(receipt,expected);trade=self.cloud.trade_get(receipt['shared_trade']['trade_id'],expected_session_id=expected)
@@ -250,6 +270,11 @@ class SharedTrade:
             if intent['state']=='confirmed':
                 trade=self.cloud.trade_get(intent['trade_id'],expected_session_id=expected)
                 if trade.get('receipt_hash')!=intent.get('receipt_hash') or trade.get('state')!='accepted_credit':raise StationError('The hosted confirmation changed. Ask the store owner to recover this receipt.')
+                claim=self._confirmed_claim(receipt,trade,expected)
+                if claim and (receipt['intake_claim'].get('server_state')!='consumed' or receipt['intake_claim'].get('bound_trade_id')!=trade['id']):
+                    with self.service.lock:
+                        receipt=self._read(ident);receipt['intake_claim'].update(server_state='consumed',server_version=claim['version'],bound_trade_id=trade['id'],consumed_trade_receipt_hash=trade['receipt_hash'])
+                        self._save(receipt,'intake_consumption_confirmed','Authoritative physical intake consumption refreshed for the existing accepted credit receipt.')
                 for key in ('create_key','accept_key','void_key'):
                     if intent.get(key):self.cloud.trade_finish(intent[key],expected_session_id=expected)
                 return self._view(receipt,trade)
@@ -281,6 +306,8 @@ class SharedTrade:
             if not intent:raise StationError('Save and review a hosted trade draft first.')
             self._session(expected,intent['store'],manager=True)
             if intent['state'] in ('accepting','confirmed'):return self.status(ident,expected)
+            if receipt.get('hosted_receive',{}).get('state') not in (None,'cancelled_before_write','retired_before_creation'):
+                raise StationError('A saved hosted receiving operation locks this intake against new trade acceptance. Recover the original operation; do not issue credit for inventory-only stock.')
             if intent['state']!='draft':raise StationError('Recover the saved trade before accepting it.')
             if data.get('customerAgreed') is not True or data.get('itemsReceived') is not True:raise StationError('Confirm customer agreement and physical receipt of the included cards.')
             if intent.get('claim_binding_version')==1 and data.get('claimReviewed') is not True:raise StationError('Review the central physical intake, selected copies and excluded-copy limitation before accepting this trade.')

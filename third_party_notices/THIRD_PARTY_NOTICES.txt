@@ -1,0 +1,77 @@
+Stock & Sleeve - third-party software notices
+============================================
+
+This directory preserves upstream licences and attribution for components in
+the reviewed Windows desktop distribution and its pinned Python 3.12.16 runtime.
+The application uses third-party software; the upstream authors do not endorse
+Stock & Sleeve. Their licence, warranty and attribution terms remain applicable
+to their components. Application commercial terms do not remove those rights.
+
+The source-manifest.json file identifies each supplied notice, its public source,
+component version, and SHA-256. It contains no customer data or credentials.
+
+Desktop components
+------------------
+Python 3.12.16 (Astral python-build-standalone release 20261026), Requests 2.34.2,
+urllib3 2.8.0, idna 3.20, charset-normalizer 3.5.2, certifi 2026.10.23,
+ReportLab 5.1.0, Pillow 13.0.0, cryptography 50.0.2 and its declared Rust
+dependencies, CFFI 2.1.1 backend, NumPy 2.5.4 and its native OpenBLAS components,
+psutil 7.2.2, PyYAML 6.0.3, packaging 26.3, typing_extensions 4.16.0,
+setuptools 84.2.1 and the included vendor modules, and PyInstaller 6.22.3
+bootloader/runtime hooks. Retained native codecs/runtime libraries have their
+licence notices alongside their parent component notices.
+
+Requests
+Copyright 2019 Kenneth Reitz
+The full Apache-2.0 licence and original NOTICE are included.
+
+Certifi source availability
+--------------------------
+Certifi and its Mozilla-derived certificate bundle are provided under MPL-2.0.
+Unmodified source for the pinned component is available without charge at:
+https://github.com/certifi/python-certifi/tree/2026.10.23
+https://pypi.org/project/certifi/2026.10.23/#files
+The MPL-2.0 text and original certifi attribution are included. This source
+availability statement concerns the MPL-covered component; its rights remain
+available independently of application terms.
+
+Setuptools also includes MPL-2.0-covered validate-pyproject validation modules.
+Their supplied copyright/licence NOTICE is included, and the exact unmodified
+vendored source is available at:
+https://github.com/pypa/setuptools/tree/v84.2.1/setuptools/config/_validate_pyproject
+https://pypi.org/project/setuptools/84.2.1/#files
+
+Fonts and native software
+-------------------------
+ReportLab includes Bitstream Vera and DarkGarden fonts. Preserve their supplied
+licence files. DarkGarden's FontForge source remains in reportlab/fonts/
+DarkGarden.sfd with its GPL licence and unmodified-font document exception.
+The application does not alter that font or claim that a document is GPL merely
+because it embeds the font. Bitstream Vera is distributed as part of this larger
+software package, with its original notices and names retained.
+
+NumPy's supplied native licence bundle contains OpenBLAS/LAPACK and GCC Runtime
+Library Exception notices. PyInstaller's licence contains its bootloader
+distribution exception and runtime-hook terms. Preserve those exceptions with
+their licence texts; GPL labels alone do not describe those permissions.
+
+The included image codecs contain code from libjpeg-turbo/IJG, libtiff, libwebp,
+Little CMS, OpenJPEG, zlib-ng, libavif, libaom and dav1d. This software is based in
+part on the work of the Independent JPEG Group. The TIFF compression component
+includes software developed by the University of California, Berkeley.
+
+Licence choices
+---------------
+For cryptography's own dual-licensed code the BSD-3-Clause option is used.
+For self_cell, the Apache-2.0 option is used. For Rust dependencies offering
+MIT OR Apache-2.0, the MIT option is used unless only Apache-2.0 is offered.
+All supplied alternative licence texts remain intact for provenance. These
+choices do not change separately licensed native-library or font conditions.
+
+Scope
+-----
+The desktop does not include the PyMuPDF/MuPDF, pypdf, ZXing decoder or Playwright
+test tools, or the Flask/psycopg hosted-service dependency set. This notice does
+not grant rights to pricing feeds, card artwork, game trademarks or Square
+content, and does not replace the separate provider terms applicable to those
+services.

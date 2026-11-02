@@ -39,7 +39,7 @@ class Connection:
             self.snapshot=deepcopy(db.rows);return Result()
         if query.startswith('SET LOCAL') or 'pg_advisory_xact_lock' in query:return Result()
         if 'transaction_timestamp() AS snapshot_at' in query:
-            return Result({'snapshot_at':datetime(2026,10,28,tzinfo=timezone.utc),'schema_version':5})
+            return Result({'snapshot_at':datetime(2026,10,28,tzinfo=timezone.utc),'schema_version':6})
         if query.startswith('SELECT id,square_customer_id FROM ss_customers'):
             if str(params[0])!=str(db.actor['tenant_id']) or str(params[1])!=str(db.customer):return Result()
             return Result({'id':db.customer,'square_customer_id':'fixture-square-customer'})
@@ -101,3 +101,44 @@ def request(actor,customer):
             'verification_method':'existing_verified_channel','case_reference':'FICTIONAL-CASE-001',
             'identity_verified':True,'authority_confirmed':True,'scope_reviewed':True,'copy_handling_confirmed':True,
             'agent_authority_verified':False}
+
+
+def receiving_rows(database):
+    """A deliberately overcomplete fictional JSON fixture tests projections."""
+    operation,claim,trade,line=map(str,(uuid.uuid4(),uuid.uuid4(),uuid.uuid4(),uuid.uuid4()))
+    key='a'*64
+    selected={'review_line_id':line,'accepted_line_id':line,'source_line_key':key,
+              'identity':{'name':'Fictional received card','game':'pokemon','kind':'card'},
+              'quantity':2,'selling_cents':1000,'target_sku':'SKU>^~','variation_id':'fictional-variation'}
+    proof={'kind':'history_adjustments','request_hash':'b'*64,'evidence_hash':'c'*64,
+           'adjustment_ids':['fictional-adjustment'], 'catalog_objects':[{'raw':'DO-NOT-EXPORT-SIBLING'}]}
+    plan={'physical_intake_id':claim,'physical_manifest_hash':'d'*64,'source_snapshot_hash':'e'*64,
+          'workflow_kind':'accepted_trade','accepted_trade_id':trade,'accepted_receipt_hash':'f'*64,
+          'targets':[selected],'lines':[selected],'selected_quantities':{key:2},'excluded_quantities':{key:0},
+          'provider':{'application_id':'fictional-app','merchant_id':'fictional-merchant','environment':'sandbox','location_id':'fictional-location',
+                      'access_token':'DO-NOT-EXPORT-PROVIDER-TOKEN'},
+          'catalog_parent':{'nested':'DO-NOT-EXPORT-RAW-CATALOG'}}
+    receipt={**plan,'receipt_schema_version':1,'receiving_id':operation,'receipt_hash':'1'*64,
+             'confirmed_targets':[selected|{'confirmed_quantity':2}],'inventory_confirmed':True,'provider_proof_hash':'2'*64}
+    result={**plan,'receiving_id':operation,'state':'received','revision':1,'plan_hash':'3'*64,'receipt':receipt}
+    database.rows['receiving_operations']=[{'id':operation,'claim_id':claim,'workflow_kind':'accepted_trade',
+        'revision':1,'plan_hash':'3'*64,'plan':plan,'state':'received','receipt':receipt,'inventory_proof':proof,
+        'catalog_proof':{'kind':'catalog_batch_ack','request_hash':'5'*64,'response_hash':'6'*64,
+                         'raw_objects':[{'snapshot':'DO-NOT-EXPORT-CATALOG-PROOF'}]},
+        'catalog_resolutions':[selected|{'template_id':str(uuid.uuid4()),'template_version':2,'review_line_ids':[line],
+                                        'raw_parent':{'snapshot':'DO-NOT-EXPORT-CATALOG-RESOLUTION'}}]}]
+    database.rows['receiving_plan_intents']=[{'request_key':'fictional-retired-plan','intent_hash':'7'*64,'wire_hash':'8'*64,
+        'claim_id':claim,'workflow_kind':'accepted_trade','accepted_trade_id':trade,'accepted_receipt_hash':'f'*64,
+        'created_by':str(database.actor['staff_id']),'request_state':'retired_before_creation',
+        'retired_original_plan_sha256':'8'*64,'retirement_basis':'registered_original_wire',
+        'original_plan':{'raw':'DO-NOT-EXPORT-ORIGINAL-WIRE'},'authority_hash':'DO-NOT-EXPORT-INTENT-AUTHORITY'}]
+    database.rows['receiving_plan_revisions']=[{'operation_id':operation,'revision':1,'plan_hash':'3'*64,'plan':plan}]
+    database.rows['receiving_steps']=[{'operation_id':operation,'ordinal':1,'endpoint':'inventory_batch','api_version':'2026-09-16',
+        'body_hash':'b'*64,'provider_key':str(uuid.uuid4()),'encrypted_body':'DO-NOT-EXPORT-ENCRYPTED-BODY',
+        'session_hash':'DO-NOT-EXPORT-STAFF-SESSION','authority_hash':'DO-NOT-EXPORT-AUTHORITY'}]
+    database.rows['receiving_requests']=[{'request_key':'fictional-receive','action':'commit','intent_hash':'4'*64,'operation_id':operation,'result':result}]
+    database.rows['receiving_request_outcomes']=[{'request_key':'fictional-receive','operation_id':operation,'result':result}]
+    database.rows['receiving_attempts']=[{'id':str(uuid.uuid4()),'operation_id':operation,'generation':2,'action':'outcome',
+        'evidence':{'proof':proof,'code':None,'raw_response':{'nested':'DO-NOT-EXPORT-RAW-RESPONSE'}}}]
+    database.rows['receiving_exceptions']=[{'operation_id':operation,'code':'PROVIDER_OUTCOME_UNKNOWN','occurrences':1}]
+    return operation

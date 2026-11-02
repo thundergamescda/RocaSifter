@@ -17,6 +17,10 @@ from .square import Square
 from .trades import Trades
 from .privacy import Privacy, Limits as PrivacyLimits
 from .intake import IntakeClaims, IntakeError
+from .receiving import Receiving
+from .receiving_pipeline import CatalogReceiving
+from .receiving_square import ReceivingSquare
+from .receiving_plan import ReceivingError,public_response_bytes
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -31,6 +35,7 @@ def create_app(config=None,*,database=None,square_transport=None):
                       SQUARE_APPLICATION_SECRET=os.environ.get('SQUARE_APPLICATION_SECRET',''),
                       SQUARE_ENVIRONMENT=os.environ.get('SQUARE_ENVIRONMENT','sandbox'),
                       SQUARE_WEBHOOK_SIGNATURE_KEY=os.environ.get('SQUARE_WEBHOOK_SIGNATURE_KEY',''))
+    app.config['RECEIVING_WRITES_ENABLED']=os.environ.get('RECEIVING_WRITES_ENABLED','').lower()=='true'
     app.config.update(supplied)
     public=app.config['PUBLIC_BASE_URL'].rstrip('/')
     uri=urlsplit(public)
@@ -45,10 +50,11 @@ def create_app(config=None,*,database=None,square_transport=None):
     square=Square(db,app.config,square_transport) if db else None
     trades=Trades(db) if db else None
     intake=IntakeClaims(db) if db else None
+    receiving=CatalogReceiving(db,ReceivingSquare(square),square.cipher,writes_enabled=app.config.get('RECEIVING_WRITES_ENABLED') is True) if db else None
     privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
                     proof_key=app.config['APP_ENCRYPTION_KEYS'].split(',')[0],
                     limits=app.config.get('PRIVACY_EXPORT_LIMITS') or PrivacyLimits()) if db else None
-    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake)
+    app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake,ss_receiving=receiving)
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -86,6 +92,9 @@ def create_app(config=None,*,database=None,square_transport=None):
         if isinstance(error,IntakeError):
             result['code']=error.code
             if error.physical_intake_id:result['physical_intake_id']=error.physical_intake_id
+        if isinstance(error,ReceivingError):
+            result['code']=error.code
+            if error.receiving_id:result['receiving_id']=error.receiving_id
         return jsonify(result),error.status
 
     @app.errorhandler(HTTPException)
@@ -118,6 +127,11 @@ def create_app(config=None,*,database=None,square_transport=None):
         if not isinstance(value,dict):raise ServiceError('Send a JSON object.')
         if 'tenant_id' in value:raise ServiceError('Store scope comes from the signed-in session, not the request body.')
         return value
+
+    def receiving_response(value,status=200):
+        # Only typed operation/plan/request DTOs receive the larger transport
+        # budget. Match admission's compact UTF-8 measurement exactly.
+        return Response(public_response_bytes(value),status=status,mimetype='application/json')
 
     @app.get('/healthz')
     def health():return jsonify(service='Stock & Sleeve hosted service',version='0.1.0',mode='pilot',status='running')
@@ -211,7 +225,7 @@ def create_app(config=None,*,database=None,square_transport=None):
     def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot',
                            mfa_enabled=bool(g.actor.get('mfa_enabled')),mfa_authenticated=bool(g.actor.get('mfa_authenticated')),
                            capabilities={'physical_intake_claims':1,'trade_claim_required':True,
-                                         'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False})
+                                         'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False,'receiving_plans':1})
 
     @app.get('/api/staff')
     @authenticated
@@ -303,6 +317,94 @@ def create_app(config=None,*,database=None,square_transport=None):
     @authenticated
     def intake_get(claim_id):return jsonify(intake.get(g.actor,claim_id))
 
+    @app.get('/api/receiving/readiness')
+    @authenticated
+    def receiving_readiness():return jsonify(receiving.readiness(g.actor))
+
+    @app.get('/receiving/catalog')
+    def receiving_catalog_page():return render_template('receiving_admin.html')
+
+    @app.get('/receiving/price-templates')
+    def receiving_price_templates_page():return render_template('receiving_templates.html')
+
+    @app.get('/api/receiving/catalog-bindings')
+    @authenticated
+    def receiving_bindings():
+        try:limit=int(request.args.get('limit','50'))
+        except ValueError:raise ServiceError('Catalog binding page size is invalid.') from None
+        return jsonify(receiving.templates.bindings(g.actor,request.args.get('q',''),limit=limit,cursor=request.args.get('cursor')))
+
+    @app.get('/api/receiving/price-templates')
+    @authenticated
+    def receiving_price_templates_list():
+        try:limit=int(request.args.get('limit','50'))
+        except ValueError:raise ServiceError('Template page size is invalid.') from None
+        return jsonify(receiving.templates.list(g.actor,limit=limit,cursor=request.args.get('cursor')))
+
+    @app.post('/api/receiving/price-templates/previews')
+    @authenticated
+    def receiving_price_template_preview():return jsonify(receiving.templates.preview(g.actor,body())),201
+
+    @app.post('/api/receiving/price-templates/<uuid:preview_id>/approve')
+    @authenticated
+    def receiving_price_template_approve(preview_id):return jsonify(receiving.templates.approve(g.actor,preview_id,body()))
+
+    @app.post('/api/receiving/price-templates/<uuid:template_id>/revoke')
+    @authenticated
+    def receiving_price_template_revoke(template_id):return jsonify(receiving.templates.revoke(g.actor,template_id,body()))
+
+    @app.get('/api/receiving/locations')
+    @authenticated
+    def receiving_locations():return jsonify(receiving.locations(g.actor))
+
+    @app.post('/api/receiving/catalog-bindings/previews')
+    @authenticated
+    def receiving_binding_preview():return jsonify(receiving.binding_preview(g.actor,body())),201
+
+    @app.post('/api/receiving/catalog-bindings/<uuid:preview_id>/approve')
+    @authenticated
+    def receiving_binding_approve(preview_id):return jsonify(receiving.approve_binding(g.actor,preview_id,body()))
+
+    @app.post('/api/receiving/catalog-bindings/<uuid:binding_id>/revoke')
+    @authenticated
+    def receiving_binding_revoke(binding_id):return jsonify(receiving.revoke_binding(g.actor,binding_id,body()))
+
+    @app.post('/api/receiving/plans')
+    @authenticated
+    def receiving_plan():return receiving_response(receiving.create_plan(g.actor,body()),201)
+
+    @app.get('/api/receiving/requests/<request_key>')
+    @authenticated
+    def receiving_request_status(request_key):return receiving_response(receiving.request_status(g.actor,request_key))
+
+    @app.post('/api/receiving/requests/<request_key>/retire')
+    @authenticated
+    def receiving_plan_retire(request_key):return receiving_response(receiving.retire_plan_request(g.actor,request_key,body()))
+
+    @app.get('/api/receiving/<uuid:operation_id>')
+    @authenticated
+    def receiving_get(operation_id):return receiving_response(receiving.get(g.actor,operation_id))
+
+    @app.put('/api/receiving/<uuid:operation_id>/plan')
+    @authenticated
+    def receiving_revise(operation_id):return receiving_response(receiving.revise(g.actor,operation_id,body()))
+
+    @app.post('/api/receiving/<uuid:operation_id>/commit')
+    @authenticated
+    def receiving_commit(operation_id):return receiving_response(receiving.commit(g.actor,operation_id,body()))
+
+    @app.post('/api/receiving/<uuid:operation_id>/recover')
+    @authenticated
+    def receiving_recover(operation_id):return receiving_response(receiving.recover(g.actor,operation_id,body()))
+
+    @app.post('/api/receiving/<uuid:operation_id>/authorize')
+    @authenticated
+    def receiving_authorize(operation_id):return receiving_response(receiving.authorize(g.actor,operation_id,body()))
+
+    @app.post('/api/receiving/<uuid:operation_id>/cancel')
+    @authenticated
+    def receiving_cancel(operation_id):return receiving_response(receiving.cancel(g.actor,operation_id,body()))
+
     @app.get('/api/trades')
     @authenticated
     def trade_list():
@@ -333,7 +435,14 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.post('/api/square/connect')
     @authenticated
     def square_connect():
-        body();return jsonify(authorization_url=square.begin(g.actor))
+        data=body()
+        if set(data)-{'profile','receiving_permissions_confirmed'}:raise ServiceError('Unsupported Square authorization fields.')
+        profile=data.get('profile','standard')
+        if profile=='receiving':
+            if data.get('receiving_permissions_confirmed') is not True:raise ServiceError('Explicitly confirm the additional catalog and inventory permissions.')
+            return jsonify(authorization_url=square.begin(g.actor,profile='receiving'),requested_profile='receiving',grants_verified=False,receiving_enabled=False)
+        if profile!='standard' or 'receiving_permissions_confirmed' in data:raise ServiceError('Select a supported Square authorization purpose.')
+        return jsonify(authorization_url=square.begin(g.actor))
 
     @app.get('/oauth/square/callback')
     @authenticated

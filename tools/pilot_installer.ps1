@@ -16,7 +16,7 @@ function Assert-PilotRelativePath([string]$Name) {
             throw 'Unsafe package path.'
         }
         if ($part.ToLowerInvariant() -in @('.git','.venv','__pycache__','station_data','outputs','backups','profiles','profile',
-            'merchant','merchant_data','merchant-data','merchantdata','cloud.session','cloud.pending','square.secret',
+            'merchant','merchant_data','merchant-data','merchantdata','cloud.session','cloud.pending','cloud.intake','cloud.receiving','square.secret',
             'vault.key','roca_settings.json','installed_release.json','runtime.json','runtime.lock') -or
             $part -match '^(\.env($|\.)|testprofile-|merchant[-_])') { throw 'Merchant or credential data in package.' }
     }
@@ -41,6 +41,7 @@ function Get-PilotFiles([string]$Root) {
             }
             if (-not $entry.PSIsContainer -and $entry.Extension -eq '.json' -and $relative -cnotin
                 @('_internal/desktop_build.json','_internal/product_brand.json','_internal/roca_edition.json',
+                  '_internal/third_party_notices/source-manifest.json',
                   '_internal/cryptography-50.0.2.dist-info/sboms/sbom.json',
                   '_internal/cryptography-50.0.2.dist-info/sboms/cryptography-rust.cyclonedx.json')) {
                 throw 'Unapproved JSON data in program payload.'
@@ -62,8 +63,39 @@ function Get-PilotFiles([string]$Root) {
     return ,$result
 }
 
+function Assert-PilotNotices($Files) {
+    $prefix = '_internal/third_party_notices/'
+    $names = @($Files.Keys | Where-Object { $_.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) })
+    if ($names.Count -eq 0) { return }
+    $manifestName = $prefix + 'source-manifest.json'
+    if ($names.Count -ne 142 -or $names -cnotcontains $manifestName) { throw 'Unapproved third-party notice file set.' }
+    if ((Get-PilotHash $Files[$manifestName]) -cne 'ceb774608f656daaf592d27cb6a3f5d024ebbf6e12eb31f9978bdac84a239ae6') {
+        throw 'Unapproved third-party notice manifest.'
+    }
+    $manifest = Get-Content -LiteralPath $Files[$manifestName] -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($manifest.format_version -ne 1 -or @($manifest.files).Count -ne 141) { throw 'Invalid reviewed third-party notices.' }
+    $expected = @{}; $expected[$manifestName] = $null
+    foreach ($entry in $manifest.files) {
+        $name = $prefix + $entry.path
+        Assert-PilotRelativePath $name
+        if ($expected.ContainsKey($name)) { throw 'Aliased third-party notice path.' }
+        $expected[$name] = $entry
+    }
+    # Compare every name before reading any unapproved neighbour's contents.
+    foreach ($name in $names) {
+        if ($expected.Keys -cnotcontains $name) { throw 'Unapproved third-party notice file.' }
+    }
+    foreach ($name in $names) {
+        if ($name -ceq $manifestName) { continue }
+        $entry = $expected[$name]
+        if ((Get-Item -LiteralPath $Files[$name]).Length -ne $entry.bytes -or
+            (Get-PilotHash $Files[$name]) -cne $entry.sha256) { throw 'Changed reviewed third-party notice.' }
+    }
+}
+
 function Test-PilotPayload([string]$Root, $Expected) {
     $files = Get-PilotFiles $Root
+    Assert-PilotNotices $files
     $names = @($Expected.PSObject.Properties)
     if ($names.Count -eq 0 -or $files.Count -ne $names.Count) { throw 'Unexpected or missing program files.' }
     $seen = @{}

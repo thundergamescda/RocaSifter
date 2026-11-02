@@ -12,7 +12,7 @@ window.sharedTradePendingMarkup=row=>row.action?.startsWith('trade_')?'<article 
 window.sharedTradeLocked=receipt=>!!(receipt?.shared_trade&&!['confirmed','cancelled'].includes(receipt.shared_trade.state))||!!window.intakeClaimLocked?.(receipt);
 window.renderSharedTrade=()=>{
  const receipt=state.receipt,intent=receipt?.shared_trade;
- sharedTradePanel.hidden=!receipt||state.mode!=='trade'||(!!receipt.purchase&&receipt.purchase.scope!=='hosted');
+ sharedTradePanel.hidden=!receipt||state.mode!=='trade'||(!!receipt.purchase&&receipt.purchase.scope!=='hosted')||!!(receipt.hosted_receive&&!intent&&!['cancelled_before_write','retired_before_creation'].includes(receipt.hosted_receive.state));
  if(sharedTradePanel.hidden)return;
  const pending=window.sharedTradeLocked(receipt),confirmed=intent?.state==='confirmed';
  $('sharedTradeTitle').textContent=confirmed?'Shared trade credit confirmed.':pending?'This batch has a saved shared trade.':'Issue credit from a hosted trade.';

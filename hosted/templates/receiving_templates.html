@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Price family approvals · Stock &amp; Sleeve</title><link rel="icon" href="/static/brand-icon.png">
+<link rel="stylesheet" href="/static/privacy.css"><link rel="stylesheet" href="/static/receiving_templates.css">
+<script src="/static/receiving_templates.js" defer></script></head><body><main>
+<header><a href="/" class="brand"><img src="/static/brand-icon.png" width="32" height="32" alt="">Stock &amp; Sleeve</a><a href="/receiving/catalog">Catalog identity review</a></header>
+<section class="intro"><span class="eyebrow">Owner workspace</span><h1>Price family approvals</h1>
+<p>Review how a new selling price will fit under an existing Square item. Keep the item's current tax configuration, categories and older price variants.</p>
+<p id="templateSession" class="status" role="status">Checking your owner session…</p>
+<div class="actions"><button id="templateRefreshSession" class="quiet" type="button">Refresh owner session</button><a href="/">Sign-in and MFA setup</a></div>
+<p id="templateStatus" class="status" role="status" aria-live="polite"></p></section>
+<section class="scope"><h2>Review settings before receiving.</h2>
+<p>These approvals are saved in Stock &amp; Sleeve. This page does not change Square items or stock, create new parent items, or enable receiving.</p>
+<p class="help">Approval and revocation require enrolled MFA verified within 15 minutes. Preserving an existing tax configuration does not approve tax treatment for trade-credit redemption.</p></section>
+<section id="templateWorkspace" hidden>
+<section class="card"><div class="heading"><h2>Choose a reviewed card</h2><span id="templateStore" class="pill"></span></div>
+<form id="templateSearchForm"><label>Find a catalog mapping<input id="templateSearch" maxlength="200" type="search" autocomplete="off" placeholder="Card name, game or retained SKU"></label><button id="templateSearchButton" type="submit" class="quiet">Find reviewed cards</button></form>
+<p id="templateBindingStatus" class="status" role="status"></p><div id="templateBindings" class="template-list"></div><button id="templateMoreBindings" type="button" class="quiet" hidden>More reviewed cards</button>
+<section id="templateSelected" class="selection" hidden><h3>Selected source</h3><dl id="templateSelectedFacts" class="template-facts"></dl><p class="help">SKU quotes show exact spaces and punctuation. The display quotes are not part of the barcode.</p>
+<form id="templatePreviewForm"><label>New variation name prefix<input id="templatePrefix" maxlength="80" required autocomplete="off" placeholder="For example Retail"></label>
+<p class="help">The receiving plan will add the selected price to this prefix. Existing variation names and prices are preserved.</p><button id="templatePreviewButton" type="submit">Review current Square settings</button></form></section></section>
+<section id="templateReview" class="card" hidden><h2>Confirm the existing configuration</h2><p class="help">This is a time-limited review of the exact source mapping and Square settings shown below. Changing the source or prefix needs a new review.</p>
+<dl id="templateReviewFacts" class="template-facts"></dl><div id="templateTaxFacts" class="template-setting"></div><div id="templateCategoryFacts" class="template-setting"></div>
+<details><summary>Review references</summary><dl id="templateReferences" class="template-facts compact"></dl></details>
+<form id="templateApproveForm"><fieldset><legend>Owner review</legend>
+<label class="check"><input id="templateIdentityConfirmed" type="checkbox" required><span>I reviewed the full card or slab identity and its source mapping.</span></label>
+<label class="check"><input id="templateTaxConfirmed" type="checkbox" required><span>I reviewed the existing tax settings shown above and approve preserving them for this price family.</span></label>
+<label class="check"><input id="templateSiblingsConfirmed" type="checkbox" required><span>I approve retaining the existing parent, categories and all older price variants.</span></label></fieldset>
+<label>Internal approval reason<input id="templateApprovalReason" minlength="10" maxlength="200" required autocomplete="off" placeholder="Reviewed this card and its existing Square settings"></label>
+<p class="help">Use an internal catalog reason. Keep customer contact, payment and identity-document details out of this field.</p>
+<p id="templateProofGuidance" class="help"></p><button id="templateApproveButton" type="submit">Approve this price family</button></form></section>
+<section class="card template-history"><div class="heading"><h2>Saved approvals</h2><button id="templateRefreshList" type="button" class="quiet">Refresh approvals</button></div>
+<p class="help">Revoking an approval prevents its future use. It does not undo possibly applied Square changes or remove recovery evidence.</p>
+<p id="templateListStatus" class="status" role="status"></p><div id="templateList" class="template-list"></div><button id="templateMoreList" type="button" class="quiet" hidden>More approvals</button>
+<section id="templateRevoke" class="selection" hidden><h3>Revoke this approval</h3><p id="templateRevokeName"></p><form id="templateRevokeForm">
+<label>Internal revocation reason<input id="templateRevokeReason" minlength="10" maxlength="200" required autocomplete="off"></label>
+<div class="actions"><button id="templateRevokeButton" type="submit">Revoke approval</button><button id="templateCancelRevoke" type="button" class="quiet">Keep approval</button></div></form></section></section>
+</section><footer>Development prototype · Owner-reviewed price families · Receiving activation is separate</footer></main></body></html>

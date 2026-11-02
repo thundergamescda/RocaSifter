@@ -19,10 +19,10 @@ from station_cloud import CloudClient
 from station_service import StationService
 from test_shared_trade import TradeFixtureTransport
 
-REPORT=ROOT/'Testing'/'oauth-receiving'
+REPORT=ROOT/'Testing'/'receiving-saga'
 SOURCES=('station_shared_trade.py','station_cloud.py','station_service.py','station_server.py','station_store.py',
          'credit_tracker.py','shared-trade.js','shared-trade.css','cloud.js','station.js','roca_square_label_app.html',
-         'tools/user_acceptance_shared_trade.py','test_shared_trade.py','intake_manifest.py','station_intake_claim.py','intake-claim.js','intake-claim.css','test_intake_claim.py')
+         'tools/user_acceptance_shared_trade.py','test_shared_trade.py','intake_manifest.py','station_intake_claim.py','intake-claim.js','intake-claim.css','test_intake_claim.py','station_hosted_receive.py','receiving_evidence.py','hosted_labels.py','receiving.js','receiving.css')
 def hashes():return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in SOURCES}
 
 
@@ -80,6 +80,7 @@ def run():
                     consent();page.screenshot(path=str(REPORT/'shared-trade-offer-review.png'),full_page=True)
                     page.locator('#acceptSharedTrade').click();expect(page.locator('#sharedTradeMessage')).to_contain_text('Shared credit confirmed once');expect(page.locator('#refreshSharedTrade')).to_be_enabled()
                     result=service.store.receipt(receipt['id']);assert result['purchase']['scope']=='hosted' and remote.issuances==1 and 'tracked_credit' not in result
+                    expect(page.locator('#intakeClaimFacts')).to_contain_text('Credit recorded · intake consumed');expect(page.locator('#intakeClaimFacts')).not_to_contain_text(' · open.')
                     page.screenshot(path=str(REPORT/'shared-trade-confirmed.png'),full_page=True)
                     page.locator('#refreshSharedTrade').click();expect(page.locator('#refreshSharedTrade')).to_be_enabled();assert remote.issuances==1
                     page.locator('#closeSharedTrade').click();expect(page.locator('#trackApprovedCredit')).to_have_count(0);expect(page.locator('#acceptedBuy')).to_contain_text('No local wallet credit')

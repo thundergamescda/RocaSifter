@@ -31,14 +31,30 @@ def make_handler(core):
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
         def send_json(self, data, status=200, cookie=None):
+            # Serialize before the I/O boundary. Application/serialization errors
+            # must still reach the existing error response and diagnostics.
             content=json.dumps(data).encode()
+            return self.send_bytes(content,status,'application/json',cookie=cookie)
+
+        def send_bytes(self,content,status=200,content_type='application/octet-stream',*,cookie=None,disposition=None):
             self.send_response(status)
             self.security_headers()
-            self.send_header('Content-Type','application/json')
+            self.send_header('Content-Type',content_type)
             self.send_header('Content-Length',str(len(content)))
             if cookie:
                 self.send_header('Set-Cookie',cookie)
-            self.end_headers();self.wfile.write(content)
+            if disposition:
+                self.send_header('Content-Disposition',disposition)
+            try:
+                # A reload/closed tab can discard an already completed action's
+                # response. End this connection, without a second response or
+                # repeating/undoing the completed application operation.
+                self.end_headers()
+                self.wfile.write(content)
+            except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):
+                self.close_connection=True
+                return False
+            return True
 
         def local_request(self):
             host=f'127.0.0.1:{self.server.server_port}'
@@ -110,7 +126,7 @@ def make_handler(core):
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css','/intake-claim.js','/intake-claim.css'):
+                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css','/intake-claim.js','/intake-claim.css','/receiving.js','/receiving.css'):
                     filename=Path(core.APP_DIR)/path[1:]
                 elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
@@ -123,14 +139,11 @@ def make_handler(core):
                     from html import escape
                     from product_brand import display_name
                     content=content.decode('utf-8').replace('{{PRODUCT_NAME}}',escape(display_name())).encode('utf-8')
-                self.send_response(200);self.security_headers()
                 mime=mimetypes.guess_type(str(filename))[0] or 'text/plain'
-                self.send_header('Content-Type',mime+('' if mime=='application/pdf' else '; charset=utf-8'))
-                if filename.suffix in ('.csv','.zpl'):
-                    self.send_header('Content-Disposition',f'attachment; filename="{filename.name}"')
-                self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content)
+                disposition=f'attachment; filename="{filename.name}"' if filename.suffix in ('.csv','.zpl') else None
+                return self.send_bytes(content,content_type=mime+('' if mime=='application/pdf' else '; charset=utf-8'),disposition=disposition)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id},exc.status)
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -179,7 +192,7 @@ def make_handler(core):
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
                     return self.dispatch_post(data)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id},exc.status)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -218,6 +231,14 @@ def make_handler(core):
                 if path=='/api/cloud/intake-status':return self.send_json(service.intake_claims.status(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/intake-select':return self.send_json(service.intake_claims.select_existing(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/intake-additional':return self.send_json(service.intake_claims.additional(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/receiving-context':return self.send_json(service.hosted_receiving.context(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/receiving-prepare':return self.send_json(service.hosted_receiving.prepare(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/receiving-status':return self.send_json(service.hosted_receiving.status(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/receiving-existing':return self.send_json(service.hosted_receiving.recover_existing(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/receiving-revise':return self.send_json(service.hosted_receiving.revise(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/receiving-retire':return self.send_json(service.hosted_receiving.retire(str(data.get('receiptId','')),data,expected))
+                if path in ('/api/cloud/receiving-commit','/api/cloud/receiving-recover','/api/cloud/receiving-authorize','/api/cloud/receiving-cancel'):
+                    return self.send_json(service.hosted_receiving.act(str(data.get('receiptId','')),data,expected,path.rsplit('-',1)[1]))
                 if path=='/api/cloud/trade-prepare':return self.send_json(service.shared_trades.prepare(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/trade-status':return self.send_json(service.shared_trades.status(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/trade-accept':return self.send_json(service.shared_trades.accept(str(data.get('receiptId','')),data,expected))

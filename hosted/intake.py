@@ -58,7 +58,7 @@ def current_authority(db, actor, *, fresh_mfa=False, allowed_roles=('owner', 'ma
         at = session['mfa_authenticated_at']
         if (not mfa or not mfa['enabled'] or session['mfa_version'] != mfa['version'] or not at or
                 not 0 <= (session['checked_at'] - at).total_seconds() <= 900):
-            raise IntakeError('Enroll MFA and sign in with a fresh second-factor proof before accepting or attesting a delivery.',
+            raise IntakeError('Enroll MFA and sign in with a fresh second-factor proof from the last 15 minutes before this action.',
                               403, code='MFA_STEP_UP_REQUIRED')
     return session
 

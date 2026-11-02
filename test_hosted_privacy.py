@@ -9,7 +9,7 @@ from unittest.mock import Mock
 from cryptography.fernet import Fernet
 from hosted.app import create_app
 from hosted.privacy import Privacy, Limits, DATASETS, DATASET_NAMES, attestation
-from hosted.privacy_test_fixtures import Database, request
+from hosted.privacy_test_fixtures import Database, request, receiving_rows
 from hosted.security import ServiceError
 from intake_manifest import capture_manifest
 
@@ -203,7 +203,7 @@ class PrivacyExportTests(unittest.TestCase):
                 for table in ('ss_staff','ss_sessions','ss_staff_mfa','ss_square_connections','ss_invites','ss_oauth_states'):
                     self.assertNotIn(table,item.query)
 
-    def test_v2_counts_and_preserves_original_all_source_intake_evidence(self):
+    def test_v4_counts_and_preserves_original_all_source_intake_evidence(self):
         manifest=capture_manifest('manual',[
             {'identity':{'name':'Selected fictional card','game':'pokemon','kind':'card'},'quantity':2},
             {'identity':{'name':'Excluded fictional card','game':'pokemon','kind':'card'},'quantity':1}])
@@ -212,14 +212,86 @@ class PrivacyExportTests(unittest.TestCase):
         self.db.rows['physical_intake_requests']=[{'request_key':'fictional-claim-request','claim_id':claim,
                                                  'result':{'source_manifest':manifest,'access_token':'NEVER-EXPORT-INTAKE-TOKEN'}}]
         output=self.begin();lines=list(output.iter_bytes());header,records,footer=decode(lines)
-        self.assertEqual(header['version'],2)
-        self.assertEqual(footer['version'],2)
+        self.assertEqual(header['version'],4)
+        self.assertEqual(footer['version'],4)
         self.assertEqual(footer['record_counts']['physical_intakes'],1)
         self.assertEqual(footer['record_counts']['physical_intake_requests'],1)
         self.assertEqual(records['physical_intakes'][0]['source_manifest'],manifest)
         self.assertEqual(records['physical_intakes'][0]['manifest_hash'],manifest['sha256'])
         self.assertNotIn(b'NEVER-EXPORT-INTAKE-TOKEN',b''.join(lines))
         self.assertIn('unconfirmed ownership',' '.join(header['scope_limitations']))
+
+    def test_receiving_v4_explicit_projection_excludes_raw_catalog_body_authority_and_future_payloads(self):
+        operation=receiving_rows(self.db)
+        output=self.begin();lines=list(output.iter_bytes());header,records,footer=decode(lines)
+        self.assertEqual((header['version'],footer['version'],len(footer['record_counts'])),(4,4,26))
+        self.assertEqual(records['receiving_plan_intents'][0]['wire_hash'],'8'*64)
+        self.assertEqual(records['receiving_plan_intents'][0]['retirement_basis'],'registered_original_wire')
+        self.assertEqual(records['receiving_operations'][0]['id'],operation)
+        self.assertEqual(records['receiving_operations'][0]['plan']['targets'][0]['target_sku'],'SKU>^~')
+        self.assertEqual(records['receiving_operations'][0]['receipt']['confirmed_targets'][0]['confirmed_quantity'],2)
+        self.assertEqual(records['receiving_operations'][0]['catalog_proof'],
+                         {'kind':'catalog_batch_ack','request_hash':'5'*64,'response_hash':'6'*64})
+        self.assertEqual(records['receiving_operations'][0]['catalog_resolutions'][0]['template_version'],2)
+        self.assertEqual(records['receiving_attempts'][0]['evidence']['proof'],
+                         {'kind':'history_adjustments','request_hash':'b'*64,'evidence_hash':'c'*64})
+        for name in ('receiving_plan_intents','receiving_operations','receiving_plan_revisions','receiving_steps','receiving_requests',
+                     'receiving_request_outcomes','receiving_attempts','receiving_exceptions'):
+            self.assertEqual(footer['record_counts'][name],1)
+        self.assertNotIn(b'DO-NOT-EXPORT',b''.join(lines))
+        self.assertGreater(footer['redacted_fields'],0)
+
+    def test_receiving_foreign_json_is_rejected_even_inside_unprojected_catalog(self):
+        for field in ('targets','catalog_parent'):
+            receiving_rows(self.db)
+            plan=self.db.rows['receiving_operations'][0]['plan']
+            value={'customer_id':str(uuid.uuid4()),'display_name':'FOREIGN-RECEIVING-SENTINEL'}
+            if field=='targets':plan[field][0]['identity']['unexpected']=value
+            else:plan[field]=value
+            output=self.begin();lines=list(output.iter_bytes());_,_,footer=decode(lines)
+            self.assertEqual(footer['kind'],'error')
+            self.assertNotIn(b'FOREIGN-RECEIVING-SENTINEL',b''.join(lines))
+            self.assertEqual(self.db.active_transactions,0)
+
+    def test_receiving_scalar_fields_cannot_smuggle_nested_payloads_and_all_identity_fields_are_projected(self):
+        from intake_manifest import IDENTITY_LIMITS
+        from hosted.privacy import RECEIVING_IDENTITY_FIELDS
+        self.assertEqual(set(IDENTITY_LIMITS),set(RECEIVING_IDENTITY_FIELDS))
+        receiving_rows(self.db)
+        self.db.rows['receiving_operations'][0]['plan']['state']={'raw':'DO-NOT-EXPORT-NESTED-SCALAR'}
+        output=self.begin();lines=list(output.iter_bytes())
+        self.assertEqual(json.loads(lines[-1])['kind'],'error')
+        self.assertNotIn(b'DO-NOT-EXPORT-NESTED-SCALAR',b''.join(lines))
+        receiving_rows(self.db)
+        self.db.rows['receiving_operations'][0]['inventory_proof']['evidence_hash']='DO-NOT-EXPORT-MALFORMED-HASH'
+        output=self.begin();lines=list(output.iter_bytes())
+        self.assertEqual(json.loads(lines[-1])['kind'],'error')
+        self.assertNotIn(b'DO-NOT-EXPORT-MALFORMED-HASH',b''.join(lines))
+
+    def test_more_than_100_receiving_requests_are_counted_and_streamed_without_truncation(self):
+        receiving_rows(self.db);original=self.db.rows['receiving_requests'][0]
+        self.db.rows['receiving_requests']=[deepcopy(original)|{'request_key':'request-'+str(i)} for i in range(251)]
+        output=self.begin();_,records,footer=decode(list(output.iter_bytes()))
+        self.assertEqual(footer['record_counts']['receiving_requests'],251)
+        self.assertEqual(len({row['request_key'] for row in records['receiving_requests']}),251)
+        self.assertTrue(all(size==1 for size in self.db.fetch_sizes))
+
+    def test_v4_more_than_100_plan_intents_are_counted_without_raw_wire_or_authority_material(self):
+        receiving_rows(self.db);original=self.db.rows['receiving_plan_intents'][0]
+        self.db.rows['receiving_plan_intents']=[deepcopy(original)|{'request_key':'intent-'+str(index)} for index in range(251)]
+        output=self.begin();lines=list(output.iter_bytes());_,records,footer=decode(lines)
+        self.assertEqual(footer['record_counts']['receiving_plan_intents'],251)
+        self.assertEqual(len({row['request_key'] for row in records['receiving_plan_intents']}),251)
+        self.assertNotIn(b'DO-NOT-EXPORT',b''.join(lines))
+
+    def test_v4_malformed_intent_hash_or_resolution_alias_cannot_complete(self):
+        for mode in ('hash','alias'):
+            receiving_rows(self.db)
+            if mode=='hash':self.db.rows['receiving_plan_intents'][0]['retired_original_plan_sha256']='DO-NOT-EXPORT-MALFORMED-HASH'
+            else:self.db.rows['receiving_operations'][0]['catalog_resolutions'][0]['review_line_ids']=['NOT-A-UUID']
+            output=self.begin();lines=list(output.iter_bytes())
+            self.assertEqual(json.loads(lines[-1])['kind'],'error')
+            self.assertNotIn(b'DO-NOT-EXPORT-MALFORMED-HASH',b''.join(lines))
 
 
 class PrivacyHTTPTests(unittest.TestCase):

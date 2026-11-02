@@ -14,6 +14,7 @@ import requests
 from .security import ServiceError, digest, provider_id, webhook_valid
 from .ledger import require_role
 from .database import audit
+from .intake import current_authority
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class VerifiedSquareAccess:
 
 class Square:
     SCOPES=('MERCHANT_PROFILE_READ','CUSTOMERS_READ','ITEMS_READ','INVENTORY_READ','ORDERS_READ','PAYMENTS_READ')
+    RECEIVING_SCOPES=SCOPES+('ITEMS_WRITE','INVENTORY_WRITE')
     AUTHORITY_SCOPES=frozenset(SCOPES+('ITEMS_WRITE','INVENTORY_WRITE'))
     API_VERSION='2026-09-16'
 
@@ -61,7 +63,7 @@ class Square:
 
     def status(self,actor):
         with self.database.transaction() as db:
-            row=db.execute('SELECT merchant_id,environment,expires_at,revoked_at FROM ss_square_connections WHERE tenant_id=%s',(actor['tenant_id'],)).fetchone()
+            row=db.execute('SELECT merchant_id,environment,expires_at,revoked_at,requested_profile FROM ss_square_connections WHERE tenant_id=%s',(actor['tenant_id'],)).fetchone()
         if not row:
             state='not_connected';message='This store has not connected Square.'
         elif row['environment']!=self.environment:
@@ -72,24 +74,31 @@ class Square:
         else:
             state='connected';message='A Square authorization is saved for this environment. Checkout is not enabled.'
         connected=state=='connected'
+        requested_profile=row.get('requested_profile','standard') if row else 'standard'
         return {'oauth_configured':self.configured(),'connected':connected,'connection_status':state,'message':message,
                 'merchant_id':row['merchant_id'] if connected else None,
                 'environment':self.environment,'saved_environment':row['environment'] if row else None,
                 # A saved authorization and our requested scopes are not proof
                 # of the permissions Square actually granted this token.
-                'scopes':[],'requested_scopes':list(self.SCOPES),'grants_verified':False,
+                'scopes':[],'requested_scopes':list(self.RECEIVING_SCOPES if requested_profile=='receiving' else self.SCOPES),
+                'requested_profile':requested_profile,'grants_verified':False,
                 'write_checkout_enabled':False}
 
-    def begin(self,actor):
+    def begin(self,actor,*,profile='standard'):
         require_role(actor,'owner')
+        if profile not in ('standard','receiving'):raise ServiceError('Select a supported Square authorization purpose.')
+        scopes=self.RECEIVING_SCOPES if profile=='receiving' else self.SCOPES
         if not self.configured():raise ServiceError('The hosted Square application is not configured yet.',503)
         state=secrets.token_urlsafe(32)
         with self.database.transaction() as db:
+            if profile=='receiving':current_authority(db,actor,fresh_mfa=True,allowed_roles=('owner',))
             db.execute('DELETE FROM ss_oauth_states WHERE expires_at<now()')
-            db.execute("INSERT INTO ss_oauth_states(state_hash,tenant_id,session_hash,expires_at) VALUES (%s,%s,%s,now()+interval '5 minutes')",(digest(state),actor['tenant_id'],actor['session_hash']))
-            audit(db,actor['tenant_id'],actor['staff_id'],'square-authorization-started',actor['tenant_id'])
+            db.execute('''INSERT INTO ss_oauth_states(state_hash,tenant_id,session_hash,expires_at,requested_profile,application_id,environment,requested_scopes)
+                          VALUES (%s,%s,%s,now()+interval '5 minutes',%s,%s,%s,%s)''',
+                       (digest(state),actor['tenant_id'],actor['session_hash'],profile,self.config['SQUARE_APPLICATION_ID'],self.environment,Jsonb(list(scopes))))
+            audit(db,actor['tenant_id'],actor['staff_id'],'square-authorization-started',actor['tenant_id'],{'requested_profile':profile})
         return self.base+'/oauth2/authorize?'+urlencode({'client_id':self.config['SQUARE_APPLICATION_ID'],'redirect_uri':self.redirect,
-                   'scope':' '.join(self.SCOPES),'state':state,'session':'false'})
+                   'scope':' '.join(scopes),'state':state,'session':'false'})
 
     def _token(self,payload):
         try:
@@ -114,25 +123,34 @@ class Square:
         if not self.configured():raise ServiceError('Square OAuth is not configured.',503)
         # Consume state before network access. A failed/uncertain exchange needs a new flow.
         with self.database.transaction() as db:
+            peek=db.execute('SELECT requested_profile FROM ss_oauth_states WHERE state_hash=%s',(digest(str(state)),)).fetchone()
+            if peek and peek['requested_profile']=='receiving':current_authority(db,actor,fresh_mfa=True,allowed_roles=('owner',))
             row=db.execute('SELECT * FROM ss_oauth_states WHERE state_hash=%s FOR UPDATE',(digest(str(state)),)).fetchone()
             if not row or row['tenant_id']!=actor['tenant_id'] or not hmac.compare_digest(row['session_hash'],actor['session_hash']) or row['expires_at']<datetime.now(timezone.utc):
                 raise ServiceError('Authorization expired or belongs to another store session.',403)
+            profile=row.get('requested_profile')
+            expected=list(self.RECEIVING_SCOPES if profile=='receiving' else self.SCOPES)
+            if (profile not in ('standard','receiving') or row.get('application_id')!=self.config['SQUARE_APPLICATION_ID'] or
+                    row.get('environment')!=self.environment or row.get('requested_scopes')!=expected):
+                raise ServiceError('The authorization purpose, application or environment changed. Start a new Square connection.',409)
+            if profile=='receiving':current_authority(db,actor,fresh_mfa=True,allowed_roles=('owner',))
             db.execute('DELETE FROM ss_oauth_states WHERE state_hash=%s',(row['state_hash'],))
         if error or not code:raise ServiceError('Square authorization was declined. You can start again.')
         result,expiry=self._token({'grant_type':'authorization_code','code':code,'redirect_uri':self.redirect})
         merchant=provider_id(result.get('merchant_id'),'Square merchant ID')
         with self.database.transaction() as db:
+            if profile=='receiving':current_authority(db,actor,fresh_mfa=True,allowed_roles=('owner',))
             db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('square-tenant:'+str(actor['tenant_id']),))
             db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('square-merchant:'+merchant,))
             existing=db.execute('SELECT tenant_id,merchant_id,environment FROM ss_square_connections WHERE tenant_id=%s OR merchant_id=%s FOR UPDATE',(actor['tenant_id'],merchant)).fetchall()
             if any(r['tenant_id']!=actor['tenant_id'] or r['merchant_id']!=merchant or r['environment']!=self.environment for r in existing):
                 raise ServiceError('A different store/merchant connection already exists. Resolve it before reconnecting.',409)
             sealed=self.cipher.encrypt(json.dumps(result).encode()).decode()
-            db.execute('''INSERT INTO ss_square_connections(tenant_id,merchant_id,environment,encrypted_tokens,expires_at)
-                          VALUES (%s,%s,%s,%s,%s) ON CONFLICT (tenant_id) DO UPDATE SET encrypted_tokens=EXCLUDED.encrypted_tokens,
-                          expires_at=EXCLUDED.expires_at,revoked_at=NULL,updated_at=now()''',
-                       (actor['tenant_id'],merchant,self.environment,sealed,expiry))
-            audit(db,actor['tenant_id'],actor['staff_id'],'square-connected',merchant,{'environment':self.environment})
+            db.execute('''INSERT INTO ss_square_connections(tenant_id,merchant_id,environment,encrypted_tokens,expires_at,requested_profile)
+                          VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (tenant_id) DO UPDATE SET encrypted_tokens=EXCLUDED.encrypted_tokens,
+                          expires_at=EXCLUDED.expires_at,requested_profile=EXCLUDED.requested_profile,revoked_at=NULL,updated_at=now()''',
+                       (actor['tenant_id'],merchant,self.environment,sealed,expiry,profile))
+            audit(db,actor['tenant_id'],actor['staff_id'],'square-connected',merchant,{'environment':self.environment,'requested_profile':profile})
         return self.status(actor)
 
     def access_token(self,tenant):

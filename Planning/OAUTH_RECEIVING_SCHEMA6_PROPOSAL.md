@@ -5,6 +5,13 @@ it does not apply a migration, enable a worker, grant OAuth permissions or prove
 provider/device acceptance. Phase 1 physical claims and schema 5 stay frozen while
 the desktop claim flow and full regression evidence are completed.
 
+Implementation update, 2026-11-01: the separate
+`Development/receiving-saga-prototype` now implements same-price receiving,
+new-price siblings, owner mapping/template review, scoped OAuth re-consent and
+bounded public results. See `docs/HOSTED_RECEIVING.md` for the implemented
+contract and remaining gates. This original proposal is design history, not a
+statement that every proposed table or future new-parent path is implemented.
+
 ## Approved scope and implementation order
 
 Implement a server-owned receiving operation that shares the central physical
@@ -279,11 +286,12 @@ ones. It must not use the old variation as a repricing shortcut.
    Keep the parent's existing tax configuration unchanged. Explicitly configure
    the new variation's whole-unit tracking, price, availability and metadata;
    do not copy unrelated vendor/cost/booking defaults or claim a tax approval.
-4. Retain the existing base SKU. For already-compatible 12-digit families, preserve
-   the current deterministic price-SKU algorithm/version; store a full identity
-   hash separately and reject any collision. Other families require explicit
-   approved SKU policy rather than silently changing labels. Every admitted
-   candidate SKU/key/body is permanent for that operation.
+4. Retain the exact existing base SKU, including a trusted arbitrary printable
+   SKU of 1 to 100 characters. Preserve the current deterministic price-SKU
+   algorithm/version, which derives a 12-digit target from that exact base string
+   and integer cents; store a full identity hash separately and reject any
+   collision. Owner identity mapping and family-template approval remain required.
+   Every admitted candidate SKU/key/body is permanent for that operation.
 5. Enforce the full nested-object batch limit and a bounded serialized payload,
    not just 100 selected inventory targets. A parent with many siblings can make
    an otherwise small selection too large. Do not drop children or split silently.

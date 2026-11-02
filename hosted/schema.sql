@@ -490,3 +490,176 @@ END $$;
 DROP TRIGGER IF EXISTS ss_trade_physical_claim_guard ON ss_trade_receipts;
 CREATE TRIGGER ss_trade_physical_claim_guard BEFORE UPDATE ON ss_trade_receipts FOR EACH ROW EXECUTE FUNCTION ss_guard_trade_physical_claim();
 INSERT INTO ss_schema_versions(version) VALUES (5) ON CONFLICT DO NOTHING;
+
+-- Version 6: hosted receiving prototype. No seller setting, mapping or template
+-- is enabled/approved automatically; no legacy receipt or inventory is imported.
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS requested_profile TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS application_id TEXT;
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS environment TEXT;
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS requested_scopes JSONB;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS requested_profile TEXT NOT NULL DEFAULT 'standard';
+CREATE TABLE IF NOT EXISTS ss_receiving_settings (
+ tenant_id UUID PRIMARY KEY REFERENCES ss_tenants(id), enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ new_price_enabled BOOLEAN NOT NULL DEFAULT FALSE, new_parent_enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_binding_previews (
+ tenant_id UUID NOT NULL REFERENCES ss_tenants(id), id UUID NOT NULL, facts JSONB NOT NULL,
+ preview_hash TEXT NOT NULL CHECK(length(preview_hash)=64), created_by UUID NOT NULL,
+ expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,id), FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_bindings (
+ tenant_id UUID NOT NULL REFERENCES ss_tenants(id), id UUID NOT NULL, version BIGINT NOT NULL DEFAULT 1,
+ identity JSONB NOT NULL, identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64), provider JSONB NOT NULL,
+ variation_id TEXT NOT NULL, parent_id TEXT NOT NULL, sku TEXT NOT NULL, location_id TEXT NOT NULL,
+ selling_cents BIGINT NOT NULL CHECK(selling_cents BETWEEN 0 AND 100000000),
+ identity_anchor_hash TEXT NOT NULL CHECK(length(identity_anchor_hash)=64), evidence_hash TEXT NOT NULL CHECK(length(evidence_hash)=64),
+ approved_by UUID NOT NULL, approved_at TIMESTAMPTZ NOT NULL DEFAULT now(), approval_reason TEXT NOT NULL,
+ revoked_at TIMESTAMPTZ, revoked_by UUID, revoke_reason TEXT,
+ PRIMARY KEY(tenant_id,id), FOREIGN KEY(tenant_id,approved_by) REFERENCES ss_staff(tenant_id,id),
+ FOREIGN KEY(tenant_id,revoked_by) REFERENCES ss_staff(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_price_template_previews (
+ tenant_id UUID NOT NULL, id UUID NOT NULL, binding_id UUID NOT NULL, facts JSONB NOT NULL, preview_hash TEXT NOT NULL,
+ created_by UUID NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,id), FOREIGN KEY(tenant_id,binding_id) REFERENCES ss_receiving_bindings(tenant_id,id),
+ FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_price_templates (
+ tenant_id UUID NOT NULL, id UUID NOT NULL, version BIGINT NOT NULL DEFAULT 1, binding_id UUID NOT NULL,
+ identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64), parent_id TEXT NOT NULL, location_id TEXT NOT NULL,
+ facts JSONB NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE, approved_by UUID, approved_at TIMESTAMPTZ,
+ approval_reason TEXT NOT NULL DEFAULT '', revoked_at TIMESTAMPTZ, revoked_by UUID, revoke_reason TEXT,
+ PRIMARY KEY(tenant_id,id), FOREIGN KEY(tenant_id,binding_id) REFERENCES ss_receiving_bindings(tenant_id,id),
+ FOREIGN KEY(tenant_id,approved_by) REFERENCES ss_staff(tenant_id,id), FOREIGN KEY(tenant_id,revoked_by) REFERENCES ss_staff(tenant_id,id),
+ CHECK((NOT approved AND approved_by IS NULL AND approved_at IS NULL) OR
+       (approved AND approved_by IS NOT NULL AND approved_at IS NOT NULL AND length(approval_reason) BETWEEN 10 AND 200))
+);
+ALTER TABLE ss_receiving_bindings ADD COLUMN IF NOT EXISTS approval_source TEXT NOT NULL DEFAULT 'owner_mapping';
+ALTER TABLE ss_receiving_bindings ADD COLUMN IF NOT EXISTS template_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_receiving_active_price_template ON ss_receiving_price_templates(tenant_id,identity_hash,parent_id,location_id) WHERE approved=TRUE AND revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_receiving_binding_active_identity ON ss_receiving_bindings(tenant_id,identity_hash,location_id,selling_cents) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_receiving_binding_active_variation ON ss_receiving_bindings(tenant_id,variation_id,location_id) WHERE revoked_at IS NULL;
+CREATE TABLE IF NOT EXISTS ss_receiving_operations (
+ tenant_id UUID NOT NULL, id UUID NOT NULL, claim_id UUID NOT NULL, workflow_kind TEXT NOT NULL CHECK(workflow_kind IN ('accepted_trade','inventory_only')),
+ revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0), plan_hash TEXT NOT NULL CHECK(length(plan_hash)=64), plan JSONB NOT NULL,
+ state TEXT NOT NULL DEFAULT 'ready' CHECK(state IN ('ready','cancelled_before_write','catalog_pending','catalog_confirmed','inventory_pending','outcome_unknown','needs_review','received')),
+ first_admitted_at TIMESTAMPTZ, inventory_proof JSONB, receipt JSONB,
+ lease_generation BIGINT NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ,
+ created_by UUID NOT NULL, updated_by UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,id), UNIQUE(tenant_id,claim_id),
+ FOREIGN KEY(tenant_id,claim_id) REFERENCES ss_intake_claims(tenant_id,id),
+ FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id), FOREIGN KEY(tenant_id,updated_by) REFERENCES ss_staff(tenant_id,id),
+ CHECK((state='received')=(receipt IS NOT NULL)), CHECK(first_admitted_at IS NOT NULL OR inventory_proof IS NULL)
+);
+ALTER TABLE ss_receiving_operations ADD COLUMN IF NOT EXISTS catalog_proof JSONB;
+ALTER TABLE ss_receiving_operations ADD COLUMN IF NOT EXISTS catalog_resolutions JSONB;
+ALTER TABLE ss_receiving_operations DROP CONSTRAINT IF EXISTS ss_receiving_operations_state_check;
+ALTER TABLE ss_receiving_operations ADD CONSTRAINT ss_receiving_operations_state_check CHECK(state IN ('ready','cancelled_before_write','catalog_pending','catalog_confirmed','inventory_pending','outcome_unknown','needs_review','received'));
+CREATE TABLE IF NOT EXISTS ss_receiving_plan_revisions (
+ tenant_id UUID NOT NULL, operation_id UUID NOT NULL, revision BIGINT NOT NULL, plan_hash TEXT NOT NULL,
+ plan JSONB NOT NULL, created_by UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,operation_id,revision), FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_seller_lanes (
+ environment TEXT NOT NULL, merchant_id TEXT NOT NULL, tenant_id UUID, operation_id UUID,
+ state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','occupied','unknown')),
+ PRIMARY KEY(environment,merchant_id), FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id),
+ CHECK((state='idle' AND tenant_id IS NULL AND operation_id IS NULL) OR (state<>'idle' AND tenant_id IS NOT NULL AND operation_id IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_steps (
+ tenant_id UUID NOT NULL, operation_id UUID NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal IN (0,1)),
+ endpoint TEXT NOT NULL CHECK(endpoint IN ('catalog_batch','inventory_batch')), api_version TEXT NOT NULL,
+ body_hash TEXT NOT NULL CHECK(length(body_hash)=64), encrypted_body TEXT NOT NULL, provider_key UUID NOT NULL,
+ occurred_at TIMESTAMPTZ NOT NULL, authorized_by UUID NOT NULL, session_hash TEXT NOT NULL,
+ authority_hash TEXT NOT NULL, admitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,operation_id,ordinal), UNIQUE(provider_key),
+ FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id),
+ FOREIGN KEY(tenant_id,authorized_by) REFERENCES ss_staff(tenant_id,id)
+);
+ALTER TABLE ss_receiving_steps DROP CONSTRAINT IF EXISTS ss_receiving_steps_ordinal_check;
+ALTER TABLE ss_receiving_steps ADD CONSTRAINT ss_receiving_steps_ordinal_check CHECK(ordinal IN (0,1));
+ALTER TABLE ss_receiving_steps DROP CONSTRAINT IF EXISTS ss_receiving_steps_endpoint_check;
+ALTER TABLE ss_receiving_steps ADD CONSTRAINT ss_receiving_steps_endpoint_check CHECK((ordinal=0 AND endpoint='catalog_batch') OR (ordinal=1 AND endpoint='inventory_batch'));
+CREATE TABLE IF NOT EXISTS ss_receiving_requests (
+ tenant_id UUID NOT NULL, request_key TEXT NOT NULL, action TEXT NOT NULL, intent_hash TEXT NOT NULL,
+ operation_id UUID, result JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,request_key), FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_plan_intents (
+ tenant_id UUID NOT NULL REFERENCES ss_tenants(id), request_key TEXT NOT NULL, intent_hash TEXT NOT NULL,
+ wire_hash TEXT NOT NULL, claim_id UUID, created_by UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,request_key), FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id),
+ CHECK(length(intent_hash)=64 AND length(wire_hash)=64)
+);
+ALTER TABLE ss_receiving_plan_intents ADD COLUMN IF NOT EXISTS workflow_kind TEXT;
+ALTER TABLE ss_receiving_plan_intents ADD COLUMN IF NOT EXISTS accepted_trade_id UUID;
+ALTER TABLE ss_receiving_plan_intents ADD COLUMN IF NOT EXISTS accepted_receipt_hash TEXT;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_receiving_plan_intents'::regclass AND conname='ss_receiving_intent_workflow_check') THEN
+  ALTER TABLE ss_receiving_plan_intents ADD CONSTRAINT ss_receiving_intent_workflow_check CHECK(
+   (workflow_kind IS NULL AND accepted_trade_id IS NULL AND accepted_receipt_hash IS NULL) OR
+   (workflow_kind='inventory_only' AND accepted_trade_id IS NULL AND accepted_receipt_hash IS NULL) OR
+   (workflow_kind='accepted_trade' AND accepted_trade_id IS NOT NULL AND accepted_receipt_hash IS NOT NULL AND length(accepted_receipt_hash)=64));
+ END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS ss_receiving_attempts (
+ id UUID PRIMARY KEY, tenant_id UUID NOT NULL, operation_id UUID NOT NULL, generation BIGINT NOT NULL,
+ action TEXT NOT NULL, evidence JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_request_outcomes (
+ tenant_id UUID NOT NULL, request_key TEXT NOT NULL, result JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,request_key), FOREIGN KEY(tenant_id,request_key) REFERENCES ss_receiving_requests(tenant_id,request_key)
+);
+CREATE TABLE IF NOT EXISTS ss_receiving_exceptions (
+ tenant_id UUID NOT NULL, operation_id UUID NOT NULL, code TEXT NOT NULL, occurrences BIGINT NOT NULL DEFAULT 1,
+ first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(tenant_id,operation_id,code), FOREIGN KEY(tenant_id,operation_id) REFERENCES ss_receiving_operations(tenant_id,id)
+);
+CREATE OR REPLACE FUNCTION ss_guard_receiving_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'Receiving evidence is immutable'; END $$;
+DO $$ DECLARE target TEXT; BEGIN
+ FOREACH target IN ARRAY ARRAY['ss_receiving_steps','ss_receiving_plan_revisions','ss_receiving_attempts','ss_receiving_requests','ss_receiving_request_outcomes','ss_receiving_plan_intents'] LOOP
+  EXECUTE format('DROP TRIGGER IF EXISTS ss_receiving_immutable ON %I',target);
+  EXECUTE format('CREATE TRIGGER ss_receiving_immutable BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION ss_guard_receiving_immutable()',target);
+ END LOOP;
+END $$;
+CREATE OR REPLACE FUNCTION ss_guard_receiving_operation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR OLD.state='received' THEN RAISE EXCEPTION 'Receiving operation evidence must be retained'; END IF;
+ IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.id IS DISTINCT FROM OLD.id OR NEW.claim_id IS DISTINCT FROM OLD.claim_id OR
+    NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'Receiving identity is immutable'; END IF;
+ IF OLD.first_admitted_at IS NOT NULL AND (NEW.first_admitted_at IS DISTINCT FROM OLD.first_admitted_at OR
+    NEW.plan IS DISTINCT FROM OLD.plan OR NEW.plan_hash IS DISTINCT FROM OLD.plan_hash OR NEW.revision IS DISTINCT FROM OLD.revision OR
+    NEW.workflow_kind IS DISTINCT FROM OLD.workflow_kind OR NEW.state='cancelled_before_write') THEN RAISE EXCEPTION 'Admitted receiving terms cannot change or release'; END IF;
+ IF OLD.catalog_proof IS NOT NULL AND (NEW.catalog_proof IS DISTINCT FROM OLD.catalog_proof OR NEW.catalog_resolutions IS DISTINCT FROM OLD.catalog_resolutions) THEN
+    RAISE EXCEPTION 'Confirmed catalog proof and resolutions are immutable';
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_receiving_operation_guard ON ss_receiving_operations;
+CREATE TRIGGER ss_receiving_operation_guard BEFORE UPDATE OR DELETE ON ss_receiving_operations FOR EACH ROW EXECUTE FUNCTION ss_guard_receiving_operation();
+CREATE OR REPLACE FUNCTION ss_guard_receiving_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR OLD.revoked_at IS NOT NULL OR (to_jsonb(NEW)-ARRAY['revoked_at','revoked_by','revoke_reason']) IS DISTINCT FROM
+    (to_jsonb(OLD)-ARRAY['revoked_at','revoked_by','revoke_reason']) THEN RAISE EXCEPTION 'Approved catalog binding evidence is immutable'; END IF;
+ IF NEW.revoked_at IS NULL OR NEW.revoked_by IS NULL OR length(trim(NEW.revoke_reason))<10 THEN RAISE EXCEPTION 'Revocation requires explicit actor/time/reason'; END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_receiving_binding_guard ON ss_receiving_bindings;
+CREATE TRIGGER ss_receiving_binding_guard BEFORE UPDATE OR DELETE ON ss_receiving_bindings FOR EACH ROW EXECUTE FUNCTION ss_guard_receiving_binding();
+DROP TRIGGER IF EXISTS ss_receiving_price_template_guard ON ss_receiving_price_templates;
+CREATE TRIGGER ss_receiving_price_template_guard BEFORE UPDATE OR DELETE ON ss_receiving_price_templates FOR EACH ROW EXECUTE FUNCTION ss_guard_receiving_binding();
+CREATE OR REPLACE FUNCTION ss_guard_trade_inventory_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF OLD.state='draft' AND NEW.state IN ('accepted_cash','accepted_credit') AND EXISTS(
+    SELECT 1 FROM ss_receiving_operations WHERE tenant_id=NEW.tenant_id AND claim_id=NEW.physical_intake_id
+      AND workflow_kind='inventory_only' AND first_admitted_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'Inventory-only admission permanently blocks new trade acceptance on this claim';
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_trade_inventory_admission_guard ON ss_trade_receipts;
+CREATE TRIGGER ss_trade_inventory_admission_guard BEFORE UPDATE ON ss_trade_receipts FOR EACH ROW EXECUTE FUNCTION ss_guard_trade_inventory_admission();
+INSERT INTO ss_schema_versions(version) VALUES (6) ON CONFLICT DO NOTHING;
