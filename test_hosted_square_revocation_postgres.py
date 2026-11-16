@@ -120,7 +120,9 @@ class PostgreSQLSquareRevocationAcceptance(settlement_fixture._PostgreSQLSettlem
 
     def test_notice_during_token_exchange_rejects_late_callback(self):
         before=self.connect();state,_=self.begin()
-        def exchange(_):
+        def exchange(_,*,configuration):
+            self.assertEqual(configuration.application_id,self.config['SQUARE_APPLICATION_ID'])
+            self.assertEqual(configuration.secret,self.config['SQUARE_APPLICATION_SECRET'])
             self.square.ingest(*self.event());return self.tokens,self.expiry
         self.square._token.side_effect=exchange
         with self.assertRaises(ServiceError) as caught:self.square.complete(self.actor,state,'fictional-code')

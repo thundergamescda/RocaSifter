@@ -10,6 +10,7 @@ from urllib.parse import quote, urlsplit
 import uuid
 from hosted.security import ServiceError, identifier, provider_id
 from hosted.square import Square
+from test_hosted_square_authority import Response
 
 
 class ProviderIDTests(unittest.TestCase):
@@ -100,15 +101,15 @@ class SquareOpaqueIDTests(unittest.TestCase):
     def test_token_response_preserves_only_valid_opaque_merchant_id(self):
         expiry=(datetime.now(timezone.utc)+timedelta(days=30)).isoformat()
         result={'access_token':'fixture-access','refresh_token':'fixture-refresh','expires_at':expiry,'merchant_id':'merchant:Opaque/+ID'}
-        self.transport.post.return_value.json.return_value=result
+        self.transport.post.return_value=Response(result)
         tokens,_=self.square._token({'grant_type':'authorization_code','code':'fixture-code'})
         self.assertEqual(tokens['merchant_id'],'merchant:Opaque/+ID')
         for invalid in ('..',' merchant:Opaque/+ID ','bad\nmerchant','x'*256,None):
-            self.transport.post.return_value.json.return_value=result|{'merchant_id':invalid}
+            self.transport.post.return_value=Response(result|{'merchant_id':invalid})
             with self.subTest(value=repr(invalid)),self.assertRaises(ServiceError) as error:
                 self.square._token({'grant_type':'refresh_token','refresh_token':'fixture-refresh'})
             self.assertEqual(error.exception.status,502)
-        self.transport.post.return_value.json.return_value={key:value for key,value in result.items() if key!='merchant_id'}
+        self.transport.post.return_value=Response({key:value for key,value in result.items() if key!='merchant_id'})
         with self.assertRaises(ServiceError) as error:self.square._token({'grant_type':'authorization_code','code':'fixture-code'})
         self.assertEqual(error.exception.status,502)
 

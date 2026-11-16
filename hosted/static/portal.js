@@ -27,27 +27,57 @@ function squareControls(){
 }
 function clearSquareStatus(message='Sign in to check the Square connection.'){
  ++squareStatusRequest;portalSquare=null;squareLoading=false;squareConnectBusy=false;
- byId('squareStatus').textContent=message;squareControls();
+ byId('squareStatus').textContent=message;clearRenewalStatus();squareControls();
 }
 function checkedSquareStatus(value){
- const states=['not_connected','environment_mismatch','revocation_pending','revoked','connected'];
+ const states=['not_connected','environment_mismatch','application_mismatch','revocation_pending','revoked','connected'];
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.connected!=='boolean'||
   typeof value.oauth_configured!=='boolean'||!states.includes(value.connection_status)||
   !['sandbox','production'].includes(value.environment)||value.connected!==(value.connection_status==='connected')||
   (value.message!==undefined&&typeof value.message!=='string'))throw Error('Square status could not be confirmed.');
  return value;
 }
+function clearRenewalStatus(){
+ const target=byId('squareRenewalStatus');if(target){target.textContent='';target.hidden=true}
+}
+function renewalMessage(square){
+ if(square.connection_status==='not_connected')return '';
+ const value=square.renewal,unconfirmed='Authorization renewal status could not be confirmed. Choose Check again.';
+ if(!value||typeof value!=='object'||Array.isArray(value)||
+  !['fresh','due','stale','unknown'].includes(value.age_status)||
+  !['matched','unknown','mismatch'].includes(value.application_binding)||
+  typeof value.due!=='boolean'||typeof value.stale!=='boolean'||typeof value.expired!=='boolean'||
+  value.automatic_renewal_active!==false||
+  (value.last_obtained_at!==null&&(typeof value.last_obtained_at!=='string'||value.last_obtained_at.length>64||!Number.isFinite(Date.parse(value.last_obtained_at))))||
+  (value.age_status!=='unknown'&&value.last_obtained_at===null)||value.stale!==(value.age_status==='stale')||
+  (['due','stale'].includes(value.age_status)&&!value.due)||
+  (value.application_binding==='mismatch'&&square.connected)||
+  (square.connection_status==='application_mismatch'&&value.application_binding!=='mismatch'))return unconfirmed;
+ let message='Authorization was updated recently.';
+ if(square.connection_status!=='connected')message='Square authorization is paused.';
+ else if(value.expired)message='The saved access token has expired. Renewal must succeed before synchronization can continue.';
+ else if(value.application_binding==='unknown'||value.age_status==='unknown')message='The previous authorization update is unknown. Renewal is needed before synchronization.';
+ else if(value.stale)message='Authorization renewal is overdue.';
+ else if(value.due)message='Authorization renewal is due.';
+ return message+' Automatic renewal is not active in this pilot.';
+}
+function showRenewalStatus(square){
+ const target=byId('squareRenewalStatus');if(!target)return;
+ const message=renewalMessage(square);target.textContent=message;target.hidden=!message;
+}
 async function refreshSquareStatus(epoch=portalEpoch){
  if(epoch!==portalEpoch||!portalMe||byId('workspace').hidden||squareConnectBusy)return;
  const sequence=++squareStatusRequest;portalSquare=null;squareLoading=true;
- byId('squareStatus').textContent='Checking connection…';squareControls();
+ byId('squareStatus').textContent='Checking connection…';clearRenewalStatus();squareControls();
  try{
   const square=checkedSquareStatus(await api('/api/square/status'));
   if(epoch!==portalEpoch||sequence!==squareStatusRequest)return;
   portalSquare=square;
+  showRenewalStatus(square);
   byId('squareStatus').textContent=square.message||(square.connected?'A Square authorization is saved for '+square.environment+'. Checkout is not enabled.':square.oauth_configured?'The store owner can authorize this store’s Square account.':'Square application setup is required before store authorization can begin.');
  }catch(error){
   if(epoch!==portalEpoch||sequence!==squareStatusRequest)return;
+  clearRenewalStatus();
   byId('squareStatus').textContent=error.status?'Square status could not be checked. '+error.message+' Choose Check again to retry.':'Square status could not be confirmed. Check your connection, then choose Check again.';
  }finally{
   if(epoch===portalEpoch&&sequence===squareStatusRequest){squareLoading=false;squareControls()}

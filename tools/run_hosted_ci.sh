@@ -56,6 +56,9 @@ mkdir "$run_dir/evidence"
 required_evidence=(
   hosted-ci-summary.json postgres-summary.json postgres-tests.log
   unit-identity-summary.json unit-identity-tests.log
+  unit-provider-ids-summary.json unit-provider-ids-tests.log
+  unit-square-status-summary.json unit-square-status-tests.log
+  unit-revocation-guards-summary.json unit-revocation-guards-tests.log
   copied-source-before.json copied-source-after.json tls-client-probe.json
   pip-freeze.txt pip-bootstrap-report.json pip-install-report.json
 )

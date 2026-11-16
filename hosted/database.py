@@ -81,7 +81,7 @@ class Database:
 
     def ready(self):
         with self.transaction() as db:
-            return db.execute('SELECT version FROM ss_schema_versions WHERE version=10').fetchone() is not None
+            return db.execute('SELECT version FROM ss_schema_versions WHERE version=11').fetchone() is not None
 
     def close(self):
         if self._pool is not None and self._pid==os.getpid():self._pool.close()

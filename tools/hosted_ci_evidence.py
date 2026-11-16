@@ -1,8 +1,9 @@
 """Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Five
-companion server API unit cases use fictional database responses, not real SQL.
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Four
+companion hosted unit modules run all 41 approved cases with fictional database
+responses and transports, not real SQL or provider acceptance.
 This helper adds copied-source preservation and an actual test-client TLS probe.
 """
 from collections import Counter
@@ -24,7 +25,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 392
+POSTGRES_EXPECTED_COUNT = 411
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
@@ -32,6 +33,61 @@ IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_http_full_session_and_challenge_envelopes_remain_distinct',
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_password_only_mfa_challenge_has_no_tenant_or_session_authority',
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_unauthenticated_me_exposes_no_store_id',
+)
+PROVIDER_UNIT_MODULE = 'test_hosted_provider_ids'
+PROVIDER_UNIT_IDS = (
+    PROVIDER_UNIT_MODULE + '.ProviderIDTests.test_application_request_key_validator_remains_strict',
+    PROVIDER_UNIT_MODULE + '.ProviderIDTests.test_controls_empty_dot_segments_and_overlong_values_are_rejected',
+    PROVIDER_UNIT_MODULE + '.ProviderIDTests.test_symbols_length_case_and_percent_text_are_preserved',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_catalog_latest_or_invalid_versions_are_rejected_before_any_provider_call',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_catalog_read_pins_exact_version_and_quotes_opaque_id',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_invalid_resource_id_never_obtains_a_token_or_calls_provider',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_invalid_signed_event_ids_are_rejected_before_database_access',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_retrieve_quotes_one_opaque_segment_without_decoding_or_changing_host',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_signed_webhook_preserves_opaque_event_merchant_and_resource_ids',
+    PROVIDER_UNIT_MODULE + '.SquareOpaqueIDTests.test_token_response_preserves_only_valid_opaque_merchant_id',
+)
+STATUS_UNIT_MODULE = 'test_hosted_square_status'
+STATUS_UNIT_IDS = (
+    STATUS_UNIT_MODULE + '.SquareStatusTests.test_absent_connection_is_explicit_and_does_not_expose_credential_values',
+    STATUS_UNIT_MODULE + '.SquareStatusTests.test_only_matching_nonrevoked_environment_reports_connected',
+    STATUS_UNIT_MODULE + '.SquareStatusTests.test_other_environment_never_reports_a_ready_connection_or_merchant',
+    STATUS_UNIT_MODULE + '.SquareStatusTests.test_revoked_connection_is_not_connected',
+    STATUS_UNIT_MODULE + '.SquareStatusTests.test_saved_connection_never_reports_requested_scopes_as_granted',
+)
+REVOCATION_UNIT_MODULE = 'test_square_revocation_guards'
+REVOCATION_UNIT_IDS = (
+    'test_square_revocation_guards.ReconciliationHoldGuardTests.test_heartbeat_takes_job_lock_before_connection_and_preserves_hold',
+    'test_square_revocation_guards.ReconciliationHoldGuardTests.test_hold_does_not_permanently_exception_or_exhaust_job',
+    'test_square_revocation_guards.ReconciliationHoldGuardTests.test_reconnect_before_finish_does_not_misclassify_old_authority_failure',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_begin_pins_committed_cursor_and_current_generation_before_returning_url',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_conflicting_event_id_denies_even_unknown_or_already_blocked',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_first_notice_preserves_tokens_jobs_and_credit',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_initial_absent_generation_is_legitimate_only_with_captured_cursor',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_insert_conflict_reads_and_compares_the_winning_receipt',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_introspection_cannot_return_authority_after_generation_only_change',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_invalid_signature_does_not_open_a_transaction',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_legacy_missing_cursor_rejects_before_token_exchange',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_missing_or_blank_application_identity_fails_controlled_before_database',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_notice_after_flow_began_rejects_late_callback_without_storing_tokens',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_other_completed_flow_invalidates_generation_without_notice',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_other_environment_connection_is_not_held_by_this_notice',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_pending_blocks_token_use_without_refresh_or_provider_calls',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_pending_status_does_not_claim_current_provider_revocation',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_receiving_final_guard_checks_internal_generation_and_pending',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_resource_events_arriving_during_hold_are_queued_unchanged',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_same_signed_event_replay_has_no_repeated_effect',
+    'test_square_revocation_guards.SquareRevocationGuardTests.test_unknown_merchant_notice_is_durable_without_inventing_a_connection',
+)
+UNIT_GROUPS = (
+    ('unit_identity', IDENTITY_UNIT_MODULE, IDENTITY_UNIT_IDS, 'unit-identity',
+     'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.'),
+    ('unit_provider_ids', PROVIDER_UNIT_MODULE, PROVIDER_UNIT_IDS, 'unit-provider-ids',
+     'Ten hosted provider-ID, URL, signed-event and token-response unit cases with fictional database/transport; not live provider or SQL acceptance.'),
+    ('unit_square_status', STATUS_UNIT_MODULE, STATUS_UNIT_IDS, 'unit-square-status',
+     'Five hosted Square status DTO unit cases with fictional database responses; not SQL or live authorization acceptance.'),
+    ('unit_revocation_guards', REVOCATION_UNIT_MODULE, REVOCATION_UNIT_IDS, 'unit-revocation-guards',
+     'Twenty-one hosted revocation and reconciliation method-guard units with recording SQL and fictional signatures; not real SQL or provider acceptance.'),
 )
 
 
@@ -113,8 +169,13 @@ def read_json(path):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError('report_nonfinite')))
 
 
-def run_identity_unit():
+def run_hosted_unit(module, approved_ids, stem, scope):
     """Run the full approved module; ordinary unit failures never skip the PG child."""
+    if not any((module, approved_ids, stem, scope) == group[1:] for group in UNIT_GROUPS):
+        raise ValueError('unapproved_hosted_unit_group')
+    expected_count = len(approved_ids)
+    if expected_count < 1 or len(set(approved_ids)) != expected_count:
+        raise ValueError('invalid_hosted_unit_ids')
     started = now()
     buffer = io.StringIO()
     loader = result = None
@@ -126,18 +187,18 @@ def run_identity_unit():
             sys.path.insert(0, str(ROOT))
             from tools.test_hosted_postgres import EvidenceResult, test_ids
             loader = unittest.TestLoader()
-            suite = loader.loadTestsFromName(IDENTITY_UNIT_MODULE)
+            suite = loader.loadTestsFromName(module)
             expected = list(test_ids(suite))
             result = unittest.TextTestRunner(stream=buffer, verbosity=2,
                                             resultclass=EvidenceResult).run(suite)
         except (Exception, SystemExit) as error:
             runner_error = type(error).__name__
-            print('Identity unit runner failed with type=' + runner_error)
+            print('Hosted unit runner failed with type=' + runner_error)
     log = scrub(buffer.getvalue())
     payload = log.encode('utf-8')
     if len(payload) > REPORT_LIMIT:
-        raise ValueError('unit_identity_log_bound')
-    (EVIDENCE / 'unit-identity-tests.log').write_bytes(payload)
+        raise ValueError('hosted_unit_log_bound')
+    (EVIDENCE / (stem + '-tests.log')).write_bytes(payload)
     rows = result.results if result is not None else []
     started_ids = result.started_ids if result is not None else []
     passed_ids = [row['id'] for row in rows if row['status'] == 'passed']
@@ -147,19 +208,19 @@ def run_identity_unit():
               'error_count': len(result.errors) if result is not None else 0,
               'expected_failure_count': len(result.expectedFailures) if result is not None else 0,
               'unexpected_success_count': len(result.unexpectedSuccesses) if result is not None else 0}
-    coverage = bool(expected == list(IDENTITY_UNIT_IDS) and len(set(expected)) == 5 and
-                    result is not None and result.testsRun == 5 and
-                    Counter(started_ids) == Counter(IDENTITY_UNIT_IDS) and
-                    Counter(passed_ids) == Counter(IDENTITY_UNIT_IDS) and
-                    len(rows) == 5 and all(row['status'] == 'passed' for row in rows))
+    coverage = bool(expected == list(approved_ids) and len(set(expected)) == expected_count and
+                    result is not None and result.testsRun == expected_count and
+                    Counter(started_ids) == Counter(approved_ids) and
+                    Counter(passed_ids) == Counter(approved_ids) and
+                    len(rows) == expected_count and all(row['status'] == 'passed' for row in rows))
     was_successful = bool(result is not None and result.wasSuccessful())
     passed = bool(coverage and was_successful and not any(counts.values()) and
                   not loader_errors and runner_error is None)
-    summary = {'scope': 'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.',
-               'module': IDENTITY_UNIT_MODULE, 'source_sha': os.environ.get('SS_CI_SOURCE_SHA'),
+    summary = {'scope': scope,
+               'module': module, 'source_sha': os.environ.get('SS_CI_SOURCE_SHA'),
                'started_utc': started, 'finished_utc': now(),
-               'approved_test_ids': list(IDENTITY_UNIT_IDS), 'expected_test_ids': expected,
-               'expected_count': 5, 'discovered_count': len(expected),
+               'approved_test_ids': list(approved_ids), 'expected_test_ids': expected,
+               'expected_count': expected_count, 'discovered_count': len(expected),
                'tests_run': result.testsRun if result is not None else 0,
                'started_test_ids': started_ids, 'successful_test_ids': passed_ids,
                'case_results': rows, 'was_successful': was_successful,
@@ -169,7 +230,7 @@ def run_identity_unit():
                'log_sha256': hashlib.sha256(payload).hexdigest(),
                'log_hash_convention': 'SHA-256 of delivered sanitized UTF-8 log bytes, LF line endings, no BOM',
                'passed': passed}
-    save('unit-identity-summary.json', summary)
+    save(stem + '-summary.json', summary)
     print(log, end='' if log.endswith('\n') else '\n')
     print(scrub(json.dumps(summary, indent=2, allow_nan=False)))
     return summary
@@ -244,7 +305,7 @@ def main():
     result = {'scope': 'Linux hosted API unit plus PostgreSQL fixture acceptance only; no Windows/native/signing/provider acceptance.',
               'started_utc': now(), 'passed': False, 'runner_exit_code': None, 'error_types': [], 'error_codes': [],
               'source_sha': os.environ.get('SS_CI_SOURCE_SHA'), 'python': sys.version,
-              'unit_identity': {'passed': False, 'state': 'not_started'}}
+              **{key: {'passed': False, 'state': 'not_started'} for key, *_ in UNIT_GROUPS}}
     before = None
     try:
         if sys.platform != 'linux' or sys.version_info[:3] != (3, 12, 16):
@@ -265,15 +326,16 @@ def main():
         result['dependency_report_sha256'] = dependencies
         result['tls_before'] = database_probe()
         save('tls-client-probe.json', result['tls_before'])
-        try:
-            result['unit_identity'] = run_identity_unit()
-        except (Exception, SystemExit) as error:
-            # Even loader/report failures must retain the independent full PG run.
-            result['unit_identity'] = {'passed': False, 'runner_error_type': type(error).__name__}
-            result['error_types'].append(type(error).__name__)
-            result['error_codes'].append('unit_identity_evidence_failed')
-        if result['unit_identity'].get('passed') is not True:
-            result['error_codes'].append('unit_identity_failed')
+        for key, module, approved_ids, stem, scope in UNIT_GROUPS:
+            try:
+                result[key] = run_hosted_unit(module, approved_ids, stem, scope)
+            except (Exception, SystemExit) as error:
+                # Even loader/report failures retain the other groups and full PG run.
+                result[key] = {'passed': False, 'runner_error_type': type(error).__name__}
+                result['error_types'].append(type(error).__name__)
+                result['error_codes'].append(key + '_evidence_failed')
+            if result[key].get('passed') is not True:
+                result['error_codes'].append(key + '_failed')
         with (EVIDENCE / 'runner.stdout.log').open('w', encoding='utf-8') as stdout, \
                 (EVIDENCE / 'runner.stderr.log').open('w', encoding='utf-8') as stderr:
             process = subprocess.run([sys.executable, 'tools/test_hosted_postgres.py'],
@@ -302,7 +364,7 @@ def main():
             result['copied_source_stable'] = False
             result['error_types'].append(type(error).__name__)
         result['passed'] = bool(not result['error_types'] and result.get('copied_source_stable') and
-                                result.get('unit_identity', {}).get('passed') is True and
+                                all(result.get(key, {}).get('passed') is True for key, *_ in UNIT_GROUPS) and
                                 result.get('tls_before', {}).get('ssl') is True and
                                 result.get('tls_after', {}).get('ssl') is True and
                                 result.get('postgres') and result['runner_exit_code'] == 0)

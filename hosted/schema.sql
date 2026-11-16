@@ -873,3 +873,25 @@ DROP TRIGGER IF EXISTS ss_cleanup_refresh_intent_immutable ON ss_cleanup_refresh
 CREATE TRIGGER ss_cleanup_refresh_intent_immutable BEFORE UPDATE OR DELETE ON ss_cleanup_refresh_queue
     FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
 INSERT INTO ss_schema_versions(version) VALUES (10) ON CONFLICT DO NOTHING;
+
+-- Schema 11: known local successful-token time/application binding and a private
+-- renewal lease/cooldown. No inferred age/app or default backfill for old rows.
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS oauth_application_id TEXT
+    CHECK (length(oauth_application_id) BETWEEN 1 AND 255 AND oauth_application_id=btrim(oauth_application_id));
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS token_obtained_at TIMESTAMPTZ;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS renewal_lease_token UUID;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS renewal_lease_until TIMESTAMPTZ;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS renewal_attempted_at TIMESTAMPTZ;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS renewal_retry_after TIMESTAMPTZ;
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS renewal_error_code TEXT
+    CHECK (renewal_error_code IN ('provider_failure','authority_changed'));
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ss_square_connections'::regclass
+                   AND conname='ss_square_renewal_lease_pair') THEN
+        ALTER TABLE ss_square_connections ADD CONSTRAINT ss_square_renewal_lease_pair
+            CHECK ((renewal_lease_token IS NULL)=(renewal_lease_until IS NULL));
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS ss_square_renewal_due ON ss_square_connections(renewal_retry_after,renewal_attempted_at)
+    WHERE revoked_at IS NULL AND pending_notice_cursor IS NULL;
+INSERT INTO ss_schema_versions(version) VALUES (11) ON CONFLICT DO NOTHING;

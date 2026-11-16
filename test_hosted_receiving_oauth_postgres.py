@@ -97,7 +97,9 @@ class PostgreSQLReceivingOAuthAcceptance(_PostgreSQLSettlementFixture):
         for change in ('disabled','demoted','signed_out','expired','mfa_changed'):
             with self.subTest(change=change):
                 self.restore_standard_owner();state,_=self.begin(profile='standard')
-                def exchange(payload,change=change):
+                def exchange(payload,change=change,*,configuration):
+                    self.assertEqual(configuration.application_id,self.config['SQUARE_APPLICATION_ID'])
+                    self.assertEqual(configuration.secret,self.config['SQUARE_APPLICATION_SECRET'])
                     self.invalidate_standard_owner(change)
                     return self.tokens,self.expiry
                 self.square._token.reset_mock();self.square._token.side_effect=exchange
@@ -114,7 +116,9 @@ class PostgreSQLReceivingOAuthAcceptance(_PostgreSQLSettlementFixture):
         state,_=self.begin(profile='standard')
         with self.database.transaction() as db:
             before_audit=db.execute("SELECT count(*) AS n FROM ss_audit WHERE tenant_id=%s AND action='square-connected'",(self.tenant,)).fetchone()['n']
-        def exchange(payload):
+        def exchange(payload,*,configuration):
+            self.assertEqual(configuration.application_id,self.config['SQUARE_APPLICATION_ID'])
+            self.assertEqual(configuration.secret,self.config['SQUARE_APPLICATION_SECRET'])
             self.invalidate_standard_owner('signed_out')
             return self.tokens|{'access_token':'fictional-replacement-private','refresh_token':'fictional-replacement-refresh'},self.expiry
         self.square._token.reset_mock();self.square._token.side_effect=exchange
@@ -172,7 +176,9 @@ class PostgreSQLReceivingOAuthAcceptance(_PostgreSQLSettlementFixture):
 
     def test_final_transaction_rechecks_owner_after_exchange_before_encrypted_save(self):
         state,_=self.begin()
-        def exchange(payload):
+        def exchange(payload,*,configuration):
+            self.assertEqual(configuration.application_id,self.config['SQUARE_APPLICATION_ID'])
+            self.assertEqual(configuration.secret,self.config['SQUARE_APPLICATION_SECRET'])
             with self.database.transaction() as db:db.execute('DELETE FROM ss_sessions WHERE token_hash=%s',(self.actor['session_hash'],))
             return self.tokens,self.expiry
         self.square._token.side_effect=exchange
