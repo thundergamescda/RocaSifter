@@ -49,13 +49,13 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
         return {key: row[key] for key in ('tenant_id', 'merchant_id', 'environment', 'encrypted_tokens', 'expires_at',
             'authorization_generation', 'oauth_application_id', 'token_obtained_at', 'requested_profile', 'revoked_at', 'pending_notice_cursor')}
 
-    def tokens(self, row=None):
+    def read_saved_tokens(self, row=None):
         row = self.connection() if row is None else row
         return json.loads(self.square.cipher.decrypt(row['encrypted_tokens'].encode()))
 
     def due(self, *, days=7, expires_days=20):
         expires = datetime.now(timezone.utc) + timedelta(days=expires_days)
-        tokens = self.tokens() | {'expires_at': expires.isoformat()}
+        tokens = self.read_saved_tokens() | {'expires_at': expires.isoformat()}
         sealed = self.square.cipher.encrypt(json.dumps(tokens).encode()).decode()
         with self.database.transaction() as db:
             db.execute('''UPDATE ss_square_connections SET encrypted_tokens=%s,expires_at=%s,
@@ -66,7 +66,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
 
     def reply(self, **changes):
         expires = datetime.now(timezone.utc) + timedelta(days=30)
-        return self.tokens() | {'access_token': 'fictional-renewed-access-private',
+        return self.read_saved_tokens() | {'access_token': 'fictional-renewed-access-private',
                                'expires_at': expires.isoformat(), 'token_type': 'bearer'} | changes
 
     def clear_fixture_attempt(self):
@@ -112,7 +112,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
 
     def test_owner_completion_records_known_application_and_local_time_without_scope_claim(self):
         notice = {'event_id': 'fictional-owner-frozen-notice-' + uuid.uuid4().hex,
-                  'merchant_id': self.tokens()['merchant_id'], 'type': 'oauth.authorization.revoked'}
+                  'merchant_id': self.read_saved_tokens()['merchant_id'], 'type': 'oauth.authorization.revoked'}
         raw = json.dumps(notice, separators=(',', ':')).encode()
         signature = base64.b64encode(hmac.new(self.config['SQUARE_WEBHOOK_SIGNATURE_KEY'].encode(),
             self.square.webhook_url.encode() + raw, hashlib.sha256).digest()).decode()
@@ -175,7 +175,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
 
     def test_fresh_saved_token_does_not_contact_provider_or_claim_renewal(self):
         before = self.connection()
-        self.assertEqual(self.square.access_token(self.tenant), self.tokens()['access_token'])
+        self.assertEqual(self.square.access_token(self.tenant), self.read_saved_tokens()['access_token'])
         self.assertEqual(self.connection(), before)
         self.assertEqual(self.square.renew(self.tenant), {'status': 'not_due'})
         self.transport.post.assert_not_called()
@@ -185,7 +185,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
         response = Response(expected); self.transport.post.return_value = response; self.transport.post.side_effect = None
         self.assertEqual(self.square.access_token(self.tenant), expected['access_token'])
         row = self.connection()
-        self.assertEqual(self.tokens(row), expected)
+        self.assertEqual(self.read_saved_tokens(row), expected)
         for key in ('authorization_generation', 'requested_profile', 'merchant_id', 'environment', 'oauth_application_id', 'revoked_at', 'pending_notice_cursor'):
             self.assertEqual(row[key], before[key])
         self.assertGreater(row['token_obtained_at'], before['token_obtained_at'])
@@ -212,8 +212,8 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
         self.assertEqual(after['oauth_application_id'], self.config['SQUARE_APPLICATION_ID'])
         self.assertIsNotNone(after['token_obtained_at'])
         self.assertEqual(after['authorization_generation'], before['authorization_generation'])
-        self.assertNotIn(self.tokens()['access_token'], ''.join(logs.output))
-        self.assertNotIn(self.tokens()['refresh_token'], ''.join(logs.output))
+        self.assertNotIn(self.read_saved_tokens()['access_token'], ''.join(logs.output))
+        self.assertNotIn(self.read_saved_tokens()['refresh_token'], ''.join(logs.output))
 
     def test_expired_access_can_be_renewed_with_valid_private_refresh_token(self):
         self.due(days=31, expires_days=-1)
@@ -254,7 +254,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
                 self.connect()
                 current = self.authority()
                 self.assertNotEqual(current['authorization_generation'], before['authorization_generation'])
-                self.assertEqual(self.tokens()['access_token'], 'fictional-new-owner-private')
+                self.assertEqual(self.read_saved_tokens()['access_token'], 'fictional-new-owner-private')
             finally:
                 release.set()
             with self.assertRaises(ServiceError) as caught:
@@ -278,7 +278,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
                 release.set()
             winner = future.result(timeout=20)
         self.assertEqual(other.access_token(self.tenant), winner)
-        self.assertEqual(self.tokens()['access_token'], winner)
+        self.assertEqual(self.read_saved_tokens()['access_token'], winner)
         self.assertEqual(self.transport.post.call_count, 1)
 
     def test_expired_lease_cannot_overwrite_a_later_successful_renewal(self):
@@ -298,7 +298,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
                 future.result(timeout=20)
         self.assertEqual(caught.exception.status, 409)
         self.assertEqual(self.authority(), saved)
-        self.assertEqual(self.tokens()['access_token'], winner)
+        self.assertEqual(self.read_saved_tokens()['access_token'], winner)
 
     def test_provider_failure_preserves_saved_authority_and_sets_shared_cooldown(self):
         before = self.due(days=9)
@@ -314,7 +314,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
         with self.assertRaises(ServiceError):
             self.square.access_token(self.tenant)
         self.assertEqual(self.transport.post.call_count, 1)
-        for secret in (self.tokens()['access_token'], self.tokens()['refresh_token'], self.config['SQUARE_APPLICATION_SECRET']):
+        for secret in (self.read_saved_tokens()['access_token'], self.read_saved_tokens()['refresh_token'], self.config['SQUARE_APPLICATION_SECRET']):
             self.assertNotIn(secret, str(caught.exception) + ''.join(logs.output))
 
     def test_wrong_merchant_changed_refresh_and_cached_or_unbounded_replies_do_not_publish(self):
@@ -322,7 +322,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
         cases = [Response(good | {'merchant_id': 'fictional-wrong-merchant'}),
                  Response({key: value for key, value in good.items() if key != 'merchant_id'}),
                  Response(good | {'refresh_token': 'fictional-pkce-like-rotation'}),
-                 Response(self.tokens()), Response(good, status=302),
+                 Response(self.read_saved_tokens()), Response(good, status=302),
                  Response(good, headers={'Content-Length': '65537'}),
                  Response(good, raw=b'x' * 65537),
                  Response(good, raw=b'{"access_token":"first","access_token":"second"}'),
@@ -432,7 +432,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
             database.migrate(); square = Square(database, self.config, self.transport)
             first = uuid.UUID(int=1); second = uuid.UUID(int=2)
             expires = datetime.now(timezone.utc) + timedelta(days=10)
-            tokens = self.tokens() | {'merchant_id': 'fictional-fairness-second', 'expires_at': expires.isoformat()}
+            tokens = self.read_saved_tokens() | {'merchant_id': 'fictional-fairness-second', 'expires_at': expires.isoformat()}
             with database.transaction() as db:
                 for tenant in (first, second):
                     db.execute("INSERT INTO ss_tenants(id,slug,name) VALUES (%s,%s,'Fictional renewal fairness store')", (tenant, 'fair-' + tenant.hex))
@@ -467,7 +467,7 @@ class PostgreSQLSquareRenewalAcceptance(settlement_fixture._PostgreSQLSettlement
                 self.assertEqual(response.json['renewal']['age_status'], expected)
                 self.assertFalse(response.json['renewal']['automatic_renewal_active'])
                 self.assertFalse(response.json['grants_verified']); self.assertFalse(response.json['write_checkout_enabled'])
-                for secret in (self.tokens()['access_token'], self.tokens()['refresh_token'], self.config['SQUARE_APPLICATION_SECRET']):
+                for secret in (self.read_saved_tokens()['access_token'], self.read_saved_tokens()['refresh_token'], self.config['SQUARE_APPLICATION_SECRET']):
                     self.assertNotIn(secret, response.get_data(as_text=True))
         with self.database.transaction() as db:
             db.execute("UPDATE ss_square_connections SET oauth_application_id='fictional-other-app' WHERE tenant_id=%s", (self.tenant,))
