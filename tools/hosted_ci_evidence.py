@@ -1,12 +1,15 @@
-"""Linux hosted-SQL fixture evidence, never Windows or live-provider acceptance.
+"""Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite. This helper adds independent
-copied-source preservation and a TLS query from the actual test client.
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Five
+companion server API unit cases use fictional database responses, not real SQL.
+This helper adds copied-source preservation and an actual test-client TLS probe.
 """
 from collections import Counter
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,11 +18,21 @@ import shutil
 import stat
 import subprocess
 import sys
+import unittest
 
 
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
+POSTGRES_EXPECTED_COUNT = 370
+IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
+IDENTITY_UNIT_IDS = (
+    IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
+    IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_full_session_helper_exposes_same_canonical_uuid_for_both_auth_paths',
+    IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_http_full_session_and_challenge_envelopes_remain_distinct',
+    IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_password_only_mfa_challenge_has_no_tenant_or_session_authority',
+    IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_unauthenticated_me_exposes_no_store_id',
+)
 
 
 def now():
@@ -100,6 +113,68 @@ def read_json(path):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError('report_nonfinite')))
 
 
+def run_identity_unit():
+    """Run the full approved module; ordinary unit failures never skip the PG child."""
+    started = now()
+    buffer = io.StringIO()
+    loader = result = None
+    expected = []
+    runner_error = None
+    with redirect_stdout(buffer), redirect_stderr(buffer):
+        try:
+            # Fixed reviewed code root only; do not accept a caller import path.
+            sys.path.insert(0, str(ROOT))
+            from tools.test_hosted_postgres import EvidenceResult, test_ids
+            loader = unittest.TestLoader()
+            suite = loader.loadTestsFromName(IDENTITY_UNIT_MODULE)
+            expected = list(test_ids(suite))
+            result = unittest.TextTestRunner(stream=buffer, verbosity=2,
+                                            resultclass=EvidenceResult).run(suite)
+        except (Exception, SystemExit) as error:
+            runner_error = type(error).__name__
+            print('Identity unit runner failed with type=' + runner_error)
+    log = scrub(buffer.getvalue())
+    payload = log.encode('utf-8')
+    if len(payload) > REPORT_LIMIT:
+        raise ValueError('unit_identity_log_bound')
+    (EVIDENCE / 'unit-identity-tests.log').write_bytes(payload)
+    rows = result.results if result is not None else []
+    started_ids = result.started_ids if result is not None else []
+    passed_ids = [row['id'] for row in rows if row['status'] == 'passed']
+    loader_errors = [scrub(error) for error in loader.errors] if loader is not None else []
+    counts = {'skipped_count': len(result.skipped) if result is not None else 0,
+              'failed_count': len(result.failures) if result is not None else 0,
+              'error_count': len(result.errors) if result is not None else 0,
+              'expected_failure_count': len(result.expectedFailures) if result is not None else 0,
+              'unexpected_success_count': len(result.unexpectedSuccesses) if result is not None else 0}
+    coverage = bool(expected == list(IDENTITY_UNIT_IDS) and len(set(expected)) == 5 and
+                    result is not None and result.testsRun == 5 and
+                    Counter(started_ids) == Counter(IDENTITY_UNIT_IDS) and
+                    Counter(passed_ids) == Counter(IDENTITY_UNIT_IDS) and
+                    len(rows) == 5 and all(row['status'] == 'passed' for row in rows))
+    was_successful = bool(result is not None and result.wasSuccessful())
+    passed = bool(coverage and was_successful and not any(counts.values()) and
+                  not loader_errors and runner_error is None)
+    summary = {'scope': 'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.',
+               'module': IDENTITY_UNIT_MODULE, 'source_sha': os.environ.get('SS_CI_SOURCE_SHA'),
+               'started_utc': started, 'finished_utc': now(),
+               'approved_test_ids': list(IDENTITY_UNIT_IDS), 'expected_test_ids': expected,
+               'expected_count': 5, 'discovered_count': len(expected),
+               'tests_run': result.testsRun if result is not None else 0,
+               'started_test_ids': started_ids, 'successful_test_ids': passed_ids,
+               'case_results': rows, 'was_successful': was_successful,
+               'expected_case_coverage_complete': coverage,
+               'loader_error_count': len(loader_errors), 'loader_errors': loader_errors,
+               'runner_error_type': runner_error, **counts,
+               'log_sha256': hashlib.sha256(payload).hexdigest(),
+               'log_hash_convention': 'SHA-256 of delivered sanitized UTF-8 log bytes, LF line endings, no BOM',
+               'passed': passed}
+    save('unit-identity-summary.json', summary)
+    print(log, end='' if log.endswith('\n') else '\n')
+    print(scrub(json.dumps(summary, indent=2, allow_nan=False)))
+    return summary
+
+
 def database_probe():
     # This dependency import occurs only in the intended Linux CI image.
     import psycopg
@@ -142,7 +217,8 @@ def deliver_runner():
 def validate_runner(summary):
     modules = ['hosted.integration'] + sorted(path.stem for path in ROOT.glob('test_*_postgres.py'))
     ids = summary.get('expected_test_ids')
-    if (type(ids) is not list or not ids or any(type(value) is not str for value in ids) or
+    if (type(ids) is not list or len(ids) != POSTGRES_EXPECTED_COUNT or
+            any(type(value) is not str for value in ids) or
             len(ids) != len(set(ids)) or summary.get('modules') != modules or
             summary.get('complete_module_selection') is not True or summary.get('run_kind') != 'complete' or
             summary.get('passed') is not True or summary.get('exit_code') != 0 or
@@ -165,9 +241,10 @@ def validate_runner(summary):
 
 def main():
     EVIDENCE.mkdir(exist_ok=True)
-    result = {'scope': 'Linux hosted PostgreSQL fixture acceptance only; no Windows/native/signing/provider acceptance.',
+    result = {'scope': 'Linux hosted API unit plus PostgreSQL fixture acceptance only; no Windows/native/signing/provider acceptance.',
               'started_utc': now(), 'passed': False, 'runner_exit_code': None, 'error_types': [], 'error_codes': [],
-              'source_sha': os.environ.get('SS_CI_SOURCE_SHA'), 'python': sys.version}
+              'source_sha': os.environ.get('SS_CI_SOURCE_SHA'), 'python': sys.version,
+              'unit_identity': {'passed': False, 'state': 'not_started'}}
     before = None
     try:
         if sys.platform != 'linux' or sys.version_info[:3] != (3, 12, 16):
@@ -188,6 +265,15 @@ def main():
         result['dependency_report_sha256'] = dependencies
         result['tls_before'] = database_probe()
         save('tls-client-probe.json', result['tls_before'])
+        try:
+            result['unit_identity'] = run_identity_unit()
+        except (Exception, SystemExit) as error:
+            # Even loader/report failures must retain the independent full PG run.
+            result['unit_identity'] = {'passed': False, 'runner_error_type': type(error).__name__}
+            result['error_types'].append(type(error).__name__)
+            result['error_codes'].append('unit_identity_evidence_failed')
+        if result['unit_identity'].get('passed') is not True:
+            result['error_codes'].append('unit_identity_failed')
         with (EVIDENCE / 'runner.stdout.log').open('w', encoding='utf-8') as stdout, \
                 (EVIDENCE / 'runner.stderr.log').open('w', encoding='utf-8') as stderr:
             process = subprocess.run([sys.executable, 'tools/test_hosted_postgres.py'],
@@ -216,6 +302,7 @@ def main():
             result['copied_source_stable'] = False
             result['error_types'].append(type(error).__name__)
         result['passed'] = bool(not result['error_types'] and result.get('copied_source_stable') and
+                                result.get('unit_identity', {}).get('passed') is True and
                                 result.get('tls_before', {}).get('ssl') is True and
                                 result.get('tls_after', {}).get('ssl') is True and
                                 result.get('postgres') and result['runner_exit_code'] == 0)

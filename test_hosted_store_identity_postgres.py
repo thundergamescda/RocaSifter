@@ -53,7 +53,8 @@ class PostgreSQLStoreIdentity(postgres_fixture._PostgreSQLSettlementFixture):
         self.assertEqual(me.status_code,200)
         self.assertEqual(me.json['tenant_id'],response.json['tenant_id'])
         self.assertEqual(me.json['mfa_authenticated'],mfa)
-        self.assertNotIn('mfa_fresh',me.json)
+        self.assertIs(me.json['mfa_fresh'],mfa)
+        self.assertNotIn('mfa_authenticated_at',me.json)
 
     def test_normal_full_login_and_me_expose_exact_database_uuid(self):
         self.assert_same_store(self.post('/api/auth/login',self.credentials),mfa=False)

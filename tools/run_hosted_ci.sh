@@ -55,6 +55,7 @@ declare -A capture_status=(
 mkdir "$run_dir/evidence"
 required_evidence=(
   hosted-ci-summary.json postgres-summary.json postgres-tests.log
+  unit-identity-summary.json unit-identity-tests.log
   copied-source-before.json copied-source-after.json tls-client-probe.json
   pip-freeze.txt pip-bootstrap-report.json pip-install-report.json
 )
@@ -170,7 +171,7 @@ capture() {
 }
 
 write_harness_summary() {
-  printf '{"scope":"Linux hosted SQL only; not Windows/native/signing acceptance","source_sha":"%s","owner":"%s","python_tag":"python:3.12.16-slim","python_digest":"%s","python_image_id":"%s","postgres_tag":"postgres:18.6","postgres_digest":"%s","postgres_image_id":"%s","runner_image_id":"%s","runtime_network_internal":%s,"test_container_exit_code":%s,"cleanup_complete":%s,"capture_complete":%s,"capture_status":{"test_stop":%s,"test_inspect":%s,"test_logs":%s,"test_sanitize":%s,"test_raw_cleanup":%s,"evidence_copy":%s,"postgres_dir":%s,"postgres_copy":%s,"db_logs":%s,"db_sanitize":%s,"db_raw_cleanup":%s},"delivery_complete":%s,"harness_exit_code":%s}\n' \
+  printf '{"scope":"Linux hosted API unit and SQL fixture acceptance only; not Windows/native/signing acceptance","source_sha":"%s","owner":"%s","python_tag":"python:3.12.16-slim","python_digest":"%s","python_image_id":"%s","postgres_tag":"postgres:18.6","postgres_digest":"%s","postgres_image_id":"%s","runner_image_id":"%s","runtime_network_internal":%s,"test_container_exit_code":%s,"cleanup_complete":%s,"capture_complete":%s,"capture_status":{"test_stop":%s,"test_inspect":%s,"test_logs":%s,"test_sanitize":%s,"test_raw_cleanup":%s,"evidence_copy":%s,"postgres_dir":%s,"postgres_copy":%s,"db_logs":%s,"db_sanitize":%s,"db_raw_cleanup":%s},"delivery_complete":%s,"harness_exit_code":%s}\n' \
     "$SS_CI_SOURCE_SHA" "$run_key" "$python_digest" "$python_id" "$postgres_digest" "$postgres_id" \
     "$runner_id" "$network_verified" "$test_exit" "$cleanup_complete" "$capture_complete" \
     "${capture_status[test_stop]}" "${capture_status[test_inspect]}" \
