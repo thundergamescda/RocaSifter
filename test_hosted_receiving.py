@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import Mock
 from cryptography.fernet import Fernet
 from hosted.app import create_app
+from hosted.auth import Auth
 from hosted.receiving import Receiving
 from hosted.receiving_plan import (normalize_plan, inventory_body, fingerprint, canonical, ReceivingError,
                                   effective_variation, preserved_price_sibling)
@@ -82,18 +83,20 @@ class ReceivingPureTests(unittest.TestCase):
 
 class ReceivingHTTPTests(unittest.TestCase):
     def setUp(self):
-        self.actor={'tenant_id':uuid.uuid4(),'staff_id':uuid.uuid4(),'role':'owner','slug':'fictional-store'}
+        self.actor={'tenant_id':uuid.uuid4(),'staff_id':uuid.uuid4(),'role':'owner','slug':'fictional-store',
+                    'mfa_enabled':True,'mfa_authenticated':True,'mfa_fresh':True}
         self.app=create_app({'TESTING':True,'PUBLIC_BASE_URL':'https://receiving.fixture.invalid','APP_ENCRYPTION_KEYS':Fernet.generate_key().decode()},database=Mock())
         self.app.extensions['ss_auth'].resolve=Mock(return_value=self.actor)
         self.service=self.app.extensions['ss_receiving'];self.client=self.app.test_client();self.base='https://receiving.fixture.invalid'
         self.headers={'Authorization':'Bearer fictional-staff-session'}
-        for name in ('readiness','locations','binding_preview','approve_binding','revoke_binding','create_plan','get','request_status','revise','commit','recover','authorize','cancel'):
+        for name in ('readiness','locations','catalog_games','binding_preview','binding_review','approve_binding','revoke_binding','create_plan','get','request_status','revise','commit','recover','authorize','cancel'):
             setattr(self.service,name,Mock(return_value={'fixture':name}))
 
     def test_typed_authenticated_routes_use_actor_and_request_body(self):
         ident=str(uuid.uuid4())
         routes=[('get','/api/receiving/readiness','readiness'),('get','/api/receiving/locations','locations'),
             ('post','/api/receiving/catalog-bindings/previews','binding_preview'),('post','/api/receiving/plans','create_plan'),
+            ('get','/api/receiving/catalog-bindings/previews/'+ident+'/review','binding_review'),
             ('get','/api/receiving/'+ident,'get'),('get','/api/receiving/requests/key','request_status'),
             ('post','/api/receiving/catalog-bindings/'+ident+'/approve','approve_binding'),('post','/api/receiving/catalog-bindings/'+ident+'/revoke','revoke_binding'),
             ('put','/api/receiving/'+ident+'/plan','revise')]+[('post','/api/receiving/'+ident+'/'+action,action) for action in ('commit','recover','authorize','cancel')]
@@ -102,6 +105,48 @@ class ReceivingHTTPTests(unittest.TestCase):
                 result=getattr(self.client,method)(path,base_url=self.base,headers=self.headers,**({'json':{}} if method!='get' else {}))
                 self.assertIn(result.status_code,(200,201));self.assertEqual(result.json,{'fixture':name})
                 self.assertEqual(getattr(self.service,name).call_args.args[0],self.actor)
+
+    def test_binding_review_get_passes_preview_and_bounded_paging_arguments(self):
+        ident=uuid.uuid4();cursor=str(uuid.uuid4());path='/api/receiving/catalog-bindings/previews/'+str(ident)+'/review'
+        self.assertEqual(self.client.get(path,base_url=self.base,headers=self.headers).status_code,200)
+        self.service.binding_review.assert_called_once_with(self.actor,ident,limit=25,cursor=None)
+        self.service.binding_review.reset_mock()
+        self.assertEqual(self.client.get(path+'?limit=50&cursor='+cursor,base_url=self.base,headers=self.headers).status_code,200)
+        self.service.binding_review.assert_called_once_with(self.actor,ident,limit=50,cursor=cursor)
+        self.service.binding_review.reset_mock()
+        for value in ('invalid','1.5'):
+            with self.subTest(limit=value):
+                self.assertEqual(self.client.get(path+'?limit='+value,base_url=self.base,headers=self.headers).status_code,400)
+        self.service.binding_review.assert_not_called()
+        self.service.binding_review.side_effect=lambda actor,preview_id,**paging:Receiving.binding_review(self.service,actor,preview_id,**paging)
+        for query in ('limit=0','limit=51','limit=-1','cursor=not-a-uuid'):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(path+'?'+query,base_url=self.base,headers=self.headers).status_code,400)
+
+    def test_me_exposes_only_additive_mfa_fresh_boolean(self):
+        for fresh in (True,False):
+            with self.subTest(fresh=fresh):
+                self.actor['mfa_fresh']=fresh
+                result=self.client.get('/api/me',base_url=self.base,headers=self.headers)
+                self.assertEqual(result.status_code,200);self.assertIs(result.json['mfa_fresh'],fresh)
+                self.assertTrue(result.json['mfa_authenticated']);self.assertNotIn('mfa_authenticated_at',result.json)
+
+    def test_catalog_games_get_passes_exact_name_and_rejects_ambiguous_queries(self):
+        path='/api/receiving/catalog-games'
+        self.assertEqual(self.client.get(path,base_url=self.base,headers=self.headers).status_code,200)
+        self.service.catalog_games.assert_called_once_with(self.actor,None);self.service.catalog_games.reset_mock()
+        self.assertEqual(self.client.get(path+'?name=A%26B',base_url=self.base,headers=self.headers).status_code,200)
+        self.service.catalog_games.assert_called_once_with(self.actor,'A&B');self.service.catalog_games.reset_mock()
+        for query in ('name=A&name=B','name=A&unsupported=value','tenant_id=forged'):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(path+'?'+query,base_url=self.base,headers=self.headers).status_code,400)
+        self.service.catalog_games.assert_not_called()
+
+    def test_catalog_games_get_requires_authentication(self):
+        auth=self.app.extensions['ss_auth']
+        auth.resolve.side_effect=lambda token:Auth.resolve(auth,token)
+        self.assertEqual(self.client.get('/api/receiving/catalog-games',base_url=self.base).status_code,401)
+        self.service.catalog_games.assert_not_called()
 
     def test_cookie_csrf_cross_origin_and_tenant_proxy_are_rejected(self):
         self.client.set_cookie('ss_session','fictional-cookie',domain='receiving.fixture.invalid')

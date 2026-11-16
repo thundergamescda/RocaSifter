@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 import unittest
 import uuid
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from cryptography.fernet import Fernet
 
 from hosted.app import create_app
@@ -11,6 +11,7 @@ from hosted.receiving_plan import effective_variation,ReceivingError
 from hosted.receiving_templates import PriceTemplates,parent_policy_hash
 from hosted.security import ServiceError
 from intake_manifest import source_line_id
+from catalog_physical_ownership import ownership_from_card
 from test_hosted_trades import card_line
 from test_receiving_fixtures import FictionalReceivingProvider
 
@@ -30,6 +31,42 @@ class ReceivingTemplateFactsTests(unittest.TestCase):
         self.binding=effective|{'id':uuid.uuid4(),'version':1,'identity':identity,'identity_hash':source_line_id(identity),'location_id':'fixture-location',
             'provider':{key:self.provider.proof[key] for key in ('merchant_id','environment','application_id')}|{'location_id':'fixture-location'}}
         self.service=PriceTemplates(Mock(),self.provider,Mock())
+
+    def physical_binding(self):
+        mapping={'game':'game','game_label':'game_label','card_name':'name','card_set':'set','card_num':'number',
+            'condition':'condition','printing':'printing','language':'language','item_type':'kind',
+            'grader':'grading_company','grade':'grade','grade_qualifier':'grade_qualifier','cert_number':'certification',
+            'serial_number':'serial_number','year':'year','sport':'sport','league':'league',
+            'manufacturer':'manufacturer','team':'team','player':'player'}
+        binding=deepcopy(self.binding)
+        binding['physical_ownership']=ownership_from_card({key:binding['identity'].get(value,'') for key,value in mapping.items()})
+        binding['evidence_hash']='e'*64
+        return binding
+
+    def test_physical_template_freezes_complete_detached_source_mapping_evidence(self):
+        binding=self.physical_binding();before=deepcopy(binding)
+        facts,_=self.service._facts(self.actor,binding,'Reviewed price')
+        self.assertEqual(facts['physical_ownership'],binding['physical_ownership'])
+        self.assertEqual(len(facts['physical_ownership']['facts']),20)
+        self.assertEqual(facts['binding_evidence_hash'],binding['evidence_hash'])
+        self.assertEqual(facts['binding_id'],str(binding['id']));self.assertEqual(facts['binding_version'],binding['version'])
+        self.assertFalse(facts['receiving_enabled']);self.assertFalse(facts['new_parent_creation'])
+        facts['physical_ownership']['facts']['card_name']='changed local copy'
+        self.assertEqual(binding,before);self.assertEqual(self.provider.calls,[])
+
+    def test_physical_template_rejects_corrupt_source_before_provider_reads(self):
+        for mode in ('key','facts','identity_hash'):
+            binding=self.physical_binding()
+            if mode=='key':binding['physical_ownership']['key']='f'*64
+            elif mode=='facts':binding['physical_ownership']['facts'].pop('language')
+            else:binding['identity_hash']='d'*64
+            with self.subTest(mode=mode),patch.object(self.provider,'access',side_effect=AssertionError('Invalid ownership reached provider.')):
+                with self.assertRaises(ReceivingError) as caught:self.service._facts(self.actor,binding,'Reviewed price')
+                self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
+
+    def test_legacy_template_facts_do_not_acquire_inferred_physical_ownership(self):
+        facts,_=self.service._facts(self.actor,self.binding,'Reviewed price')
+        self.assertNotIn('physical_ownership',facts);self.assertNotIn('binding_evidence_hash',facts)
 
     def test_readable_tax_category_location_facts_exclude_full_snapshots_and_never_enable_writes(self):
         self.provider.objects['fixture-parent']['item_data']['categories']=[{'id':'category-A'}]

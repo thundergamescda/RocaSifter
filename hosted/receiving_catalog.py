@@ -8,12 +8,16 @@ import hashlib
 import json
 import re
 
+from catalog_physical_ownership import (CatalogOwnershipError, validate_ownership,
+                                       identity_for_ownership)
+from intake_manifest import source_line_id
 from .receiving_plan import ReceivingError, canonical, fingerprint, integer, text_hash, uuid_text
 from .security import ServiceError, provider_id
 
 MAX_BYTES=4*1024*1024
 ADDITION_FIELDS=frozenset(('review_line_id','identity_hash','parent_id','source_variation_id','target_sku',
                          'selling_cents','template_id','template_version','template'))
+OWNED_ADDITION_FIELDS=ADDITION_FIELDS|{'physical_ownership'}
 
 
 def _unknown():
@@ -53,10 +57,16 @@ def _children(parent):
 
 
 def _addition(value):
-    if not isinstance(value,dict) or set(value)!=ADDITION_FIELDS:raise _unknown()
+    if not isinstance(value,dict) or set(value) not in (ADDITION_FIELDS,OWNED_ADDITION_FIELDS):raise _unknown()
     result=deepcopy(value)
     for key in ('review_line_id','template_id'):result[key]=uuid_text(value[key],key)
     result['identity_hash']=text_hash(value['identity_hash'],'Identity hash')
+    if 'physical_ownership' in value:
+        try:
+            ownership=validate_ownership(value['physical_ownership'])
+            if source_line_id(identity_for_ownership(ownership))!=result['identity_hash']:raise _unknown()
+        except CatalogOwnershipError:raise _unknown() from None
+        result['physical_ownership']=ownership
     result['parent_id']=provider_id(value['parent_id'],'Parent ID')
     result['source_variation_id']=provider_id(value['source_variation_id'],'Source variation ID')
     result['selling_cents']=integer(value['selling_cents'],'Selling price')
@@ -67,6 +77,7 @@ def _addition(value):
             template['approved'] is not True or template['new_price_enabled'] is not True):raise _unknown()
     name_format=template.get('name_format_version',1)
     if type(name_format) is not int or name_format not in (1,2):raise _unknown()
+    if 'physical_ownership' in result and name_format!=2:raise _unknown()
     locations=template['location_ids'];prefix=template['name_prefix']
     if (not isinstance(locations,list) or not 1<=len(locations)<=1000 or
             not isinstance(prefix,str) or not 1<=len(prefix)<=100 or any(ord(c)<32 or ord(c)==127 for c in prefix)):
@@ -82,8 +93,14 @@ def _temp(row):return '#'+row['review_line_id'].replace('-','')
 
 
 def _marker(operation,row):
-    value={'ss_price':2,'identity':row['identity_hash'],'operation':operation,'review':row['review_line_id']}
-    if row['template'].get('name_format_version',1)==2:value['name_format']=2
+    if 'physical_ownership' in row:
+        # Canonical hashes and UUIDs keep this ownership-bound marker at 248
+        # ASCII bytes, below the provider's 255-byte user_data limit.
+        value={'ss_price':3,'i':row['identity_hash'],'k':row['physical_ownership']['key'],
+               'o':operation,'r':row['review_line_id'],'n':2}
+    else:
+        value={'ss_price':2,'identity':row['identity_hash'],'operation':operation,'review':row['review_line_id']}
+        if row['template'].get('name_format_version',1)==2:value['name_format']=2
     result=canonical(value).decode()
     if len(result)>255:raise _unknown()
     return result
@@ -136,7 +153,7 @@ def _expected(body,additions):
         if not isinstance(body,dict) or set(body)!={'idempotency_key','batches'} or len(body['batches'])!=1:raise _unknown()
         batch=body['batches'][0]
         if not isinstance(batch,dict) or set(batch)!={'objects'} or not isinstance(batch['objects'],list):raise _unknown()
-        rows=[_addition(row) for row in additions];temporaries={_temp(row) for row in rows}
+        rows=[_addition(row) for row in additions];by_temp={_temp(row):row for row in rows};temporaries=set(by_temp)
         parents={};operations=set();found=set()
         for parent in batch['objects']:
             children=_children(parent);old=deepcopy(parent);old['item_data']['variations']=[]
@@ -144,7 +161,10 @@ def _expected(body,additions):
             for child in children:
                 if child['id'] in temporaries:
                     found.add(child['id']);marker=json.loads(child['item_variation_data']['user_data'])
-                    operations.add(uuid_text(marker['operation'],'Marker operation'))
+                    row=by_temp[child['id']]
+                    operation=uuid_text(marker['o' if 'physical_ownership' in row else 'operation'],'Marker operation')
+                    if child['item_variation_data']['user_data']!=_marker(operation,row):raise _unknown()
+                    operations.add(operation)
                 else:old['item_data']['variations'].append(deepcopy(child))
             parents[parent['id']]=old
         if found!=temporaries or len(operations)!=1:raise _unknown()
@@ -211,6 +231,8 @@ def _prove(body,objects,rows,mappings=None):
                 addition=next(row for row in rows if _temp(row)==expected['id'])
                 resolutions.append({key:addition[key] for key in ('review_line_id','identity_hash','target_sku','parent_id','selling_cents','template_id','template_version')}|
                                    {'variation_id':child['id'],'currency':'USD'})
+                if 'physical_ownership' in addition:
+                    resolutions[-1]['physical_ownership']=deepcopy(addition['physical_ownership'])
         if sequence!=sorted(sequence):raise _unknown()
         evidence.append(actual)
     if len(resolutions)!=len(rows):raise _unknown()

@@ -7,6 +7,8 @@ import json
 import re
 import uuid
 from intake_manifest import normalize_identity, source_line_id, ManifestError
+from catalog_physical_ownership import (CatalogOwnershipError, validate_ownership,
+                                       require_identity)
 from .security import ServiceError, provider_id
 
 API_VERSION = '2026-09-16'
@@ -60,15 +62,74 @@ def keys(value, allowed):
     if not isinstance(value,dict) or set(value)-set(allowed):raise ServiceError('Unsupported receiving fields.')
 
 
+def _ownership_error():
+    return ReceivingError('Review the complete physical catalog ownership before receiving.',
+                          code='CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
+
+
+def _ownership_v2(plan):
+    if 'physical_ownership_version' not in plan:return False
+    if type(plan['physical_ownership_version']) is not int or plan['physical_ownership_version']!=2:
+        raise _ownership_error()
+    return True
+
+
+def _checked_ownership(value, identity=None):
+    try:
+        return validate_ownership(value) if identity is None else require_identity(value,identity)
+    except CatalogOwnershipError:
+        raise _ownership_error() from None
+
+
+def frozen_target_ownership(plan,target):
+    """Resolve identity from the frozen plan, retaining the compact public DTO."""
+    try:
+        matches=[row for row in plan['targets'] if row['review_line_id']==target['review_line_id']]
+        if len(matches)!=1:raise _ownership_error()
+        frozen=matches[0];identity=frozen['identity']
+        ownership=_checked_ownership(frozen.get('physical_ownership'),identity)
+        if (_checked_ownership(target.get('physical_ownership'),identity)!=ownership or
+                ('identity' in target and target['identity']!=identity) or
+                any(target[key]!=frozen[key] for key in ('identity_hash','target_sku','parent_id','selling_cents','source_sku'))):
+            raise _ownership_error()
+        return ownership,identity
+    except (KeyError,TypeError,ValueError):raise _ownership_error() from None
+
+
+def checked_target_ownership(plan,target,binding):
+    """Recheck a resolved physical mapping under the caller's authority locks."""
+    if not _ownership_v2(plan):
+        if binding.get('physical_ownership') is not None or 'physical_ownership' in target:raise _ownership_error()
+        return None
+    try:
+        ownership,identity=frozen_target_ownership(plan,target)
+        if (_checked_ownership(binding.get('physical_ownership'),binding['identity'])!=ownership or
+                binding['identity']!=identity or source_line_id(binding['identity'])!=target['identity_hash'] or
+                binding['identity_hash']!=target['identity_hash'] or str(binding['id'])!=target['binding_id'] or
+                type(target['binding_version']) is not int or
+                type(binding['version']) is not int or binding['version']!=target['binding_version'] or
+                binding['version']<1 or binding['evidence_hash']!=target['binding_evidence_hash'] or
+                binding['provider']!=plan['provider'] or binding['location_id']!=plan['location_id'] or
+                binding['variation_id']!=target['variation_id'] or binding['parent_id']!=target['parent_id'] or
+                binding['sku']!=target['target_sku'] or type(binding['selling_cents']) is not int or
+                type(target['selling_cents']) is not int or binding['selling_cents']!=target['selling_cents']):
+            raise _ownership_error()
+        return ownership
+    except (KeyError,TypeError,ValueError):raise _ownership_error() from None
+
+
 def normalize_plan(data):
     keys(data, ('request_key','physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind',
                 'accepted_trade_id','accepted_receipt_hash','location_id','new_inventory_confirmed',
-                'excluded_not_received_ack','external_ownership_confirmed','client_label_profile','lines'))
+                'excluded_not_received_ack','external_ownership_confirmed','client_label_profile','lines',
+                'physical_ownership_version'))
+    ownership_v2=_ownership_v2(data)
     if data.get('new_inventory_confirmed') is not True or data.get('excluded_not_received_ack') is not True:
         raise ServiceError('Explicitly confirm new inventory and that excluded quantities will not be received.')
     mode=data.get('workflow_kind')
     if mode not in ('accepted_trade','inventory_only'):raise ServiceError('Select a supported receiving workflow.')
     result={key:uuid_text(data.get(key),key) for key in ('physical_intake_id',)}
+    if ownership_v2:result['physical_ownership_version']=2
     result.update({key:text_hash(data.get(key),key) for key in ('physical_manifest_hash','source_snapshot_hash')})
     result.update(workflow_kind=mode, location_id=provider_id(data.get('location_id'),'Square location ID'),
                   new_inventory_confirmed=True, excluded_not_received_ack=True)
@@ -90,7 +151,9 @@ def normalize_plan(data):
     if not isinstance(lines,list) or not 1<=len(lines)<=1000:raise ServiceError('Select 1 to 1,000 reviewed source rows.')
     result['lines']=[];seen=set()
     for row in lines:
-        keys(row, ('review_line_id','source_line_key','accepted_line_id','identity','quantity','selling_cents','zero_price_confirmed','reviewed'))
+        keys(row, ('review_line_id','source_line_key','accepted_line_id','identity','quantity','selling_cents','zero_price_confirmed','reviewed',
+                   'physical_ownership'))
+        if not ownership_v2 and 'physical_ownership' in row:raise _ownership_error()
         ident=uuid_text(row.get('review_line_id'),'Reviewed line ID')
         if ident in seen:raise ServiceError('A reviewed line ID cannot appear twice.')
         seen.add(ident)
@@ -108,6 +171,8 @@ def normalize_plan(data):
             if 'accepted_line_id' in row:raise ServiceError('Inventory-only lines cannot assert accepted-trade line IDs.')
             try:value['identity']=normalize_identity(row.get('identity'))
             except ManifestError:raise ServiceError('A complete reviewed card identity is required.') from None
+        if ownership_v2:
+            value['physical_ownership']=_checked_ownership(row.get('physical_ownership'),value.get('identity'))
         result['lines'].append(value)
     result['lines'].sort(key=lambda row:row['review_line_id'])
     return result
@@ -155,9 +220,11 @@ def effective_variation(variation, parent, location):
 
 def bind_targets(plan, budget, accepted_lines, bindings, objects):
     """Derive immutable identity/cost from accepted lines; cap all price splits."""
+    ownership_v2=_ownership_v2(plan)
     used={};accepted_used={};targets=[]
     by_id={str(row['id']):row for row in accepted_lines}
     for row in plan['lines']:
+        if not ownership_v2 and 'physical_ownership' in row:raise _ownership_error()
         key=row['source_line_key'];quantity=row['quantity']
         if key not in budget:raise ReceivingError('Original source-line binding is not in this intake.')
         used[key]=used.get(key,0)+quantity
@@ -169,11 +236,18 @@ def bind_targets(plan, budget, accepted_lines, bindings, objects):
             if accepted_used[row['accepted_line_id']]>accepted['quantity']:raise ReceivingError('Price splits exceed the accepted line quantity.')
             identity=accepted['identity']
         else:identity=row['identity']
+        ownership=_checked_ownership(row.get('physical_ownership'),identity) if ownership_v2 else None
         identity_hash=source_line_id(identity)
         candidates=[binding for binding in bindings if binding['identity_hash']==identity_hash and
                     binding['location_id']==plan['location_id'] and binding['selling_cents']==row['selling_cents']]
         if len(candidates)!=1:raise ReceivingError('Approve one exact identity/price/location catalog binding first.',code='CATALOG_MAPPING_REVIEW_REQUIRED')
         binding=candidates[0];variation=objects.get(binding['variation_id']);parent=objects.get(binding['parent_id'])
+        if ownership_v2:
+            if _checked_ownership(binding.get('physical_ownership'),identity)!=ownership:
+                raise _ownership_error()
+            if binding.get('action')=='create_price' and _checked_ownership(binding.get('template_physical_ownership'),identity)!=ownership:
+                raise _ownership_error()
+        elif binding.get('physical_ownership') is not None or 'template_physical_ownership' in binding:raise _ownership_error()
         effective=effective_variation(variation,parent,plan['location_id'])
         creating=binding.get('action')=='create_price'
         if (any(effective[key]!=binding[key] for key in ('variation_id','parent_id','sku','identity_anchor_hash')) or
@@ -184,6 +258,7 @@ def bind_targets(plan, budget, accepted_lines, bindings, objects):
                         'source_sku':binding['sku'],'target_sku':binding['new_target_sku'] if creating else effective['sku'],
                         'variation_id':None if creating else effective['variation_id'],
                         'parent_id':effective['parent_id'],'currency':'USD','action':'create_price' if creating else 'reuse_existing'})
+        if ownership_v2:targets[-1]['physical_ownership']=ownership
         if creating:
             targets[-1].update(binding_role='source_family',template_id=str(binding['template_id']),template_version=binding['template_version'],
                                template_evidence_hash=binding['template_evidence_hash'])

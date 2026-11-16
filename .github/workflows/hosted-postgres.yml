@@ -1,0 +1,34 @@
+name: Hosted PostgreSQL acceptance
+run-name: Hosted PostgreSQL fixture ${{ github.sha }}
+
+'on':
+  push:
+    branches:
+      - 'stock-sleeve-hosted-ci-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-postgres-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-postgres:
+    if: github.repository == 'thundergamescda/RocaSifter'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, reviewed 2026-11-16
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run isolated hosted PostgreSQL fixture acceptance
+        env:
+          SS_CI_SOURCE_SHA: ${{ github.sha }}
+          HOSTED_CI_BUILD_TIMEOUT_SECONDS: '600'
+          HOSTED_CI_TEST_TIMEOUT_SECONDS: '1200'
+        run: bash tools/run_hosted_ci.sh

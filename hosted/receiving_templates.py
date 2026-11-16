@@ -4,6 +4,8 @@ import unicodedata
 import uuid
 from decimal import Decimal
 from psycopg.types.json import Jsonb
+from intake_manifest import source_line_id
+from catalog_physical_ownership import CatalogOwnershipError, require_identity
 from .database import audit
 from .intake import current_authority
 from .receiving_plan import ReceivingError, effective_variation, fingerprint, keys, uuid_text, text_hash, integer
@@ -86,6 +88,14 @@ class PriceTemplates:
         return {'templates':result,'next_cursor':str(rows[-1]['id']) if more and rows else None}
 
     def _facts(self,actor,binding,prefix):
+        ownership=None
+        if binding.get('physical_ownership') is not None:
+            try:
+                ownership=require_identity(binding['physical_ownership'],binding['identity'])
+                if source_line_id(binding['identity'])!=binding['identity_hash']:raise ValueError()
+            except (CatalogOwnershipError,ValueError,KeyError):
+                raise ReceivingError('The source physical ownership needs a fresh owner mapping review.',
+                                     code='CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED') from None
         access=self.provider.access(actor['tenant_id']);location=self.provider.location(access,binding['location_id'])
         expected={key:access.proof[key] for key in ('merchant_id','environment','application_id')}|{'location_id':binding['location_id']}
         if binding['provider']!=expected:raise ReceivingError('The mapping belongs to a different Square principal.')
@@ -130,6 +140,8 @@ class PriceTemplates:
                'policy_reference':'existing-parent-settings:'+parent['id']+':'+str(parent['version']),
                'parent_policy_hash':parent_policy_hash(parent,objects),'catalog_snapshot_hash':fingerprint({'parent':parent,'variation':variation}),
                'new_parent_creation':False,'receiving_enabled':False}
+        if ownership is not None:
+            facts.update(physical_ownership=ownership,binding_evidence_hash=binding['evidence_hash'])
         return facts,access
 
     def preview(self,actor,data):

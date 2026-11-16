@@ -67,6 +67,8 @@ ALIASES = {
     'cert_number': ('Certification Number', 'Certification', 'Cert Number', 'Cert #'),
     'serial_number': ('Serial Number', 'Serial #'),
     'year': ('Year',),
+    'sport': ('Sport',),
+    'league': ('League',),
     'manufacturer': ('Manufacturer', 'Brand'),
     'team': ('Team',),
     'player': ('Player',),
@@ -216,6 +218,34 @@ def _combined_condition(value):
     return CONDITIONS.get(key, value), ''
 
 
+def _alias_value_key(field_name, value):
+    """Compare alias values by field without rewriting the selected source value."""
+    text = value.strip()
+    if field_name in ('source_sku', 'square_sku', 'tcgplayer_sku',
+                      'source_product_id', 'source_sequence', 'source_image'):
+        return ('opaque', text)
+    if field_name in ('quantity', 'price', 'market_price'):
+        return ('numeric_source', _key(text))
+    if field_name == 'game':
+        game, label = normalize_game(text)
+        if game in GAME_LABELS:
+            return ('known_game', game)
+        return ('custom_game', game, unicodedata.normalize('NFC', label))
+    if field_name == 'condition':
+        condition, finish = _combined_condition(text)
+        if condition in CONDITIONS.values():
+            return ('condition', condition, finish)
+    if field_name == 'printing':
+        finish = FINISHES.get(_key(text))
+        if finish is not None:
+            return ('printing', finish)
+    if field_name == 'language':
+        language = LANGUAGES.get(_key(text))
+        if language is not None:
+            return ('language', language)
+    return ('text', unicodedata.normalize('NFC', text))
+
+
 def _detect(headers):
     keys = set(headers)
     if {'product name', 'product line'} <= keys or 'tcgplayer id' in keys or 'tcg player id' in keys:
@@ -335,14 +365,14 @@ def parse_csv(content, *, adapter='auto', default_game='', column_mapping=None,
             row_errors = len(result.issues)
             def take(field_name):
                 choices = [(name, values[name].strip()) for name in mapped_headers[field_name] if values[name].strip()]
-                if len({_key(v) for _, v in choices}) > 1:
+                if len({_alias_value_key(field_name, v) for _, v in choices}) > 1:
                     issue(row_number, '/'.join(n for n, _ in choices), 'alias_conflict', f'Conflicting {field_name} columns; map the intended source.')
                 return choices[0][1] if choices else ''
             card = {}
             for key in ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language', 'rarity', 'bin',
                         'storage_location', 'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number',
-                        'year', 'manufacturer', 'team', 'player'):
-                try:card[key] = _text(take(key), key)
+                        'year', 'sport', 'league', 'manufacturer', 'team', 'player'):
+                try:card[key] = _text(take(key), key, limit=100 if key in ('sport', 'league') else 500)
                 except ValueError as error:
                     issue(row_number, key, 'text', str(error));card[key] = ''
             if not card['card_name']:
@@ -415,7 +445,11 @@ def parse_csv(content, *, adapter='auto', default_game='', column_mapping=None,
                 except ValueError as error:issue(row_number, key, 'identifier', str(error));value = ''
                 if value:source_ids[key] = value
             if result.adapter == 'tcgplayer_app' and source_ids.get('source_sku'):
-                source_ids['tcgplayer_sku'] = source_ids.pop('source_sku')
+                app_sku = source_ids.pop('source_sku')
+                if source_ids.get('tcgplayer_sku') and source_ids['tcgplayer_sku'] != app_sku:
+                    issue(row_number, 'SKU/TCGplayer ID', 'identifier_conflict', 'The TCGplayer app SKU and explicit TCGplayer ID differ. Map the intended source before importing.')
+                else:
+                    source_ids['tcgplayer_sku'] = app_sku
             square_sku = source_ids.get('square_sku', '')
             if square_sku and not re.fullmatch(r'[0-9]{12}', square_sku):
                 issue(row_number, 'square_sku', 'square_sku', 'An explicit Square SKU must be exactly 12 digits; marketplace IDs are separate.')
@@ -454,7 +488,7 @@ def normalize_manual_card(item, *, game=''):
             raise IntakeValidationError([IntakeIssue(2, key, 'identity', f'Enter the {key} for this manual item.')])
     fields = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
               'rarity', 'bin', 'storage_location', 'grader', 'grade', 'grade_qualifier',
-              'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')
+              'cert_number', 'serial_number', 'year', 'sport', 'league', 'manufacturer', 'team', 'player')
     content = io.StringIO(newline='');writer = csv.writer(content)
     writer.writerow([ALIASES[key][0] for key in fields] + ['Quantity', 'Price', 'Game'])
     writer.writerow([item.get(key, '') for key in fields] +

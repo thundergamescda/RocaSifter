@@ -18,6 +18,8 @@ from hosted.receiving_plan import (PUBLIC_RESPONSE_BYTES, ReceivingError,
     canonical, fingerprint, normalize_plan, public_response_bytes)
 from hosted.security import provider_id
 from station_cloud import CloudClient
+from catalog_physical_ownership import ownership_from_card,identity_for_ownership
+from intake_manifest import source_line_id
 from test_hosted_receiving import plan_data
 
 
@@ -113,6 +115,34 @@ class ReceivingProjectionBudgetTests(unittest.TestCase):
         actual_view=service._view(actual);actual_wire=public_response_bytes({'found':True,'result':actual_view})
         self.assertLessEqual(len(actual_wire),conservative)
         self.assertEqual(len(json.loads(actual_wire)['result']['receipt']['confirmed_targets']),1000)
+
+    def test_v2_catalog_projection_reserves_bigint_binding_versions_and_every_complete_owner(self):
+        plan=large_plan(catalog=True);plan['physical_ownership_version']=2;owners={}
+        for group in range(100):
+            owners[group]=ownership_from_card({'game':'pokemon','card_name':'Fictional budget card '+str(group),'item_type':'card'})
+        for index,target in enumerate(plan['targets']):
+            owner=owners[index%100];identity=identity_for_ownership(owner)
+            target.update(identity=identity,identity_hash=source_line_id(identity),physical_ownership=deepcopy(owner))
+        for group,addition in enumerate(plan['catalog_additions']):
+            addition.update(identity_hash=plan['targets'][group]['identity_hash'],physical_ownership=deepcopy(owners[group]))
+        before=deepcopy(plan);service=self.service(True);amount=service._projection_budget(plan,uid(40002),revision=7)
+        self.assertEqual(plan,before);self.assertEqual(PUBLIC_RESPONSE_BYTES,8*1024*1024)
+        view=service._view(service.projected_row);receipt=view['receipt'];resolutions=view['catalog_resolutions']
+        self.assertEqual(amount,len(public_response_bytes({'found':True,'result':view})));self.assertLessEqual(amount,PUBLIC_RESPONSE_BYTES)
+        self.assertEqual((view['physical_ownership_version'],receipt['physical_ownership_version']),(2,2))
+        self.assertEqual((len(view['targets']),len(receipt['confirmed_targets']),len(resolutions)),(1000,1000,100))
+        self.assertEqual(len(view['excluded_quantities']),1000)
+        self.assertEqual(sum(len(row['review_line_ids']) for row in resolutions),1000)
+        self.assertEqual({row['binding_version'] for row in resolutions},{2**63-1})
+        self.assertEqual({row['binding_version'] for row in receipt['confirmed_targets']},{2**63-1})
+        self.assertEqual(receipt['catalog_resolutions'],resolutions)
+        by_review={target['review_line_id']:target for target in plan['targets']}
+        for target in view['targets']+receipt['confirmed_targets']:
+            self.assertEqual(target['physical_ownership'],by_review[target['review_line_id']]['physical_ownership'])
+            self.assertNotIn('identity',target);self.assertEqual(len(target['physical_ownership']['facts']),20)
+        for row in resolutions:
+            self.assertEqual(row['physical_ownership'],by_review[row['review_line_id']]['physical_ownership'])
+            for review in row['review_line_ids']:self.assertEqual(row['physical_ownership'],by_review[review]['physical_ownership'])
 
     def test_normalized_1000_row_input_is_still_bounded_independently(self):
         body=plan_data();base=body['lines'][0];body['workflow_kind']='accepted_trade'

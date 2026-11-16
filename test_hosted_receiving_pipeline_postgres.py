@@ -21,6 +21,10 @@ class PostgreSQLReceivingPipelineAcceptance(_PostgreSQLSettlementFixture):
     accept_trade=receiving_fixture.PostgreSQLReceivingAcceptance.accept_trade
     commit=receiving_fixture.PostgreSQLReceivingAcceptance.commit
     recover=receiving_fixture.PostgreSQLReceivingAcceptance.recover
+    _physical_mapping=receiving_fixture.PostgreSQLReceivingAcceptance._physical_mapping
+    _retire_original_mapping=receiving_fixture.PostgreSQLReceivingAcceptance._retire_original_mapping
+    _approve_physical_mapping=receiving_fixture.PostgreSQLReceivingAcceptance._approve_physical_mapping
+    _physical_plan=receiving_fixture.PostgreSQLReceivingAcceptance._physical_plan
 
     def setUp(self):
         receiving_fixture.PostgreSQLReceivingAcceptance.setUp(self)
@@ -53,6 +57,27 @@ class PostgreSQLReceivingPipelineAcceptance(_PostgreSQLSettlementFixture):
             'preview_hash':preview['preview_hash'],'preserve_existing_tax_configuration_confirmed':True,
             'preserve_existing_siblings_confirmed':True,'source_identity_confirmed':True,
             'approval_reason':'Fictional owner reviewed the exact arbitrary source SKU and settings','policy_reference':preview['facts']['policy_reference']})
+
+    def _approve_physical_template(self):
+        preview=self.service.templates.preview(self.actor,{'binding_id':self.binding['binding_id'],'variation_name_prefix':'Sticker price'})
+        self.price_template=self.service.templates.approve(self.actor,preview['preview_id'],{
+            'request_key':'physical-price-family-'+uuid.uuid4().hex,'preview_hash':preview['preview_hash'],
+            'preserve_existing_tax_configuration_confirmed':True,'preserve_existing_siblings_confirmed':True,
+            'source_identity_confirmed':True,'approval_reason':'Fictional owner reviewed the full physical source and preserved catalog policy',
+            'policy_reference':preview['facts']['policy_reference']})
+        return preview
+
+    def _physical_family(self):
+        _,preview,_,binding=self._approve_physical_mapping()
+        self.binding=binding;self._approve_physical_template()
+        return deepcopy(preview['facts']['physical_ownership'])
+
+    def _new_physical_plan(self,ownership,*,prices=(1250,)):
+        body=self._physical_plan(ownership);base=body['lines'][0];body['lines']=[]
+        for cents in prices:
+            row=deepcopy(base);row.update(review_line_id=str(uuid.uuid4()),selling_cents=cents,quantity=2 if len(prices)==1 else 1)
+            body['lines'].append(row)
+        return self.service.create_plan(self.actor,body)
 
     def test_new_price_creates_preserved_sibling_then_freshly_admits_exact_stock(self):
         original=deepcopy(self.provider.objects);plan=self.new_plan()
@@ -211,3 +236,122 @@ class PostgreSQLReceivingPipelineAcceptance(_PostgreSQLSettlementFixture):
         with self.assertRaises(ReceivingError) as caught:self.new_plan()
         self.assertEqual(caught.exception.code,'SKU_COLLISION_REVIEW_REQUIRED')
         self.assertEqual((self.provider.catalog_calls,self.provider.calls),([],[]))
+
+    def test_v2_catalog_then_separate_inventory_preserves_owner_derived_binding_receipt_and_old_siblings(self):
+        original=deepcopy(self.provider.objects);ownership=self._physical_family();plan=self._new_physical_plan(ownership)
+        self.assertEqual(plan['physical_ownership_version'],2)
+        self.assertEqual(plan['targets'][0]['physical_ownership'],ownership)
+        self.assertNotIn('identity',plan['targets'][0])
+        catalog=self.commit(plan)
+        self.assertEqual((catalog['state'],catalog['inventory_confirmed']),('catalog_confirmed',False))
+        self.assertIsNone(catalog['receipt']);self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls)),(1,0))
+        resolution=catalog['catalog_resolutions'][0]
+        self.assertEqual(resolution['physical_ownership'],ownership)
+        created=self.provider.objects[resolution['variation_id']]['item_variation_data'];marker=json.loads(created['user_data'])
+        self.assertEqual(marker,{'ss_price':3,'i':plan['targets'][0]['identity_hash'],'k':ownership['key'],
+            'o':plan['receiving_id'],'r':plan['targets'][0]['review_line_id'],'n':2})
+        self.assertEqual(len(created['user_data'].encode('ascii')),248)
+        self.assertEqual(self.provider.objects['fixture-variation'],original['fixture-variation'])
+        parent=deepcopy(self.provider.objects['fixture-parent']);parent['version']=original['fixture-parent']['version']
+        appended=parent['item_data']['variations'].pop()
+        self.assertEqual(appended['id'],resolution['variation_id']);self.assertEqual(parent,original['fixture-parent'])
+        with self.database.transaction() as db:
+            binding=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,resolution['binding_id'])).fetchone()
+        self.assertEqual(binding['physical_ownership'],ownership);self.assertEqual(binding['approval_source'],'price_template')
+        self.assertEqual(str(binding['template_id']),self.price_template['template_id']);self.assertIsNone(binding['revoked_at'])
+        self.assertEqual((str(binding['id']),binding['version'],binding['evidence_hash']),
+            (resolution['binding_id'],resolution['binding_version'],resolution['binding_evidence_hash']))
+        self.assertNotEqual(str(binding['id']),self.binding['binding_id'])
+        final=self.authorize(plan);receipt=final['receipt'];target=receipt['confirmed_targets'][0]
+        self.assertEqual((final['state'],final['inventory_confirmed'],receipt['physical_ownership_version']),('received',True,2))
+        self.assertEqual(target['physical_ownership'],ownership);self.assertEqual(target['source_binding_id'],self.binding['binding_id'])
+        self.assertEqual((target['binding_id'],target['binding_version']),(str(binding['id']),binding['version']))
+        self.assertEqual(receipt['catalog_resolutions'][0]['physical_ownership'],ownership)
+        self.assertEqual(receipt['receipt_hash'],fingerprint({key:value for key,value in receipt.items() if key!='receipt_hash'}))
+        change=json.loads(self.provider.calls[0])['changes'][0]['adjustment']
+        self.assertEqual((change['catalog_object_id'],change['quantity']),(target['variation_id'],'2'))
+        self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls),self.wallet()),(1,1,(0,0)))
+        self.assertEqual(self.service.get(self.actor,plan['receiving_id']),final)
+
+    def test_v2_lost_ack_recovers_original_encrypted_body_key_hash_and_owned_resolution(self):
+        ownership=self._physical_family();plan=self._new_physical_plan(ownership)
+        self.provider.catalog_behavior='lost_response';unknown=self.commit(plan)
+        self.assertEqual(unknown['state'],'outcome_unknown');self.assertEqual(len(self.provider.calls),0)
+        with self.database.transaction() as db:
+            before=db.execute('SELECT * FROM ss_receiving_steps WHERE tenant_id=%s AND operation_id=%s AND ordinal=0',(self.tenant,plan['receiving_id'])).fetchone()
+        body=self.service._open(self.tenant,plan['receiving_id'],before)
+        self.assertEqual(json.loads(self.provider.catalog_calls[0]),body)
+        self.assertEqual((body['idempotency_key'],fingerprint(body)),(str(before['provider_key']),before['body_hash']))
+        marker=json.loads(body['batches'][0]['objects'][0]['item_data']['variations'][-1]['item_variation_data']['user_data'])
+        self.assertEqual((marker['ss_price'],marker['k']),(3,ownership['key']))
+        recovered=self.recover(plan)
+        self.assertEqual((recovered['state'],recovered['catalog_proof']['kind']),('catalog_confirmed','catalog_state_match'))
+        self.assertEqual(recovered['catalog_resolutions'][0]['physical_ownership'],ownership)
+        self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls)),(1,0))
+        self.assertEqual(len(self.provider.objects['fixture-parent']['item_data']['variations']),2)
+        with self.database.transaction() as db:
+            after=db.execute('SELECT * FROM ss_receiving_steps WHERE tenant_id=%s AND operation_id=%s AND ordinal=0',(self.tenant,plan['receiving_id'])).fetchone()
+        for field in ('encrypted_body','provider_key','body_hash','api_version'):
+            self.assertEqual(after[field],before[field])
+        final=self.authorize(plan)
+        self.assertEqual(final['receipt']['confirmed_targets'][0]['physical_ownership'],ownership)
+        self.assertEqual((final['state'],len(self.provider.catalog_calls),len(self.provider.calls)),('received',1,1))
+
+    def test_v2_same_price_aliases_preserve_all_review_ids_and_one_owned_stock_target(self):
+        ownership=self._physical_family();plan=self._new_physical_plan(ownership,prices=(1250,1250))
+        reviews={target['review_line_id'] for target in plan['targets']};self.assertEqual(len(reviews),2)
+        catalog=self.commit(plan);self.assertEqual(len(catalog['catalog_resolutions']),1)
+        resolution=catalog['catalog_resolutions'][0]
+        self.assertEqual(set(resolution['review_line_ids']),reviews);self.assertIn(resolution['review_line_id'],reviews)
+        self.assertEqual(resolution['physical_ownership'],ownership)
+        self.assertEqual(catalog['catalog_resolutions_hash'],fingerprint(catalog['catalog_resolutions']))
+        self.assertTrue(all(target['physical_ownership']==ownership for target in catalog['targets']))
+        final=self.authorize(plan);targets=final['receipt']['confirmed_targets']
+        self.assertEqual({target['review_line_id'] for target in targets},reviews)
+        self.assertEqual([target['confirmed_quantity'] for target in targets],[1,1])
+        self.assertEqual({target['variation_id'] for target in targets},{resolution['variation_id']})
+        self.assertEqual({target['binding_id'] for target in targets},{resolution['binding_id']})
+        self.assertTrue(all(target['physical_ownership']==ownership for target in targets))
+        changes=json.loads(self.provider.calls[0])['changes']
+        self.assertEqual(len(changes),1);self.assertEqual(changes[0]['adjustment']['quantity'],'2')
+        self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls)),(1,1))
+
+    def test_v2_cannot_inherit_legacy_template_authority_without_fresh_physical_source_and_template(self):
+        _,preview,_=self._physical_mapping();ownership=preview['facts']['physical_ownership']
+        with self.assertRaises(ReceivingError) as caught:self._new_physical_plan(ownership)
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
+        _,fresh,_,binding=self._approve_physical_mapping();self.binding=binding
+        with self.assertRaises(ReceivingError) as caught:self._new_physical_plan(fresh['facts']['physical_ownership'])
+        self.assertEqual(caught.exception.code,'CATALOG_MAPPING_REVIEW_REQUIRED')
+        self.assertEqual((self.provider.catalog_calls,self.provider.calls),([],[]))
+        physical=self._approve_physical_template()
+        self.assertEqual(physical['facts']['physical_ownership'],ownership)
+        plan=self._new_physical_plan(ownership)
+        self.assertEqual((plan['physical_ownership_version'],plan['state']),(2,'ready'))
+        self.assertEqual(plan['targets'][0]['template_id'],self.price_template['template_id'])
+        self.assertEqual((self.provider.catalog_calls,self.provider.calls),([],[]))
+
+    def test_v2_late_ack_after_template_retirement_allocates_only_revoked_owned_child_without_stock(self):
+        ownership=self._physical_family();plan=self._new_physical_plan(ownership)
+        def retire_after_provider_effect():
+            self.service.templates.revoke(self.actor,self.price_template['template_id'],{
+                'request_key':'retire-v2-before-late-ack','version':self.price_template['version'],
+                'reason':'Fictional owner retires this physical family before acknowledgement allocation'})
+        self.provider.after_catalog=retire_after_provider_effect
+        catalog=self.commit(plan)
+        self.assertEqual((catalog['state'],catalog['catalog_confirmed'],catalog['inventory_confirmed']),('catalog_confirmed',True,False))
+        resolution=catalog['catalog_resolutions'][0]
+        with self.database.transaction() as db:
+            template=db.execute('SELECT * FROM ss_receiving_price_templates WHERE tenant_id=%s AND id=%s',(self.tenant,self.price_template['template_id'])).fetchone()
+            children=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND template_id=%s',(self.tenant,self.price_template['template_id'])).fetchall()
+        self.assertIsNotNone(template['revoked_at']);self.assertEqual(len(children),1)
+        child=children[0];self.assertEqual(str(child['id']),resolution['binding_id'])
+        self.assertEqual(child['physical_ownership'],ownership);self.assertEqual(resolution['physical_ownership'],ownership)
+        self.assertEqual((child['revoked_at'],child['revoked_by'],child['revoke_reason']),
+            (template['revoked_at'],template['revoked_by'],template['revoke_reason']))
+        with self.assertRaises(ReceivingError):self.authorize(plan)
+        with self.database.transaction() as db:
+            stock=db.execute('SELECT 1 FROM ss_receiving_steps WHERE tenant_id=%s AND operation_id=%s AND ordinal=1',(self.tenant,plan['receiving_id'])).fetchone()
+        self.assertIsNone(stock);self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls)),(1,0))
+        self.assertEqual(self.recover(plan)['catalog_resolutions'],catalog['catalog_resolutions'])
+        self.assertEqual((len(self.provider.catalog_calls),len(self.provider.calls),self.wallet()),(1,0,(0,0)))

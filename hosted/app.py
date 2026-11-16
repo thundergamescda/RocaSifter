@@ -17,10 +17,11 @@ from .square import Square
 from .trades import Trades
 from .privacy import Privacy, Limits as PrivacyLimits
 from .intake import IntakeClaims, IntakeError
-from .receiving import Receiving
+from .receiving import Receiving,restoration_source_bytes
 from .receiving_pipeline import CatalogReceiving
 from .receiving_square import ReceivingSquare
 from .receiving_plan import ReceivingError,public_response_bytes
+from .owner_onboarding import OwnerOnboarding,EnrollmentError
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -50,11 +51,13 @@ def create_app(config=None,*,database=None,square_transport=None):
     square=Square(db,app.config,square_transport) if db else None
     trades=Trades(db) if db else None
     intake=IntakeClaims(db) if db else None
+    owner_onboarding=OwnerOnboarding(db) if db else None
     receiving=CatalogReceiving(db,ReceivingSquare(square),square.cipher,writes_enabled=app.config.get('RECEIVING_WRITES_ENABLED') is True) if db else None
     privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
                     proof_key=app.config['APP_ENCRYPTION_KEYS'].split(',')[0],
                     limits=app.config.get('PRIVACY_EXPORT_LIMITS') or PrivacyLimits()) if db else None
     app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake,ss_receiving=receiving)
+    app.extensions['ss_owner_onboarding']=owner_onboarding
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -95,6 +98,7 @@ def create_app(config=None,*,database=None,square_transport=None):
         if isinstance(error,ReceivingError):
             result['code']=error.code
             if error.receiving_id:result['receiving_id']=error.receiving_id
+        if isinstance(error,EnrollmentError):result['code']=error.code
         return jsonify(result),error.status
 
     @app.errorhandler(HTTPException)
@@ -156,6 +160,32 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.post('/api/pilot/bootstrap')
     def bootstrap():
         require_db();return jsonify(auth.bootstrap(body())),201
+
+    @app.get('/owner-invite')
+    def owner_invite():return render_template('owner_invite.html')
+
+    @app.post('/api/owner-invitations/inspect')
+    def owner_invitation_inspect():
+        require_db();return jsonify(owner_onboarding.inspect(body(),request.remote_addr or ''))
+
+    @app.post('/api/owner-invitations/status')
+    def owner_invitation_status():
+        require_db();return jsonify(owner_onboarding.status(body(),request.remote_addr or ''))
+
+    @app.post('/api/owner-invitations/accept')
+    def owner_invitation_accept():
+        require_db()
+        supplied=request.headers.get('Authorization','')
+        tokens=[request.cookies.get('ss_session','')]
+        if supplied.startswith('Bearer '):tokens.append(supplied[7:])
+        # An invalid bearer must not hide a different valid browser cookie (or
+        # vice versa). This route never replaces/deletes either session.
+        for token in dict.fromkeys(value for value in tokens if value):
+            try:auth.resolve(token)
+            except ServiceError as error:
+                if error.status!=401:raise
+            else:raise EnrollmentError('Sign out of the current store before creating another store owner. No session was changed.',409,code='SIGN_OUT_REQUIRED')
+        return jsonify(owner_onboarding.accept(body(),request.remote_addr or '')),201
 
     @app.post('/api/auth/login')
     def login():
@@ -222,8 +252,9 @@ def create_app(config=None,*,database=None,square_transport=None):
 
     @app.get('/api/me')
     @authenticated
-    def me():return jsonify(store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot',
+    def me():return jsonify(tenant_id=str(g.actor['tenant_id']),store=g.actor['slug'],role=g.actor['role'],csrf_token=csrf(g.token),mode='pilot',
                            mfa_enabled=bool(g.actor.get('mfa_enabled')),mfa_authenticated=bool(g.actor.get('mfa_authenticated')),
+                           mfa_fresh=bool(g.actor.get('mfa_fresh')),
                            capabilities={'physical_intake_claims':1,'trade_claim_required':True,
                                          'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False,'receiving_plans':1})
 
@@ -357,9 +388,23 @@ def create_app(config=None,*,database=None,square_transport=None):
     @authenticated
     def receiving_locations():return jsonify(receiving.locations(g.actor))
 
+    @app.get('/api/receiving/catalog-games')
+    @authenticated
+    def receiving_catalog_games():
+        if set(request.args)-{'name'} or len(request.args.getlist('name'))>1:
+            raise ServiceError('Choose one game name for catalog review.')
+        return jsonify(receiving.catalog_games(g.actor,request.args.get('name')))
+
     @app.post('/api/receiving/catalog-bindings/previews')
     @authenticated
     def receiving_binding_preview():return jsonify(receiving.binding_preview(g.actor,body())),201
+
+    @app.get('/api/receiving/catalog-bindings/previews/<uuid:preview_id>/review')
+    @authenticated
+    def receiving_binding_review(preview_id):
+        try:limit=int(request.args.get('limit','25'))
+        except ValueError:raise ServiceError('Catalog review page size is invalid.') from None
+        return jsonify(receiving.binding_review(g.actor,preview_id,limit=limit,cursor=request.args.get('cursor')))
 
     @app.post('/api/receiving/catalog-bindings/<uuid:preview_id>/approve')
     @authenticated
@@ -377,6 +422,10 @@ def create_app(config=None,*,database=None,square_transport=None):
     @authenticated
     def receiving_request_status(request_key):return receiving_response(receiving.request_status(g.actor,request_key))
 
+    @app.get('/api/receiving/intakes/<uuid:intake_id>/history')
+    @authenticated
+    def receiving_intake_history(intake_id):return receiving_response(receiving.intake_history(g.actor,intake_id))
+
     @app.post('/api/receiving/requests/<request_key>/retire')
     @authenticated
     def receiving_plan_retire(request_key):return receiving_response(receiving.retire_plan_request(g.actor,request_key,body()))
@@ -384,6 +433,11 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/receiving/<uuid:operation_id>')
     @authenticated
     def receiving_get(operation_id):return receiving_response(receiving.get(g.actor,operation_id))
+
+    @app.get('/api/receiving/<uuid:operation_id>/restoration-source')
+    @authenticated
+    def receiving_restoration_source(operation_id):
+        return Response(restoration_source_bytes(receiving.restoration_source(g.actor,operation_id)),mimetype='application/json')
 
     @app.put('/api/receiving/<uuid:operation_id>/plan')
     @authenticated

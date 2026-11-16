@@ -21,16 +21,23 @@
 <section class="card" id="receivingAdminWorkspace" hidden><div class="heading"><h2>Match one catalog variation</h2><span class="pill" id="receivingAdminStore"></span></div>
 <form id="receivingAdminForm"><div class="columns"><label>Square variation reference<input name="variation_id" maxlength="150" required autocomplete="off" placeholder="Existing variation ID"></label>
 <label>Receiving location<select name="location_id" required><option value="">Choose a Square location</option></select></label></div>
-<div class="columns"><label>Card or player name<input name="name" maxlength="200" required autocomplete="off"></label><label>Game or sport category<input name="game" maxlength="100" required autocomplete="off" placeholder="Pokémon, Magic, Sports…"></label></div>
-<div class="columns"><label>Item type<select name="kind"><option value="card">Raw card</option><option value="slab">Graded slab</option></select></label><label>Additional game label<input name="game_label" maxlength="100" autocomplete="off"></label></div>
+<div class="columns"><label>Card or player name<input name="name" maxlength="200" required autocomplete="off"></label><label>Game or sport category<select name="game" required><option value="">Loading supported games…</option></select></label></div>
+<div class="columns"><label>Item type<select name="kind"><option value="card">Raw card</option><option value="slab">Graded slab</option></select></label><label>Game label from intake<input name="game_label" maxlength="100" autocomplete="off" aria-describedby="receivingAdminGameHelp"></label></div>
+<p id="receivingAdminGameHelp" class="help">Choose the game shown on intake. For another scanner-supported game, choose “Another game” and enter its full name. Keep the exact intake label when matching an existing batch.</p>
 <details><summary>Set, printing and card identity</summary><div class="columns" id="receivingAdminIdentityFields"></div></details>
 <details><summary>Grading, certificate and sports details</summary><div class="columns" id="receivingAdminSlabFields"></div></details>
 <p class="help">Use the exact reviewed identity from intake, including grade qualifiers, certificate and serial details where applicable. A matching SKU alone does not prove identity.</p>
 <button type="submit" id="receivingAdminPreview">Read current Square target</button></form>
 <p id="receivingAdminProgress" class="status" role="status" aria-live="polite"></p>
 <section class="selection" id="receivingAdminReview" hidden><h2>Confirm this exact mapping</h2><dl id="receivingAdminFacts"></dl>
+<section class="selection" id="receivingAdminMappingReview" hidden aria-labelledby="receivingAdminMappingReviewTitle"><h3 id="receivingAdminMappingReviewTitle">Existing mappings for this Square variation</h3>
+<p class="help">Review earlier or different mappings at this store's locations. Retiring a mapping stops new receiving through it and its price-family permissions. Saved receipts, Square items and stock are kept. Approval of a replacement is a separate step.</p>
+<p id="receivingAdminMappingStatus" class="status" role="status" aria-live="polite"></p>
+<div id="receivingAdminConflicts"></div>
+<button type="button" id="receivingAdminReviewRefresh" class="quiet">Refresh existing mappings</button>
+<button type="button" id="receivingAdminReviewMore" class="quiet" hidden>Show more conflicting mappings</button></section>
 <form id="receivingAdminApproveForm"><label class="check"><input type="checkbox" name="identity_confirmed" required><span>I reviewed the full physical card identity and confirm it belongs to this Square variation.</span></label>
 <label>Internal review reason<input name="reason" minlength="10" maxlength="200" required autocomplete="off" placeholder="Reviewed this card against the store catalog"></label>
 <p class="help">Use an internal card/catalog reason. Do not enter customer contact, identity-document or payment details.</p>
-<button type="submit" id="receivingAdminApprove">Approve mapping in Stock &amp; Sleeve</button></form></section>
+<button type="submit" id="receivingAdminApprove" disabled>Approve mapping in Stock &amp; Sleeve</button></form></section>
 </section><footer>Development prototype · Owner-reviewed catalog mapping · Receiving activation is separate</footer></main></body></html>

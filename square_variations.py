@@ -10,6 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 import uuid
+from intake_physical_identity import physical_facts_v2, physical_key_v2
 
 
 def price_cents(card):
@@ -34,6 +35,26 @@ def card_identity(core, card):
     return core.generate_sku(card.get('card_name', card.get('cardName', '')),
         card.get('card_num', card.get('cardNum', '')), card.get('condition', 'Near Mint'),
         card.get('printing', 'Normal'), 0, card.get('language', 'English'), card.get('card_set', ''))
+
+
+def physical_owner(card):
+    """Fresh comparison facts, never catalog ownership or receiving authority.
+
+    Preserve legacy addresses and resolution identities. These independent
+    facts only reject incompatible rows inside this proposed upload. Both the
+    full digest and canonical facts must agree; a matching SKU is insufficient.
+    """
+    values = dict(card)
+    for field, alias in (('card_name', 'cardName'), ('card_num', 'cardNum')):
+        if field not in values and alias in values:
+            values[field] = values[alias]
+        elif field in values and alias in values:
+            left = physical_facts_v2({field: values[field]})[field]
+            right = physical_facts_v2({field: values[alias]})[field]
+            if left != right:
+                raise ValueError('Conflicting physical card fields require review before uploading.')
+    facts = physical_facts_v2(values)
+    return physical_key_v2(facts), facts
 
 
 def family(variation, source_sku, identity):
@@ -102,15 +123,17 @@ def upload(core, cards, token, environment, location_id, log_fn, request_log):
             core.label_fields(card)
             source = core.barcode_value(card)
             identity = card_identity(core, card)
-            if source in identities and identities[source] != identity:
+            physical = physical_owner(card)
+            if source in identities and identities[source] != (identity, physical):
                 raise ValueError(f'SKU {source} is assigned to different card details. Resolve it before uploading.')
-            identities[source] = identity
+            identities[source] = (identity, physical)
             cents = price_cents(card)
             key = resolution_key(source, cents)
             if key in groups:
                 groups[key]['qty'] += int(card.get('qty', 1))
             else:
-                groups[key] = {'card': card, 'source': source, 'identity': identity, 'cents': cents, 'qty': int(card.get('qty', 1))}
+                groups[key] = {'card': card, 'source': source, 'identity': identity, 'physical': physical,
+                               'cents': cents, 'qty': int(card.get('qty', 1))}
 
         # Preserve one parent item per card; a different price gets a child variation.
         parents, targets = {}, {}
@@ -121,8 +144,11 @@ def upload(core, cards, token, environment, location_id, log_fn, request_log):
             parent_id = (original or {}).get('item_variation_data', {}).get('item_id')
             if root not in parents:
                 parents[root] = {'id': parent_id or '#item_' + root, 'new': not original,
-                                 'root_price': cents, 'card': group['card'], 'variations': []}
+                                 'root_price': cents, 'card': group['card'], 'variations': [],
+                                 'physical': group['physical']}
             parent = parents[root]
+            if parent['physical'] != group['physical']:
+                raise ValueError(f'SKU family {root} is assigned to different card details. Review its mappings before uploading.')
             if original and parent_id and parent['id'] != parent_id:
                 raise ValueError(f'The variations for SKU {root} do not belong to one Square item.')
             if original and effective_price(original, location_id) == cents:
@@ -139,7 +165,7 @@ def upload(core, cards, token, environment, location_id, log_fn, request_log):
                         raise ValueError(f'Price variation SKU {sku} was repriced in Square. Review that variation before receiving more copies.')
                 elif original and not parent_id:
                     raise ValueError(f'Square did not return the parent item ID for SKU {source}. No copies were added.')
-            owner = (parent['id'], identity, cents)
+            owner = (parent['id'], identity, group['physical'], cents)
             if sku in targets:
                 target = targets[sku]
                 if target['owner'] != owner:

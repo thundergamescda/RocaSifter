@@ -9,12 +9,68 @@ from .intake import current_authority
 from .receiving import Receiving, principal
 from .receiving_catalog import price_sku, build_catalog_request, catalog_ack, catalog_state
 from .receiving_plan import (API_VERSION, ReceivingError, fingerprint, canonical, bind_targets,
-                             effective_variation, inventory_body, history_proof, uuid_text)
+                             effective_variation, inventory_body, history_proof, uuid_text,
+                             _ownership_v2, _checked_ownership, _ownership_error, checked_target_ownership,
+                             frozen_target_ownership)
 from .receiving_templates import parent_policy_hash,authority_lane
 from .security import ServiceError,provider_id
 
 
 class CatalogReceiving(Receiving):
+    @staticmethod
+    def _family_ownership(plan,template,source):
+        """Fresh physical templates freeze the original mapping, never infer it."""
+        facts=template['facts']
+        if not _ownership_v2(plan):
+            if source.get('physical_ownership') is not None or 'physical_ownership' in facts:raise _ownership_error()
+            return None
+        try:
+            ownership=_checked_ownership(source.get('physical_ownership'),source['identity'])
+            if (_checked_ownership(facts.get('physical_ownership'),source['identity'])!=ownership or
+                    source_line_id(source['identity'])!=source['identity_hash'] or
+                    type(facts['binding_version']) is not int or facts['binding_version']!=source['version'] or
+                    facts['binding_id']!=str(source['id']) or str(template['binding_id'])!=str(source['id']) or
+                    facts['binding_evidence_hash']!=source['evidence_hash'] or facts['identity']!=source['identity'] or
+                    facts['identity_hash']!=source['identity_hash'] or template['identity_hash']!=source['identity_hash'] or
+                    facts['base_sku']!=source['sku'] or facts['parent']['id']!=source['parent_id'] or
+                    template['parent_id']!=source['parent_id'] or facts['location']['id']!=source['location_id'] or
+                    template['location_id']!=source['location_id'] or
+                    facts['provider']!={key:source['provider'][key] for key in ('merchant_id','environment','application_id')}):
+                raise _ownership_error()
+            return ownership
+        except (KeyError,TypeError,ValueError):raise _ownership_error() from None
+
+    @classmethod
+    def _frozen_family_ownership(cls,plan,addition,template,source):
+        """Compare every alias with its exact admitted source/template authority."""
+        ownership=cls._family_ownership(plan,template,source)
+        if ownership is None:
+            if 'physical_ownership' in addition:raise _ownership_error()
+            return None
+        try:
+            if (_checked_ownership(addition.get('physical_ownership'),source['identity'])!=ownership or
+                    addition['identity_hash']!=source['identity_hash'] or addition['parent_id']!=source['parent_id'] or
+                    addition['source_variation_id']!=source['variation_id'] or
+                    addition['template_id']!=str(template['id']) or addition['template_version']!=template['version']):
+                raise _ownership_error()
+            creating={row['review_line_id']:row for row in plan['targets'] if row['action']=='create_price'}
+            aliases=plan['catalog_aliases']
+            representatives={row['review_line_id'] for row in plan['catalog_additions']}
+            if set(aliases)!=set(creating) or set(aliases.values())!=representatives:raise _ownership_error()
+            selected=[review for review,representative in aliases.items() if representative==addition['review_line_id']]
+            if addition['review_line_id'] not in selected:raise _ownership_error()
+            evidence=fingerprint({'id':str(template['id']),'version':template['version'],'facts':template['facts']})
+            for review in selected:
+                target=creating[review]
+                if (target['binding_id']!=str(source['id']) or target['binding_version']!=source['version'] or
+                        target['binding_evidence_hash']!=source['evidence_hash'] or target['source_sku']!=source['sku'] or
+                        target['template_evidence_hash']!=evidence or target['identity']!=source['identity'] or
+                        _checked_ownership(target.get('physical_ownership'),target['identity'])!=ownership or
+                        any(target[key]!=addition[key] for key in ('identity_hash','parent_id','target_sku','selling_cents','template_id','template_version'))):
+                    raise _ownership_error()
+            return ownership
+        except (KeyError,TypeError,ValueError):raise _ownership_error() from None
+
     def readiness(self,actor):
         value=super().readiness(actor);value['new_price_supported']=True
         with self.database.transaction() as db:
@@ -30,11 +86,15 @@ class CatalogReceiving(Receiving):
         tenant=actor['tenant_id']
         with self.database.transaction() as db:
             current_authority(db,actor);_,budget,accepted=self._source(db,tenant,plan)
-            lookup={str(row['id']):row for row in accepted};needed=set()
+            lookup={str(row['id']):row for row in accepted};needed=set();needed_owners={}
             for row in plan['lines']:
                 identity=lookup.get(row.get('accepted_line_id'),{}).get('identity') if plan['workflow_kind']=='accepted_trade' else row['identity']
                 if not identity:raise ReceivingError('The immutable accepted line is unavailable.')
-                needed.add((source_line_id(identity),row['selling_cents']))
+                item=(source_line_id(identity),row['selling_cents']);needed.add(item)
+                if _ownership_v2(plan):
+                    ownership=_checked_ownership(row.get('physical_ownership'),identity)
+                    if item in needed_owners and needed_owners[item]!=ownership:raise _ownership_error()
+                    needed_owners[item]=ownership
             if len(needed)>100:raise ReceivingError('At most 100 identity/price targets are supported.')
             bindings=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND location_id=%s AND identity_hash=ANY(%s::text[]) AND revoked_at IS NULL LIMIT 201',
                 (tenant,plan['location_id'],list({row[0] for row in needed}))).fetchall()
@@ -51,10 +111,13 @@ class CatalogReceiving(Receiving):
             choices=[row for row in templates if row['identity_hash']==identity and str(row['binding_id']) in by_id]
             if len(choices)!=1:raise ReceivingError('The owner must approve one existing-parent price template for this identity.',code='CATALOG_MAPPING_REVIEW_REQUIRED')
             template=choices[0];source=by_id[str(template['binding_id'])]
+            ownership=self._family_ownership(plan,template,source)
+            if ownership!=needed_owners.get((identity,cents)):raise _ownership_error()
             if template['facts']['provider']!={key:provider[key] for key in ('merchant_id','environment','application_id')}:raise ReceivingError('The price template belongs to another provider principal.')
             virtual.append(dict(source,action='create_price',selling_cents=cents,source_selling_cents=source['selling_cents'],
                 new_target_sku=price_sku(source['sku'],cents),template_id=template['id'],template_version=template['version'],
                 template_evidence_hash=fingerprint({'id':str(template['id']),'version':template['version'],'facts':template['facts']})))
+            if ownership is not None:virtual[-1]['template_physical_ownership']=ownership
             selected_templates[str(template['id'])]=template
         ids={value for row in virtual for value in (row['variation_id'],row['parent_id'])}
         objects=self.provider.catalog(access,list(ids))
@@ -73,7 +136,10 @@ class CatalogReceiving(Receiving):
         additions=[];aliases={};groups={}
         for target in targets:
             if target['action']!='create_price':continue
-            group=(target['template_id'],target['parent_id'],target['target_sku'],target['selling_cents'])
+            group=(target['template_id'],target['template_version'],target['template_evidence_hash'],
+                   target['binding_id'],target['binding_version'],target['binding_evidence_hash'],target['source_sku'],
+                   target['parent_id'],target['target_sku'],target['selling_cents'],
+                   canonical(target['physical_ownership']) if 'physical_ownership' in target else b'')
             groups.setdefault(group,[]).append(target)
         for _,rows in sorted(groups.items()):
             rows.sort(key=lambda row:row['review_line_id']);target=rows[0];template=selected_templates[target['template_id']]
@@ -83,6 +149,7 @@ class CatalogReceiving(Receiving):
                 'selling_cents':target['selling_cents'],'template_id':target['template_id'],'template_version':target['template_version'],
                 'template':{'approved':True,'new_price_enabled':True,'location_ids':[plan['location_id']],
                             'name_prefix':template['facts']['variation_name_prefix'],'name_format_version':2}})
+            if 'physical_ownership' in target:additions[-1]['physical_ownership']=deepcopy(target['physical_ownership'])
             for row in rows:aliases[row['review_line_id']]=target['review_line_id']
         parents={row['parent_id']:objects[row['parent_id']] for row in additions}
         # Prove complete-parent size/capacity before persisting a ready plan.
@@ -90,6 +157,9 @@ class CatalogReceiving(Receiving):
         prepared=dict(plan,provider=provider,targets=targets,selected_quantities=selected,excluded_quantities=excluded,
             catalog_required=True,catalog_additions=additions,catalog_aliases=aliases,
             parent_snapshot_hashes={key:fingerprint(value) for key,value in parents.items()})
+        for addition in additions:
+            template=selected_templates[addition['template_id']]
+            self._frozen_family_ownership(prepared,addition,template,by_id[str(template['binding_id'])])
         return prepared,access
 
     def _templates_current(self,db,tenant,plan,objects):
@@ -103,6 +173,7 @@ class CatalogReceiving(Receiving):
         if len(sources)!=len(source_ids):raise ReceivingError('A price-family source mapping was revoked.')
         for addition in plan['catalog_additions']:
             template=by_id[addition['template_id']];source=sources[str(template['binding_id'])]
+            self._frozen_family_ownership(plan,addition,template,source)
             if (template['version']!=addition['template_version'] or source['variation_id']!=addition['source_variation_id'] or
                     parent_policy_hash(objects[addition['parent_id']],objects)!=template['facts']['parent_policy_hash']):
                 raise ReceivingError('The frozen price-family policy changed.',code='CATALOG_VERSION_CHANGED')
@@ -187,7 +258,7 @@ class CatalogReceiving(Receiving):
                 db.execute('INSERT INTO ss_receiving_request_outcomes(tenant_id,request_key,result) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING',(tenant,request_key,Jsonb(view)))
                 return view
             step=db.execute('SELECT * FROM ss_receiving_steps WHERE tenant_id=%s AND operation_id=%s AND ordinal=0',(tenant,ident)).fetchone()
-            body=self._open(tenant,ident,step);plan=row['plan'];proof=None;resolutions=[]
+            body=self._open(tenant,ident,step);plan=row['plan'];proof=None;resolutions=[];ownership_v2=_ownership_v2(plan)
             try:
                 proof=result['proof'];values=result['resolutions']
                 if proof['request_hash']!=step['body_hash'] or proof['kind'] not in ('catalog_batch_ack','catalog_state_match'):raise ValueError()
@@ -199,36 +270,65 @@ class CatalogReceiving(Receiving):
                 if len(by_review)!=len(plan['catalog_additions']):raise ValueError()
                 for addition in plan['catalog_additions']:
                     value=by_review[addition['review_line_id']]
-                    if set(value)!={'review_line_id','identity_hash','parent_id','target_sku','selling_cents','template_id','template_version','variation_id','currency'}:raise ValueError()
+                    fields={'review_line_id','identity_hash','parent_id','target_sku','selling_cents','template_id','template_version','variation_id','currency'}
+                    if ownership_v2:fields.add('physical_ownership')
+                    if set(value)!=fields:raise ValueError()
                     if any(value[key]!=addition[key] for key in ('review_line_id','identity_hash','parent_id','target_sku','selling_cents','template_id','template_version')) or provider_id(value.get('variation_id')).startswith('#') or value.get('currency')!='USD':raise ValueError()
+                    if ownership_v2:
+                        identity=next(target['identity'] for target in plan['targets'] if target['review_line_id']==addition['review_line_id'])
+                        if _checked_ownership(value['physical_ownership'],identity)!=_checked_ownership(addition.get('physical_ownership'),identity):raise ValueError()
+                    elif 'physical_ownership' in addition:raise ValueError()
                 if len({value['variation_id'] for value in values})!=len(values):raise ValueError()
             except (TypeError,ValueError,KeyError,ServiceError):proof=None
             provider=plan['provider']
             if proof:
                 authority_lane(db,tenant)
+                template_ids=list({addition['template_id'] for addition in plan['catalog_additions']})
+                templates=db.execute('SELECT * FROM ss_receiving_price_templates WHERE tenant_id=%s AND id=ANY(%s::uuid[]) FOR SHARE',(tenant,template_ids)).fetchall()
+                templates={str(template['id']):template for template in templates}
+                source_ids=list({template['binding_id'] for template in templates.values()})
+                sources=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=ANY(%s::uuid[]) FOR SHARE',(tenant,source_ids)).fetchall()
+                sources={str(source['id']):source for source in sources}
+                allocations=[]
                 for addition in plan['catalog_additions']:
                     value=by_review[addition['review_line_id']]
-                    template=db.execute('SELECT * FROM ss_receiving_price_templates WHERE tenant_id=%s AND id=%s FOR SHARE',(tenant,addition['template_id'])).fetchone()
+                    template=templates.get(addition['template_id'])
                     if not template or not template['approved'] or template['version']!=addition['template_version']:raise ReceivingError('Admitted template evidence is unavailable.')
+                    source=sources.get(str(template['binding_id']))
+                    if not source:raise ReceivingError('The admitted source mapping evidence is unavailable.')
+                    ownership=self._frozen_family_ownership(plan,addition,template,source)
                     expected_parent=next(parent for parent in body['batches'][0]['objects'] if parent['id']==addition['parent_id'])
                     temporary='#'+addition['review_line_id'].replace('-','')
                     expected=deepcopy(next(child for child in expected_parent['item_data']['variations'] if child['id']==temporary));expected['id']=value['variation_id']
                     effective=effective_variation(expected,expected_parent,plan['location_id'])
                     identity=next(target['identity'] for target in plan['targets'] if target['review_line_id']==addition['review_line_id'])
+                    facts=dict(effective,identity_hash=addition['identity_hash'],location_id=plan['location_id'],provider=provider)
+                    allocations.append((addition,value,template,effective,identity,ownership,facts))
+                # Share owner allocation lanes, in deterministic order. Retired
+                # source/template rows remain readable as admitted evidence;
+                # their revocation is inherited by any late confirmed child.
+                self._lock_binding_variations(db,tenant,[allocation[-1] for allocation in allocations])
+                for allocation in allocations:self._assert_binding_ownership(db,tenant,allocation[-1],allocation[-2])
+                self._lock_binding_prices(db,tenant,[allocation[-1] for allocation in allocations])
+                for addition,value,template,effective,identity,ownership,_ in allocations:
                     evidence=fingerprint({'catalog_proof':proof,'resolution':value,'template_id':addition['template_id']})
                     existing=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND identity_hash=%s AND location_id=%s AND selling_cents=%s AND revoked_at IS NULL FOR SHARE',
                         (tenant,addition['identity_hash'],plan['location_id'],addition['selling_cents'])).fetchone()
                     if existing:
-                        if any(existing[key]!=effective[key] for key in ('variation_id','parent_id','sku','selling_cents','identity_anchor_hash')):raise ReceivingError('An approved target mapping conflicts with the catalog outcome.')
-                        binding=existing['id'];evidence=existing['evidence_hash']
+                        if (existing.get('physical_ownership')!=ownership or existing['identity']!=identity or existing['provider']!=provider or
+                                any(existing[key]!=effective[key] for key in ('variation_id','parent_id','sku','selling_cents','identity_anchor_hash'))):
+                            raise ReceivingError('An approved target mapping conflicts with the catalog outcome.')
+                        if not ownership_v2 and existing['version']!=1:raise ReceivingError('The original catalog binding version needs reconciliation.')
+                        binding=existing['id'];binding_version=existing['version'];evidence=existing['evidence_hash']
                     else:
-                        binding=uuid.uuid4()
-                        db.execute('''INSERT INTO ss_receiving_bindings(tenant_id,id,identity,identity_hash,provider,variation_id,parent_id,sku,location_id,selling_cents,identity_anchor_hash,evidence_hash,approved_by,approval_reason,approval_source,template_id,revoked_at,revoked_by,revoke_reason)
-                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'price_template',%s,%s,%s,%s)''',
+                        binding=uuid.uuid4();binding_version=1
+                        db.execute('''INSERT INTO ss_receiving_bindings(tenant_id,id,identity,identity_hash,provider,variation_id,parent_id,sku,location_id,selling_cents,identity_anchor_hash,evidence_hash,approved_by,approval_reason,approval_source,template_id,revoked_at,revoked_by,revoke_reason,physical_ownership)
+                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'price_template',%s,%s,%s,%s,%s)''',
                           (tenant,binding,Jsonb(identity),addition['identity_hash'],Jsonb(provider),value['variation_id'],value['parent_id'],value['target_sku'],plan['location_id'],value['selling_cents'],effective['identity_anchor_hash'],evidence,template['approved_by'],
-                           'Created under owner-reviewed price template '+addition['template_id'],template['id'],template['revoked_at'],template['revoked_by'],template['revoke_reason']))
+                           'Created under owner-reviewed price template '+addition['template_id'],template['id'],template['revoked_at'],template['revoked_by'],template['revoke_reason'],
+                           Jsonb(ownership) if ownership is not None else None))
                     aliases=sorted(review for review,representative in plan['catalog_aliases'].items() if representative==addition['review_line_id'])
-                    resolutions.append(dict(value,review_line_ids=aliases,binding_id=str(binding),binding_version=1,binding_evidence_hash=evidence))
+                    resolutions.append(dict(value,review_line_ids=aliases,binding_id=str(binding),binding_version=binding_version,binding_evidence_hash=evidence))
                 db.execute("UPDATE ss_receiving_operations SET state='catalog_confirmed',catalog_proof=%s,catalog_resolutions=%s,lease_until=NULL,updated_at=clock_timestamp() WHERE tenant_id=%s AND id=%s",(Jsonb(proof),Jsonb(resolutions),tenant,ident))
                 db.execute("UPDATE ss_receiving_seller_lanes SET state='occupied' WHERE environment=%s AND merchant_id=%s AND tenant_id=%s AND operation_id=%s",(provider['environment'],provider['merchant_id'],tenant,ident))
                 audit(db,tenant,actor['staff_id'],'receiving-catalog-confirmed',ident,{'proof_hash':fingerprint(proof)})
@@ -248,6 +348,10 @@ class CatalogReceiving(Receiving):
             if target['action']=='create_price':
                 representative=row['plan']['catalog_aliases'][target['review_line_id']];resolution=by_review.get(representative)
                 if not resolution:raise ReceivingError('The authoritative catalog target is not resolved.')
+                if _ownership_v2(row['plan']):
+                    ownership,identity=frozen_target_ownership(row['plan'],target)
+                    if _checked_ownership(resolution.get('physical_ownership'),identity)!=ownership:raise _ownership_error()
+                elif 'physical_ownership' in resolution:raise _ownership_error()
                 target=dict(target,source_binding_id=target['binding_id'],source_binding_version=target['binding_version'],source_binding_evidence_hash=target['binding_evidence_hash'],
                     binding_id=resolution['binding_id'],binding_version=resolution['binding_version'],binding_evidence_hash=resolution['binding_evidence_hash'],
                     variation_id=resolution['variation_id'],binding_role='resolved_target')
@@ -277,6 +381,7 @@ class CatalogReceiving(Receiving):
             if len(by_id)!=len(ids):raise ReceivingError('An inventory target mapping was revoked.')
             for target in resolved:
                 binding=by_id[target['binding_id']]
+                checked_target_ownership(plan,target,binding)
                 effective=effective_variation(objects[target['variation_id']],objects[target['parent_id']],plan['location_id'])
                 if any(effective[key]!=binding[key] for key in ('variation_id','parent_id','sku','selling_cents','identity_anchor_hash')) or effective['sku']!=target['target_sku'] or effective['selling_cents']!=target['selling_cents']:
                     raise ReceivingError('Resolved target price, identity anchor or SKU changed.',code='CATALOG_VERSION_CHANGED')
@@ -310,8 +415,10 @@ class CatalogReceiving(Receiving):
             if not self.writes_enabled or not settings or not settings['enabled'] or not settings['new_price_enabled'] or not row['catalog_proof']:raise ReceivingError('Receiving admission is disabled or catalog proof is missing.',403,code='RECEIVING_DISABLED')
             self._templates_current(db,tenant,plan,objects);targets=self._resolved_targets(row)
             binding_ids=list({target['binding_id'] for target in targets})
-            current=db.execute('SELECT id FROM ss_receiving_bindings WHERE tenant_id=%s AND id=ANY(%s::uuid[]) AND revoked_at IS NULL FOR SHARE',(tenant,binding_ids)).fetchall()
+            current=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=ANY(%s::uuid[]) AND revoked_at IS NULL FOR SHARE',(tenant,binding_ids)).fetchall()
             if len(current)!=len(binding_ids):raise ReceivingError('A resolved inventory target was revoked.')
+            current={str(binding['id']):binding for binding in current}
+            for target in targets:checked_target_ownership(plan,target,current[target['binding_id']])
             provider=plan['provider'];lane=db.execute('SELECT * FROM ss_receiving_seller_lanes WHERE environment=%s AND merchant_id=%s FOR UPDATE',(provider['environment'],provider['merchant_id'])).fetchone()
             if not lane or lane['tenant_id']!=tenant or str(lane['operation_id'])!=ident:raise ReceivingError('The durable seller lane is inconsistent.')
             at=db.execute('SELECT clock_timestamp() AS at').fetchone()['at'];provider_key=uuid.uuid4()

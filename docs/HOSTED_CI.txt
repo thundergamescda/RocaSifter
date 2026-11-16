@@ -1,0 +1,58 @@
+STOCK & SLEEVE | HOSTED POSTGRESQL FIXTURE ACCEPTANCE
+
+Purpose
+
+This workflow validates the hosted service on Linux using a new disposable
+PostgreSQL database with TLS. It runs the complete module selection in
+tools/test_hosted_postgres.py. Skipped, omitted, failed or errored cases cannot
+be counted as a successful acceptance run.
+
+The workflow runs only for pushes to stock-sleeve-hosted-ci-* preview branches
+in thundergamescda/RocaSifter. It has read-only repository permission and checks
+out the exact triggering commit without persisting checkout credentials. It has
+no deployment, paid-resource provisioning or artifact-upload step.
+
+Inputs and isolation
+
+- The source commit, copied-source manifests, resolved container identities,
+  installed dependency versions and pip installation report identify the inputs.
+- Image version tags must resolve successfully before tests. The resolved images
+  are retained for that run; an unavailable dependency is a failure, not permission
+  to silently downgrade Python/PostgreSQL or reduce test scope.
+- Dependencies install before runtime isolation. The test container receives only
+  generated fixture database credentials and public source metadata. It does not
+  receive Square credentials, merchant data or hosting-account environment values.
+- The database and test container use one owned internal Docker network, with no
+  published ports, host networking, privileged mode or Docker socket in the test
+  container. The runtime cannot reach external Square endpoints.
+- The client checks its actual pg_stat_ssl connection. Fixture sslmode=require
+  proves encryption for this isolated database; it is not production CA/hostname
+  trust acceptance.
+- The existing tests create fresh ss_test_<uuid> namespaces. The database container
+  itself is disposable and is never a store database. Cleanup targets only the
+  exact owned container/network identities.
+
+Evidence and limits
+
+The job emits the delivered scrubbed per-case log, summary and independent source
+preservation/TLS checks to the Actions console. Build, readiness or test failures
+remain failed outcomes. The evidence must be reconciled with the exact commit
+before reporting any passing count. Preparing these files alone does not prove
+that the workflow has run or that the current application passes.
+
+The historical schema7 migration fixture lives in tests/fixtures/schema7.sql.
+Its existing SHA256 assertion is unchanged; the fixture is not derived from a
+newer schema or fetched from an untracked sibling development directory.
+
+This is Linux hosted PostgreSQL fixture acceptance. It does not clear Windows
+Application Control, publisher signing, desktop/browser installation or updates,
+physical scanners/printers, live Square consent/funding/checkout/reporting,
+production database migration/restore, privacy/legal/tax or Marketplace gates.
+Those requirements retain their separate evidence and approval dependencies.
+
+References checked 2026-11-16
+
+GitHub standard hosted runners for public repositories:
+https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+Checkout action source pinned by the workflow:
+https://github.com/actions/checkout/tree/d23441a48e516b6c34aea4fa41551a30e30af803

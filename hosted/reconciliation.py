@@ -24,6 +24,10 @@ class LeaseLost(Exception):
     pass
 
 
+class AuthorizationPending(Exception):
+    pass
+
+
 class Reconciler:
     def __init__(self, database, square, *, enabled=False, lease_seconds=90, max_attempts=8):
         if type(enabled) is not bool or type(lease_seconds) is not int or not 30 <= lease_seconds <= 600 or type(max_attempts) is not int or not 1 <= max_attempts <= 20:
@@ -52,6 +56,8 @@ class Reconciler:
             if result.get('action') == 'pending' or result.get('state') == 'pending':
                 return self._retry(job, result.get('code', 'resource_pending'))
             return self._finish(job, 'done', result.get('code', 'reconciled'))
+        except AuthorizationPending:
+            return self._finish(job, 'pending', 'authorization_pending')
         except LeaseLost:
             return {'status': 'lease_lost', 'processed': True, 'event_id': job['event_id']}
         except ResourceError as error:
@@ -69,13 +75,27 @@ class Reconciler:
         tenant_clause = ' AND tenant_id=%s' if tenant_id is not None else ''
         parameters = ([tenant_id] if tenant_id is not None else []) + [token, self.lease_seconds]
         with self.database.transaction() as db:
-            return db.execute('''WITH chosen AS (
+            row=db.execute('''WITH chosen AS (
                     SELECT event_id FROM ss_square_jobs WHERE available_at<=now()
+                    AND NOT EXISTS(SELECT 1 FROM ss_square_connections c WHERE c.tenant_id=ss_square_jobs.tenant_id AND c.pending_notice_cursor IS NOT NULL)
                     AND (state='pending' OR (state='processing' AND (lease_until IS NULL OR lease_until<now())))''' + tenant_clause + '''
                     ORDER BY available_at,created_at,event_id FOR UPDATE SKIP LOCKED LIMIT 1)
                     UPDATE ss_square_jobs j SET state='processing',attempts=j.attempts+1,
                     lease_token=%s,lease_until=now()+(%s * interval '1 second'),finished_at=NULL
                     FROM chosen WHERE j.event_id=chosen.event_id RETURNING j.*''', parameters).fetchone()
+            if row:
+                connection=db.execute('SELECT authorization_generation FROM ss_square_connections WHERE tenant_id=%s FOR SHARE',
+                                      (row['tenant_id'],)).fetchone()
+                row=dict(row)
+                row['_authorization_generation']=str(connection['authorization_generation']) if connection else None
+            return row
+
+    def _authorization_hold(self,db,job):
+        row=db.execute('SELECT authorization_generation,pending_notice_cursor FROM ss_square_connections WHERE tenant_id=%s FOR SHARE',
+                       (job['tenant_id'],)).fetchone()
+        if row and row.get('pending_notice_cursor') is not None:return True
+        generation=str(row['authorization_generation']) if row else None
+        return '_authorization_generation' in job and generation!=job['_authorization_generation']
 
     def _heartbeat(self, job):
         with self.database.transaction() as db:
@@ -83,6 +103,7 @@ class Reconciler:
                                 WHERE event_id=%s AND tenant_id=%s AND lease_token=%s AND state='processing'
                                 RETURNING event_id''',
                              (self.lease_seconds, job['event_id'], job['tenant_id'], job['lease_token'])).fetchone()
+            if row and self._authorization_hold(db,job):raise AuthorizationPending()
         if not row:
             raise LeaseLost()
 
@@ -194,6 +215,16 @@ class Reconciler:
                              (job['event_id'], job['tenant_id'], job['lease_token'])).fetchone()
             if not row:
                 return {'status': 'lease_lost', 'processed': True, 'event_id': job['event_id']}
+            if self._authorization_hold(db,job):
+                # A connection hold/change is not a failed reconciliation
+                # attempt or proof to release credit. Restore this claim's
+                # budget increment; retain the original event and terms.
+                db.execute('''UPDATE ss_square_jobs SET state='pending',attempts=GREATEST(attempts-1,0),
+                              lease_token=NULL,lease_until=NULL,finished_at=NULL,
+                              available_at=now(),last_error_code='authorization_pending'
+                              WHERE event_id=%s AND tenant_id=%s AND lease_token=%s AND state='processing' ''',
+                           (job['event_id'],job['tenant_id'],job['lease_token']))
+                return {'status':'authorization_pending','processed':True,'event_id':job['event_id']}
             if state == 'exception':
                 record_exception(db, job['tenant_id'], 'job:' + job['event_id'], code,
                                  event_id=job['event_id'], resource_id=job['resource_id'],

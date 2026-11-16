@@ -663,3 +663,84 @@ END $$;
 DROP TRIGGER IF EXISTS ss_trade_inventory_admission_guard ON ss_trade_receipts;
 CREATE TRIGGER ss_trade_inventory_admission_guard BEFORE UPDATE ON ss_trade_receipts FOR EACH ROW EXECUTE FUNCTION ss_guard_trade_inventory_admission();
 INSERT INTO ss_schema_versions(version) VALUES (6) ON CONFLICT DO NOTHING;
+
+-- Version 7: independent owner enrollment, issued only by platform operator.
+-- No existing store/account/balance/OAuth record is created or inferred here.
+CREATE TABLE IF NOT EXISTS ss_owner_enrollments (
+ id UUID PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL CHECK(token_hash ~ '^[a-f0-9]{64}$'),
+ email TEXT NOT NULL CHECK(length(email) BETWEEN 3 AND 254),
+ store_slug TEXT NOT NULL CHECK(store_slug ~ '^[a-z0-9][a-z0-9-]{2,49}$'),
+ store_name TEXT NOT NULL CHECK(length(store_name) BETWEEN 1 AND 150),
+ tenant_id UUID UNIQUE NOT NULL, owner_id UUID UNIQUE NOT NULL,
+ operator_reference TEXT NOT NULL CHECK(length(operator_reference) BETWEEN 1 AND 100),
+ issue_key TEXT NOT NULL CHECK(length(issue_key) BETWEEN 1 AND 150),
+ issue_hash TEXT NOT NULL CHECK(issue_hash ~ '^[a-f0-9]{64}$'),
+ issue_reason TEXT NOT NULL CHECK(length(issue_reason) BETWEEN 10 AND 500),
+ purpose TEXT NOT NULL DEFAULT 'independent-store-owner-v1' CHECK(purpose='independent-store-owner-v1'),
+ state TEXT NOT NULL DEFAULT 'issued' CHECK(state IN ('issued','consumed','revoked')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), expires_at TIMESTAMPTZ NOT NULL,
+ consumed_at TIMESTAMPTZ, accepted_key TEXT, accepted_hash TEXT, result JSONB,
+ revoked_at TIMESTAMPTZ, revoked_by TEXT, revoke_reason TEXT,
+ UNIQUE(operator_reference,issue_key), CHECK(expires_at>created_at),
+ CHECK((state='issued' AND consumed_at IS NULL AND accepted_key IS NULL AND accepted_hash IS NULL AND result IS NULL AND revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR
+ (state='consumed' AND consumed_at IS NOT NULL AND accepted_key IS NOT NULL AND length(accepted_key) BETWEEN 1 AND 150 AND accepted_hash ~ '^[a-f0-9]{64}$' AND result IS NOT NULL AND jsonb_typeof(result)='object' AND revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR
+ (state='revoked' AND consumed_at IS NULL AND accepted_key IS NULL AND accepted_hash IS NULL AND result IS NULL AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND length(trim(revoke_reason)) BETWEEN 10 AND 500))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ss_owner_enrollment_active_slug ON ss_owner_enrollments(store_slug) WHERE revoked_at IS NULL;
+CREATE TABLE IF NOT EXISTS ss_owner_enrollment_audit (
+ id UUID PRIMARY KEY, enrollment_id UUID NOT NULL REFERENCES ss_owner_enrollments(id),
+ operator_reference TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('issued','consumed','revoked')),
+ at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+DROP TRIGGER IF EXISTS ss_owner_enrollment_audit_immutable ON ss_owner_enrollment_audit;
+CREATE TRIGGER ss_owner_enrollment_audit_immutable BEFORE UPDATE OR DELETE ON ss_owner_enrollment_audit FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+CREATE OR REPLACE FUNCTION ss_guard_owner_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR OLD.state<>'issued' THEN RAISE EXCEPTION 'Owner enrollment evidence is immutable'; END IF;
+ IF (to_jsonb(NEW)-ARRAY['state','consumed_at','accepted_key','accepted_hash','result','revoked_at','revoked_by','revoke_reason']) IS DISTINCT FROM
+    (to_jsonb(OLD)-ARRAY['state','consumed_at','accepted_key','accepted_hash','result','revoked_at','revoked_by','revoke_reason']) THEN
+    RAISE EXCEPTION 'Owner invitation identity and scope are immutable';
+ END IF;
+ IF NEW.state NOT IN ('consumed','revoked') THEN RAISE EXCEPTION 'Owner invitation requires an explicit terminal transition'; END IF;
+ IF NEW.state='consumed' THEN
+   IF OLD.expires_at<=clock_timestamp() OR NOT EXISTS(
+      SELECT 1 FROM ss_tenants t JOIN ss_staff s ON s.tenant_id=t.id
+      WHERE t.id=OLD.tenant_id AND t.slug=OLD.store_slug AND t.name=OLD.store_name AND s.id=OLD.owner_id
+        AND s.email=OLD.email AND s.role='owner' AND s.enabled=TRUE AND t.credit_checkout_enabled=FALSE) THEN
+      RAISE EXCEPTION 'Current unexpired invitation and exact fresh store owner are required';
+   END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_owner_enrollment_guard ON ss_owner_enrollments;
+CREATE TRIGGER ss_owner_enrollment_guard BEFORE UPDATE OR DELETE ON ss_owner_enrollments FOR EACH ROW EXECUTE FUNCTION ss_guard_owner_enrollment();
+INSERT INTO ss_schema_versions(version) VALUES (7) ON CONFLICT DO NOTHING;
+
+-- Version 8: signed revocation receipts and nondestructive authorization holds.
+-- Receipt cursors are allocated ONLY under the application's environment notice
+-- barrier; they order local committed notices, never provider token generations.
+CREATE TABLE IF NOT EXISTS ss_square_revocation_receipts (
+ notice_cursor BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+ application_id TEXT NOT NULL, environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+ event_id TEXT NOT NULL, merchant_id TEXT NOT NULL,
+ body_hash TEXT NOT NULL CHECK(body_hash ~ '^[a-f0-9]{64}$'),
+ outcome JSONB NOT NULL CHECK(jsonb_typeof(outcome)='object'),
+ received_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(application_id,environment,event_id)
+);
+CREATE INDEX IF NOT EXISTS ss_square_notice_scope_cursor ON ss_square_revocation_receipts(application_id,environment,notice_cursor DESC);
+CREATE INDEX IF NOT EXISTS ss_square_notice_merchant_cursor ON ss_square_revocation_receipts(application_id,environment,merchant_id,notice_cursor DESC);
+DROP TRIGGER IF EXISTS ss_square_revocation_receipt_immutable ON ss_square_revocation_receipts;
+CREATE TRIGGER ss_square_revocation_receipt_immutable BEFORE UPDATE OR DELETE ON ss_square_revocation_receipts
+ FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS authorization_generation UUID NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE ss_square_connections ADD COLUMN IF NOT EXISTS pending_notice_cursor BIGINT REFERENCES ss_square_revocation_receipts(notice_cursor);
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS notice_cursor BIGINT CHECK(notice_cursor>=0);
+ALTER TABLE ss_oauth_states ADD COLUMN IF NOT EXISTS expected_connection_generation UUID;
+INSERT INTO ss_schema_versions(version) VALUES (8) ON CONFLICT DO NOTHING;
+
+-- Version 9: fresh reviewed physical ownership is separate from original source
+-- identity and SKU addressing. Old bindings stay NULL; no implicit migration.
+-- The existing immutable-binding trigger includes this column automatically.
+ALTER TABLE ss_receiving_bindings ADD COLUMN IF NOT EXISTS physical_ownership JSONB;
+INSERT INTO ss_schema_versions(version) VALUES (9) ON CONFLICT DO NOTHING;

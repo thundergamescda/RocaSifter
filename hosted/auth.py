@@ -92,7 +92,10 @@ class Auth:
         with self.database.transaction() as db:
             row=db.execute('''SELECT s.tenant_id,s.staff_id,u.role,t.slug,s.created_at AS session_created_at,
                               s.mfa_authenticated_at,COALESCE(m.enabled,FALSE) AS mfa_enabled,
-                              COALESCE(m.enabled=TRUE AND s.mfa_version=m.version,FALSE) AS mfa_authenticated FROM ss_sessions s
+                              COALESCE(m.enabled=TRUE AND s.mfa_version=m.version,FALSE) AS mfa_authenticated,
+                              COALESCE(m.enabled=TRUE AND s.mfa_version=m.version AND s.mfa_authenticated_at IS NOT NULL
+                                AND EXTRACT(EPOCH FROM (clock_timestamp()-s.mfa_authenticated_at)) BETWEEN 0 AND 900,FALSE) AS mfa_fresh
+                              FROM ss_sessions s
                               JOIN ss_staff u ON u.id=s.staff_id AND u.tenant_id=s.tenant_id
                               JOIN ss_tenants t ON t.id=s.tenant_id
                               LEFT JOIN ss_staff_mfa m ON m.tenant_id=s.tenant_id AND m.staff_id=s.staff_id

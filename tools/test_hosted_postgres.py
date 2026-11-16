@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -60,20 +61,89 @@ def test_ids(suite):
 
 
 class EvidenceResult(unittest.TextTestResult):
+    """Outcome timing is separate from full case/cleanup timing.
+
+    Process CPU samples include every thread in this process. Clock metadata is
+    diagnostic only: unavailable or reversed samples never alter test status.
+    """
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.started_ids=[]
         self.results=[]
         self.times={}
+        self._timing_invocation=None
+
+    @staticmethod
+    def _clock_sample():
+        value={'wall':None,'process_cpu':None,'utc':None,'errors':{}}
+        try:
+            wall=time.time()
+            if type(wall) not in (int,float) or not math.isfinite(wall):raise ValueError()
+            utc=datetime.fromtimestamp(wall,timezone.utc).isoformat()
+            value.update(wall=wall,utc=utc)
+        except Exception as error:value['errors']['wall']=type(error).__name__
+        try:
+            cpu=time.process_time()
+            if type(cpu) not in (int,float) or not math.isfinite(cpu):raise ValueError()
+            value['process_cpu']=cpu
+        except Exception as error:value['errors']['process_cpu']=type(error).__name__
+        return value
+
+    @staticmethod
+    def _clock_fields(start,end,phase):
+        errors={phase+'_'+name:kind for name,kind in end['errors'].items()}
+        if start is None:errors['started']='MissingInvocationStart'
+        else:errors.update({'started_'+name:kind for name,kind in start['errors'].items()})
+        anomalies=[];deltas={}
+        for field in ('wall','process_cpu'):
+            deltas[field]=None
+            if start is None or start[field] is None or end[field] is None:continue
+            try:
+                delta=end[field]-start[field]
+                if not math.isfinite(delta):raise ValueError()
+                if delta<0:anomalies.append(phase+'_'+field+'_reversed')
+                deltas[field]=round(delta,6)
+            except Exception as error:errors[phase+'_'+field]=type(error).__name__
+        return deltas,errors,anomalies
 
     def startTest(self,test):
         self.started_ids.append(test.id());self.times[test.id()]=time.monotonic()
+        self._timing_invocation={'test':test,'start':self._clock_sample(),'rows':[]}
         super().startTest(test)
 
-    def record(self,test,status,detail=None):
+    def record(self,test,status,detail=None,*,parent=None):
         elapsed=time.monotonic()-self.times.get(test.id(),time.monotonic())
-        self.results.append({'id':test.id(),'status':status,'elapsed_seconds':round(elapsed,6),
-                             **({'detail':scrub(detail)} if detail else {})})
+        row={'id':test.id(),'status':status,'elapsed_seconds':round(elapsed,6),
+             **({'detail':scrub(detail)} if detail else {})}
+        owner=parent if parent is not None else test
+        invocation=self._timing_invocation
+        invocation=invocation if invocation is not None and invocation['test'] is owner else None
+        start=invocation['start'] if invocation else None;outcome=self._clock_sample()
+        deltas,errors,anomalies=self._clock_fields(start,outcome,'outcome')
+        row.update(started_utc=start['utc'] if start else None,outcome_utc=outcome['utc'],
+            outcome_elapsed_wall_seconds=deltas['wall'],outcome_elapsed_process_cpu_seconds=deltas['process_cpu'],
+            finished_utc=None,full_elapsed_wall_seconds=None,full_elapsed_process_cpu_seconds=None,
+            timing_error_types=errors,timing_anomalies=anomalies)
+        if parent is not None:row['parent_test_id']=parent.id()
+        if invocation is not None:invocation['rows'].append(len(self.results))
+        self.results.append(row)
+
+    def stopTest(self,test):
+        invocation=self._timing_invocation
+        try:
+            if invocation is not None and invocation['test'] is test:
+                finished=self._clock_sample()
+                deltas,errors,anomalies=self._clock_fields(invocation['start'],finished,'finished')
+                # Indices belong to this invocation, not its possibly repeated
+                # ID. Failed subtests share their parent's full lifecycle.
+                for index in invocation['rows']:
+                    row=self.results[index]
+                    row.update(finished_utc=finished['utc'],full_elapsed_wall_seconds=deltas['wall'],
+                               full_elapsed_process_cpu_seconds=deltas['process_cpu'])
+                    row['timing_error_types'].update(errors);row['timing_anomalies'].extend(anomalies)
+        finally:
+            if invocation is self._timing_invocation:self._timing_invocation=None
+            super().stopTest(test)
 
     def addSuccess(self,test):
         self.record(test,'passed');super().addSuccess(test)
@@ -95,7 +165,7 @@ class EvidenceResult(unittest.TextTestResult):
 
     def addSubTest(self,test,subtest,error):
         if error is not None:
-            self.record(subtest,'failed_subtest',self._exc_info_to_string(error,test))
+            self.record(subtest,'failed_subtest',self._exc_info_to_string(error,test),parent=test)
         super().addSubTest(test,subtest,error)
 
 

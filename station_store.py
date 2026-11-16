@@ -1,5 +1,6 @@
 """Local persistence, credential vault, and admin authentication for Roca Station."""
 import hashlib
+import copy
 import hmac
 import json
 import math
@@ -131,10 +132,196 @@ class Store:
                     (receipt['id'], now(), event[0], event[1]))
         return receipt
 
+    def receipt_compare_body(self, receipt):
+        """Capture exact active bytes before detached preflight work."""
+        try:
+            if type(receipt) is not dict or not isinstance(receipt.get('id'),str):raise ValueError()
+            with self.db() as db:
+                row=db.execute('SELECT body,deleted_at FROM receipts WHERE id=?',(receipt['id'],)).fetchone()
+            if (not row or row['deleted_at'] is not None
+                or json.dumps(json.loads(row['body']),sort_keys=True,separators=(',',':'),allow_nan=False)
+                    !=json.dumps(receipt,sort_keys=True,separators=(',',':'),allow_nan=False)):
+                raise ValueError()
+            return row['body']
+        except (ValueError,TypeError,KeyError,OverflowError,RecursionError):
+            raise StationError('This batch changed. Reload it before creating its original intake request.') from None
+
+    def save_receipt_if_current(self, receipt, expected_body, event=None):
+        """CAS one prepared update and summary/audit, preserving intervening edits.
+
+        Intended for a new intake intent after full outgoing-wire preflight.
+        The caller invokes this outside OS guards. Serialization and summary
+        hashing finish before the short SQLite write transaction begins.
+        """
+        try:
+            if type(receipt) is not dict or not isinstance(expected_body,str):raise ValueError()
+            previous=json.loads(expected_body)
+            revision=previous.get('revision')
+            if (type(previous) is not dict or type(revision) is not int or not 0<=revision<2**63-1
+                or receipt.get('id')!=previous.get('id') or not isinstance(receipt.get('id'),str)
+                or type(receipt.get('revision')) is not int or receipt['revision']!=revision
+                or previous.get('deleted_at') is not None or receipt.get('deleted_at') is not None):raise ValueError()
+            if event is not None and (not isinstance(event,(tuple,list)) or len(event)!=2 or any(not isinstance(item,str) for item in event)):
+                raise ValueError()
+            current=copy.deepcopy(receipt);current['updated']=now();current['revision']=revision+1
+            body=json.dumps(current,allow_nan=False)
+            summary=json.dumps(self._make_summary(json.loads(body)),separators=(',',':'),allow_nan=False)
+            summary_digest=hashlib.sha256(summary.encode('utf-8')).hexdigest()
+            source_hash=current.get('source_hash','');pickup=int(bool(current.get('pickup_pending')))
+            prepared_event=tuple(event) if event is not None else None
+        except (ValueError,TypeError,KeyError,OverflowError,RecursionError,AttributeError):
+            raise StationError('This batch could not be prepared safely. Reload its original intake before retrying.') from None
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT body,deleted_at FROM receipts WHERE id=?',(current['id'],)).fetchone()
+            if not row or row['deleted_at'] is not None or row['body']!=expected_body:
+                raise StationError('This batch changed during request preflight. Reload it; no original intake request was replaced.')
+            changed=db.execute('''UPDATE receipts SET source_hash=?,updated=?,body=?,pickup_pending=?
+                WHERE id=? AND body=? AND deleted_at IS NULL''',
+                (source_hash,current['updated'],body,pickup,current['id'],expected_body))
+            if changed.rowcount!=1:raise StationError('This batch changed before its intake intent could be saved. Reload it.')
+            db.execute('INSERT OR REPLACE INTO receipt_summaries(receipt_id,receipt_updated,format_version,body,digest) VALUES (?,?,?,?,?)',
+                (current['id'],current['updated'],self.SUMMARY_VERSION,summary,summary_digest))
+            if prepared_event:
+                db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
+                    (current['id'],current['updated'],prepared_event[0],prepared_event[1]))
+        receipt.clear();receipt.update(current)
+        return receipt
+
     def find_source(self, digest):
         with self.db() as db:
             row = db.execute('SELECT id FROM receipts WHERE source_hash=? ORDER BY updated DESC LIMIT 1', (digest,)).fetchone()
         return row[0] if row else None
+
+    def record_publication_snapshot(self, receipt):
+        """Read exact persisted bytes outside the short publication transaction."""
+        with self.db() as db:
+            row=db.execute('SELECT body,deleted_at FROM receipts WHERE id=?',(receipt['id'],)).fetchone()
+        same=row and json.dumps(json.loads(row['body']),sort_keys=True,separators=(',',':'),allow_nan=False)==json.dumps(receipt,sort_keys=True,separators=(',',':'),allow_nan=False)
+        if not row or row['deleted_at'] is not None or not same:
+            raise StationError('The original record changed while preparing its PDF. Reopen it before printing.')
+        return row['body']
+
+    def prepare_record_publication(self, receipt, filename, kind):
+        """Serialize the complete merge and derived summary before OS/DB guards."""
+        current=copy.deepcopy(receipt)
+        current.setdefault('files',{})['buy']=filename
+        current['updated']=now();current['revision']=receipt.get('revision',0)+1
+        body=json.dumps(current)
+        summary=json.dumps(self._make_summary(current),separators=(',',':'))
+        detail='Prepared the original accepted '+kind+' record. No new acceptance, credit, payment or stock operation. '+filename
+        return {'receipt':current,'body':body,'summary':summary,'summary_digest':hashlib.sha256(summary.encode()).hexdigest(),
+                'filename':filename,'detail':detail}
+
+    def commit_record_publication(self, expected_body, prepared, publish_file):
+        """CAS the verified row; callback only publishes a complete unique file.
+
+        SQLite and the filesystem are separate resources. A crash can leave an
+        unlinked complete document; a previous document is never overwritten.
+        """
+        current=prepared['receipt']
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT body,deleted_at FROM receipts WHERE id=?',(current['id'],)).fetchone()
+            if not row or row['deleted_at'] is not None or row['body']!=expected_body:
+                raise StationError('The original record changed before its PDF could be published. Reopen it before printing.')
+            changed=db.execute('UPDATE receipts SET updated=?,body=? WHERE id=? AND body=? AND deleted_at IS NULL',
+                (current['updated'],prepared['body'],current['id'],expected_body))
+            if changed.rowcount!=1:raise StationError('The original record changed before publication. Reopen it before printing.')
+            db.execute('INSERT OR REPLACE INTO receipt_summaries(receipt_id,receipt_updated,format_version,body,digest) VALUES (?,?,?,?,?)',
+                (current['id'],current['updated'],self.SUMMARY_VERSION,prepared['summary'],prepared['summary_digest']))
+            db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
+                (current['id'],current['updated'],'hosted_agreement_printed',prepared['detail']))
+            publish_file()
+        return current
+
+    def record_publication_referenced(self, receipt_id, filename, detail):
+        """A failed commit is not assumed rolled back until its exact link is read."""
+        with self.db() as db:
+            row=db.execute("SELECT json_extract(body,'$.files.buy') AS filename FROM receipts WHERE id=?",(receipt_id,)).fetchone()
+            event=db.execute("SELECT 1 FROM events WHERE receipt_id=? AND kind='hosted_agreement_printed' AND detail=? LIMIT 1",(receipt_id,detail)).fetchone()
+        return bool(row and row['filename']==filename or event)
+
+    @staticmethod
+    def _original_trade_rows(db, trade_id):
+        rows = db.execute("""SELECT id,body,deleted_at FROM receipts
+            WHERE json_extract(body,'$.purchase.scope')='hosted'
+              AND json_extract(body,'$.purchase.hosted_trade_id')=? ORDER BY id""", (trade_id,)).fetchall()
+        result = []
+        for row in rows:
+            value = json.loads(row['body'])
+            if value.get('id') != row['id'] or value.get('deleted_at') != row['deleted_at']:
+                raise StationError('The saved original-trade index needs owner recovery. No replacement record was created.')
+            result.append(value)
+        return result
+
+    def original_trade_receipts(self, trade_id):
+        """Read candidates only; caller validates store authority and exact proof."""
+        with self.db() as db:
+            return self._original_trade_rows(db, trade_id)
+
+    def commit_original_trade(self, receipt, *, service_origin, tenant_id, trade_id,
+                              expected_existing_id, expected_deleted_at,
+                              restore_existing, validate_existing, validate_linked=None):
+        """Atomic local projection/restore, with no financial or provider operation.
+
+        The caller holds its short session-file guard and supplies a pure existing-
+        record verifier. BEGIN IMMEDIATE serializes two processes using the same
+        profile. Existing ordinary mirrors participate in the lookup as well.
+        """
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            # The linked CSV's revision, original manifest and workflow locks
+            # must be checked after this write reservation. Another process may
+            # have saved it since the preview or the caller's preflight check.
+            # This callback is a local, transaction-bound read; never network.
+            if validate_linked is not None:
+                validate_linked(db)
+            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS receipts_original_trade_recovery_v1
+                ON receipts(json_extract(body,'$.original_trade_recovery.serviceOrigin'),
+                            json_extract(body,'$.original_trade_recovery.tenantId'),
+                            json_extract(body,'$.original_trade_recovery.tradeId'))
+                WHERE json_extract(body,'$.original_trade_recovery.version')=1""")
+            existing = self._original_trade_rows(db, trade_id)
+            if len(existing) > 1:
+                raise StationError('Several local records reference this original trade. An owner must resolve them before recovery; no record was overwritten.')
+            if existing:
+                current = existing[0]
+                validate_existing(current)
+                if expected_existing_id and current['id'] != expected_existing_id:
+                    raise StationError('The local original-trade record changed. Preview its current record before recovery.')
+                if not current.get('deleted_at'):
+                    return {'receipt': current, 'reused': True, 'restored': False}
+                if (restore_existing is not True or expected_existing_id != current['id']
+                    or not expected_deleted_at or current['deleted_at'] != expected_deleted_at):
+                    raise StationError('The original local record is deleted. Preview and explicitly confirm restoration of that same record; no second identity was created.')
+                current = copy.deepcopy(current)
+                current.pop('deleted_at', None)
+                current['updated'] = now(); current['revision'] = current.get('revision', 0) + 1
+                body = json.dumps(current)
+                db.execute('UPDATE receipts SET body=?,updated=?,deleted_at=NULL WHERE id=?',
+                           (body, current['updated'], current['id']))
+                self._save_summary(db, current['id'], current['updated'], self._make_summary(json.loads(body)))
+                db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
+                           (current['id'], now(), 'original_trade_restored',
+                            'Explicitly restored the same local original-trade record. No agreement, credit, payment or inventory action.'))
+                return {'receipt': current, 'reused': True, 'restored': True}
+            if expected_existing_id or restore_existing:
+                raise StationError('The selected local original-trade record is no longer available. Preview again; no replacement identity was created.')
+            value = copy.deepcopy(receipt)
+            marker = value.get('original_trade_recovery') or {}
+            if (marker.get('version') != 1 or marker.get('serviceOrigin') != service_origin
+                or marker.get('tenantId') != tenant_id or marker.get('tradeId') != trade_id):
+                raise StationError('Original-trade recovery authority is inconsistent. No local record was created.')
+            value['updated'] = now(); value['revision'] = 1
+            body = json.dumps(value)
+            db.execute('INSERT INTO receipts(id,source_hash,updated,body,deleted_at,pickup_pending) VALUES (?,?,?,?,NULL,0)',
+                       (value['id'], value['source_hash'], value['updated'], body))
+            self._save_summary(db, value['id'], value['updated'], self._make_summary(json.loads(body)))
+            db.execute('INSERT INTO events(receipt_id,at,kind,detail) VALUES (?,?,?,?)',
+                       (value['id'], now(), 'original_trade_recovered',
+                        'Recovered the verified original accepted agreement as a local record. No new agreement, credit, payment or inventory action.'))
+            return {'receipt': value, 'reused': False, 'restored': False}
 
     def summaries(self):
         return self._summary_rows()
@@ -292,21 +479,15 @@ class Vault:
             private_write(keypath, Fernet.generate_key())
         return Fernet(keypath.read_bytes())
 
-    def set(self, token):
-        with self.lock:
-            raw = token.strip().encode()
-            if not raw:
-                raise StationError('Enter a token to save, or leave the field empty to keep the current token.')
-            data = b'DP1' + self.dpapi(raw, True) if os.name == 'nt' else b'FN1' + self.fernet().encrypt(raw)
-            private_write(self.path, data)
-            # Verify it before a caller removes any legacy plaintext settings.
-            if self.read() != token.strip():
-                raise StationError('Credential verification failed.')
+    def prepare_bytes(self, token):
+        """Encrypt a detached value without reading or replacing this vault file."""
+        raw = token.strip().encode()
+        if not raw:
+            raise StationError('Enter a token to save, or leave the field empty to keep the current token.')
+        return b'DP1' + self.dpapi(raw, True) if os.name == 'nt' else b'FN1' + self.fernet().encrypt(raw)
 
-    def read(self):
-        if not self.path.exists():
-            return ''
-        data = self.path.read_bytes()
+    def decode_bytes(self, data):
+        """Decode already captured bytes without rereading the vault file."""
         if data[:3] == b'DP1' and os.name == 'nt':
             return self.dpapi(data[3:], False).decode()
         if data[:3] == b'FN1':
@@ -315,6 +496,19 @@ class Vault:
             except Exception:
                 raise StationError('The saved token could not be decrypted. Save a replacement in Admin.') from None
         raise StationError('This credential belongs to another operating system. Save a token in Admin.')
+
+    def set(self, token):
+        with self.lock:
+            data = self.prepare_bytes(token)
+            private_write(self.path, data)
+            # Verify it before a caller removes any legacy plaintext settings.
+            if self.read() != token.strip():
+                raise StationError('Credential verification failed.')
+
+    def read(self):
+        if not self.path.exists():
+            return ''
+        return self.decode_bytes(self.path.read_bytes())
 
     def exists(self):
         return self.path.exists()

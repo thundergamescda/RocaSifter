@@ -7,15 +7,20 @@ import json
 import re
 import uuid
 import unicodedata
+import threading
+from functools import wraps
 from urllib.parse import quote
 
 from station_cloud import CloudError,ORIGIN
 from station_store import StationError,Vault,now
 from hosted_labels import fingerprint,profile as label_profile,readiness as label_readiness
 from intake_manifest import source_line_id,source_lines,manifest_digest
-from station_intake_claim import required_manifest,source_key_for,original_identity
+from station_intake_claim import required_manifest,source_key_for,original_identity,require_ordinary_receipt
+from catalog_physical_ownership import (CatalogOwnershipError, ownership_from_card,
+    require_identity, validate_ownership)
 from square_variations import price_cents,variant_sku
 from receiving_evidence import provider_id,catalog_evidence,final_targets,CATALOG_FIELDS
+from station_receiving_budget import accepted_budget_proof,verified_receiving_budget,quantity_budget,operation_quantity_budget
 
 KEY=re.compile(r'[A-Za-z0-9_-]{1,150}')
 RECEIPT=re.compile(r'R-[A-Za-z0-9-]{1,100}')
@@ -34,11 +39,13 @@ class ReceivingJournal:
     def __init__(self,cloud,root,vault=None):
         self.cloud=cloud;self.vault=vault or Vault(root)
         if vault is None:self.vault.path=self.vault.root/'cloud.receiving'
+        from station_receiving_journal_cas import ReceivingJournalCAS
+        self.storage=ReceivingJournalCAS(self)
 
     def read(self):
-        try:raw=self.vault.read()
-        except (StationError,UnicodeError,OSError):
-            raise CloudError('The saved hosted-receiving journal could not be opened. Keep the original action for owner recovery on this Windows account; do not replace it or send the batch through a local Square connection.',status=409,pending=True) from None
+        return self.storage.read()
+
+    def _parse_text(self,raw):
         if not raw:return []
         try:
             value=json.loads(raw)
@@ -70,8 +77,7 @@ class ReceivingJournal:
             raise CloudError('The saved hosted-receiving journal needs owner recovery. Keep the original operation and source; do not create another plan or reroute to a local token.',status=409,pending=True) from None
 
     def save(self,rows):
-        if rows:self.vault.set(json.dumps({'version':1,'origin':ORIGIN,'operations':rows},ensure_ascii=False,separators=(',',':')))
-        elif self.vault.path.exists():self.vault.path.unlink()
+        return self.storage.save(rows)
 
     def session(self,expected):
         self.cloud._cancel_guard();saved=self.cloud._saved();self.cloud._expected(saved,expected)
@@ -86,21 +92,22 @@ class ReceivingJournal:
 
     def remember(self,key,result,expected,kind=None):
         with self.cloud.lock:
-            saved=self.session(expected);rows=self.read();row=next((row for row in rows if (row['store'],row['request_key'])==(saved['store'],key) and (kind is None or row['kind']==kind)),None)
-            if row is None or not isinstance(result,dict):raise CloudError('The original hosted-receiving journal is missing. Keep this batch for owner recovery.',status=409,pending=True)
             try:hashed=fingerprint(result)
             except (ValueError,TypeError):raise CloudError('The hosted-receiving confirmation was malformed. Keep the original request and recover the same operation.',status=502,pending=True) from None
-            row['result']=copy.deepcopy(result);row['result_fingerprint']=hashed;self.save(rows)
+            def change(rows,saved):
+                row=next((row for row in rows if (row['store'],row['request_key'])==(saved['store'],key) and (kind is None or row['kind']==kind)),None)
+                if row is None or not isinstance(result,dict):raise CloudError('The original hosted-receiving journal is missing. Keep this batch for owner recovery.',status=409,pending=True)
+                row['result']=copy.deepcopy(result);row['result_fingerprint']=hashed
+                return rows,None
+            return self.storage.update(change,expected)
 
     def finish(self,receipt_id,expected):
         with self.cloud.lock:
-            saved=self.session(expected)
-            self.save([row for row in self.read() if (row['store'],row['receipt_id'])!=(saved['store'],receipt_id)])
+            return self.storage.update(lambda rows,saved:([row for row in rows if (row['store'],row['receipt_id'])!=(saved['store'],receipt_id)],None),expected)
 
     def finish_key(self,key,expected):
         with self.cloud.lock:
-            saved=self.session(expected)
-            self.save([row for row in self.read() if (row['store'],row['request_key'])!=(saved['store'],key)])
+            return self.storage.update(lambda rows,saved:([row for row in rows if (row['store'],row['request_key'])!=(saved['store'],key)],None),expected)
 
     def mutate(self,kind,body,receipt_id,chosen,expected,receiving_id=None):
         with self.cloud.lock:
@@ -113,21 +120,23 @@ class ReceivingJournal:
                 path='/api/receiving/plans' if kind=='plan' else '/api/receiving/requests/'+quote(key,safe='')+'/retire';method='POST'
             else:
                 receiving_id=uuid_value(receiving_id);path='/api/receiving/'+receiving_id+('/plan' if kind=='revise' else '/'+kind);method='PUT' if kind=='revise' else 'POST'
-            rows=self.read();existing=next((row for row in rows if (row['store'],row['request_key'],row['kind'])==(saved['store'],key,kind)),None)
-            other_kinds={row['kind'] for row in rows if (row['store'],row['request_key'])==(saved['store'],key)}
-            if other_kinds and other_kinds|{kind} not in ({kind},{'plan','retire'}):raise CloudError('The original request key belongs to a different action. Recover it without changing its type.',status=409,pending=True)
             hashed=fingerprint({'body':body,'label_profile':chosen})
-            if existing:
-                if (existing['kind']!=kind or existing['receipt_id']!=receipt_id or existing['receiving_id']!=receiving_id or existing['fingerprint']!=hashed):
-                    raise CloudError('The saved hosted-receiving request has different details. Recover its original operation instead of changing the request or label profile.',status=409,pending=True)
-                if 'result' in existing:return copy.deepcopy(existing['result'])
-            else:
+            def change(rows,current):
+                existing=next((row for row in rows if (row['store'],row['request_key'],row['kind'])==(current['store'],key,kind)),None)
+                other_kinds={row['kind'] for row in rows if (row['store'],row['request_key'])==(current['store'],key)}
+                if other_kinds and other_kinds|{kind} not in ({kind},{'plan','retire'}):raise CloudError('The original request key belongs to a different action. Recover it without changing its type.',status=409,pending=True)
+                if existing:
+                    if (existing['kind']!=kind or existing['receipt_id']!=receipt_id or existing['receiving_id']!=receiving_id or existing['fingerprint']!=hashed):
+                        raise CloudError('The saved hosted-receiving request has different details. Recover its original operation instead of changing the request or label profile.',status=409,pending=True)
+                    return rows,copy.deepcopy(existing)
                 if len(rows)>=50:raise CloudError('Recover the saved receiving actions on this computer before starting another.',status=409,pending=True)
-                same=[row for row in rows if row['store']==saved['store'] and row['receipt_id']==receipt_id]
+                same=[row for row in rows if row['store']==current['store'] and row['receipt_id']==receipt_id]
                 if kind=='plan' and same:raise CloudError('This batch already has a saved receiving request. Recover it with its original key.',status=409,pending=True)
-                rows.append({'kind':kind,'store':saved['store'],'receipt_id':receipt_id,'receiving_id':receiving_id,
-                    'request_key':key,'body':copy.deepcopy(body),'label_profile':chosen,'fingerprint':hashed,'created_at':self.cloud.clock()})
-                self.save(rows)
+                row={'kind':kind,'store':current['store'],'receipt_id':receipt_id,'receiving_id':receiving_id,
+                    'request_key':key,'body':copy.deepcopy(body),'label_profile':chosen,'fingerprint':hashed,'created_at':self.cloud.clock()}
+                rows.append(row);return rows,copy.deepcopy(row)
+            existing=self.storage.update(change,expected)
+            if 'result' in existing:return copy.deepcopy(existing['result'])
             try:result=self.cloud._authenticated(method,path,data=body,expected_session_id=expected)
             except CloudError as error:error.pending=True;raise
             self.remember(key,result,expected,kind);return result
@@ -139,10 +148,12 @@ def locked(receipt):
 
 
 def require_editable(receipt):
+    require_ordinary_receipt(receipt)
     if locked(receipt):raise StationError('This batch has a saved hosted-receiving operation. Open its original plan and recover it before changing the batch or label profile.')
 
 
-def reviewed_rows(service,receipt):
+def reviewed_rows(service,receipt,*,physical_ownership_version=None):
+    require_ordinary_receipt(receipt)
     required_manifest(receipt);result=[];budget={line['source_line_key']:line['quantity'] for line in source_lines(receipt['source_manifest'])};used={}
     for original in receipt['cards']:
         if not original.get('include',True):continue
@@ -155,31 +166,138 @@ def reviewed_rows(service,receipt):
         result.append({'local_row_id':uuid_value(card['row_id'],'Local row ID'),'source_line_key':key,
             'identity':identity,'identity_hash':identity_hash,'quantity':card['qty'],'selling_cents':cents,
             'zero_price_confirmed':bool(cents==0 and card.get('price_confirmed') is True),'reviewed':True})
+        if physical_ownership_version is not None:
+            try:
+                if type(physical_ownership_version) is not int or physical_ownership_version!=2:
+                    raise CatalogOwnershipError()
+                result[-1]['physical_ownership']=require_identity(ownership_from_card(card),identity)
+            except CatalogOwnershipError:
+                raise StationError('Review the complete physical card identity before creating a new catalog ownership plan.') from None
     if not 1<=len(result)<=1000:raise StationError('Select 1 to 1,000 reviewed receiving rows.')
     return sorted(result,key=lambda row:row['local_row_id'])
 
 
-def local_snapshot(service,receipt,chosen,kind,location):
-    return {'version':1,'source_manifest_hash':manifest_digest(required_manifest(receipt)),
+def local_snapshot(service,receipt,chosen,kind,location,*,physical_ownership_version=None):
+    require_ordinary_receipt(receipt)
+    result={'version':1,'source_manifest_hash':manifest_digest(required_manifest(receipt)),
         'claim_id':receipt['intake_claim']['physical_intake_id'],'label_profile':label_profile(chosen),
-        'workflow_kind':kind,'location_id':location,'rows':reviewed_rows(service,receipt)}
+        'workflow_kind':kind,'location_id':location,'rows':reviewed_rows(service,receipt,physical_ownership_version=physical_ownership_version)}
+    if physical_ownership_version is not None:result['physical_ownership_version']=physical_ownership_version
+    return result
+
+
+def _budget_scope(function):
+    @wraps(function)
+    def scoped(self,*args,**kwargs):
+        with self.cloud.lock:
+            previous=getattr(self._budget_local,'proofs',None)
+            self._budget_local.proofs={}
+            try:return function(self,*args,**kwargs)
+            finally:
+                if previous is None:del self._budget_local.proofs
+                else:self._budget_local.proofs=previous
+    return scoped
 
 
 class HostedReceive:
-    def __init__(self,service):self.service=service
+    def __init__(self,service):
+        self.service=service
+        # Immutable goods-only proof, bounded per service/profile. No names,
+        # credentials or journals; never grants a provider admission.
+        self._accepted_budgets={}
+        self._budget_namespace=None
+        self._budget_local=threading.local()
 
     @property
     def cloud(self):return self.service.cloud
 
+    def _require_fresh_review(self,receipt):
+        for card in receipt.get('cards',[]):
+            if card.get('include',True):self.service._require_physical_review(card)
+
+    def _action_admission(self,receipt,kind):
+        """Classify durable local intent; journal absence never makes it fresh."""
+        actions=receipt['hosted_receive'].get('actions')
+        if type(actions) is not dict:
+            raise StationError('The saved receiving actions need original-operation recovery.')
+        action=None;fresh=kind not in actions
+        if not fresh:
+            action=actions[kind]
+            if (type(action) is not dict or type(action.get('body')) is not dict
+                or type(action['body'].get('request_key')) is not str or not action['body']['request_key']
+                or ('completed' in action and type(action['completed']) is not bool)):
+                raise StationError('Keep the original receiving action for recovery; an incomplete saved request cannot be replaced.')
+            fresh=action.get('completed') is True and kind in ('recover','authorize')
+        # A new authorize can admit inventory, even when its preceding DTO did
+        # not yet show catalog confirmation. Saved bodies retain original truth.
+        if fresh and kind in ('commit','authorize'):self._require_fresh_review(receipt)
+        return action,fresh
+
     def _session(self,expected,store=None):
         saved=self.cloud.receiving.session(expected)
         if store and saved['store']!=store:raise CloudError('Sign in to the store that owns this receiving operation. It cannot be transferred to another store.',status=409)
+        namespace=(ORIGIN,saved.get('tenant_id'),saved['store'],saved['session_id'] if saved.get('tenant_id') is None else None)
+        if namespace!=self._budget_namespace:
+            self._accepted_budgets.clear();self._budget_namespace=namespace
         return saved
 
     def _receipt(self,ident):
-        with self.service.lock:return self.service.active_receipt(ident)
+        with self.service.lock:
+            receipt=self.service.active_receipt(ident);require_ordinary_receipt(receipt)
+            return receipt
+
+    def _budget_key(self,receipt,body):
+        return (self._budget_namespace,(receipt.get('intake_claim') or {}).get('store'),body.get('accepted_trade_id'),
+            body.get('accepted_receipt_hash'),body.get('physical_intake_id'),body.get('physical_manifest_hash'))
+
+    def _remember_budget(self,receipt,body,trade):
+        require_ordinary_receipt(receipt)
+        if body.get('workflow_kind')!='accepted_trade':return None
+        if (not isinstance(trade,dict) or trade.get('id')!=body['accepted_trade_id']
+            or trade.get('receipt_hash')!=body['accepted_receipt_hash']
+            or trade.get('state') not in ('accepted_cash','accepted_credit')):
+            raise CloudError('The original accepted receiving source changed. Keep its same operation and saved request.',status=502,pending=True)
+        proof=accepted_budget_proof(receipt,body,trade.get('accepted_receipt'))
+        key=self._budget_key(receipt,body)
+        if self._budget_namespace is None or self._budget_namespace[1] is None:
+            scoped=getattr(self._budget_local,'proofs',None)
+            if scoped is None:raise CloudError('Refresh this original receiving operation online.',status=409,pending=True)
+            scoped[key]=proof;return proof
+        self._accepted_budgets.pop(key,None)
+        while len(self._accepted_budgets)>=16:self._accepted_budgets.pop(next(iter(self._accepted_budgets)))
+        self._accepted_budgets[key]=proof
+        return proof
+
+    def _budget_proof(self,receipt):
+        require_ordinary_receipt(receipt)
+        body=receipt['hosted_receive']['plan_body']
+        if body.get('workflow_kind')!='accepted_trade':return None
+        purchase=receipt.get('purchase') or {}
+        if 'accepted_receipt' in purchase:
+            if (purchase.get('scope')!='hosted' or purchase.get('hosted_trade_id')!=body['accepted_trade_id']
+                or purchase.get('receipt_hash')!=body['accepted_receipt_hash']):
+                raise CloudError('The saved financial source does not match this receiving operation. Keep both original references.',status=502,pending=True)
+            return accepted_budget_proof(receipt,body,purchase['accepted_receipt'])
+        key=self._budget_key(receipt,body)
+        proof=getattr(self._budget_local,'proofs',{}).get(key) or self._accepted_budgets.get(key)
+        if proof is None:
+            raise CloudError('Open this original hosted receiving record online to verify its accepted quantities. Its original source, keys and pending journal were kept.',status=409,pending=True)
+        return proof
+
+    def _prime_budget(self,receipt,expected):
+        require_ordinary_receipt(receipt)
+        body=receipt['hosted_receive']['plan_body']
+        if body.get('workflow_kind')!='accepted_trade':return
+        purchase=receipt.get('purchase') or {}
+        if 'accepted_receipt' in purchase:
+            self._budget_proof(receipt);return
+        authority=self.cloud.read_receiving_trade(body['accepted_trade_id'],expected_session_id=expected)
+        if authority['store']!=receipt['hosted_receive']['store']:
+            raise CloudError('Sign in to the original receiving store. Its saved operation was kept.',status=409,pending=True)
+        self._remember_budget(receipt,body,authority['trade'])
 
     def _eligible(self,receipt):
+        require_ordinary_receipt(receipt)
         self.service.intake_claims._legacy_guard(receipt);required_manifest(receipt)
         if receipt.get('mode')=='bulk':raise StationError('Move this intake to Price & label or Online before receiving stock.')
         if receipt.get('inventory_intent')!='new':raise StationError('Explicitly choose Add new copies for this physical intake before hosted receiving.')
@@ -190,6 +308,7 @@ class HostedReceive:
         if receipt.get('inventory_status')=='received' and not receipt.get('hosted_receive'):raise StationError('Already received stock cannot be converted to a new hosted operation.')
 
     def _claim(self,receipt,expected):
+        require_ordinary_receipt(receipt)
         self._session(expected,receipt['intake_claim']['store'])
         claim=self.cloud.intake_get(receipt['intake_claim']['physical_intake_id'],expected_session_id=expected)
         self.service.intake_claims._verify(receipt,claim);return claim
@@ -202,6 +321,10 @@ class HostedReceive:
             or value['write_enabled']!=(value['server_write_enabled'] and value['tenant_write_enabled'])):
             raise CloudError('The hosted receiving protocol/readiness could not be verified. No stock was submitted.',status=502)
         if type(value.get('new_price_supported')) is not bool or ('new_price_write_enabled' in value and (type(value['new_price_write_enabled']) is not bool or value['new_price_write_enabled'] and (not value['write_enabled'] or not value['new_price_supported']))):raise CloudError('New-price readiness is invalid. No provider step was submitted.',status=502)
+        if 'physical_ownership_versions' in value and (type(value['physical_ownership_versions']) is not list
+            or value['physical_ownership_versions']!=[1,2]
+            or any(type(version) is not int for version in value['physical_ownership_versions'])):
+            raise CloudError('The physical ownership protocol could not be verified.',status=502)
         return value
 
     def context(self,ident,expected):
@@ -227,17 +350,19 @@ class HostedReceive:
             return {'receipt':receipt,'readiness':readiness,'locations':locations,'claim':claim,'acceptedTrade':trade,'operation':operation,
                 'needsPhysicalIntake':claim is None,'hardwareAcceptanceComplete':False}
 
-    def _plan_body(self,receipt,data,claim,trade):
+    def _plan_body(self,receipt,data,claim,trade,*,physical_ownership_version=None):
+        require_ordinary_receipt(receipt)
         if not isinstance(data.get('labelProfile'),dict):raise StationError('Explicitly select the label stock, layout and printer DPI before planning.')
         kind=data.get('workflowKind');location=data.get('locationId');chosen=label_profile(data['labelProfile'])
         if kind not in ('accepted_trade','inventory_only') or provider_id(location)!=location:
             raise StationError('Select the receiving workflow and exact verified Square location.')
         if data.get('newInventoryConfirmed') is not True or data.get('excludedNotReceivedAck') is not True:
             raise StationError('Confirm these are new copies and that excluded quantities will not be received.')
-        snapshot=local_snapshot(self.service,receipt,chosen,kind,location);lines=[]
+        snapshot=local_snapshot(self.service,receipt,chosen,kind,location,physical_ownership_version=physical_ownership_version);lines=[]
         body={'physical_intake_id':claim['physical_intake_id'],'physical_manifest_hash':claim['manifest_hash'],
             'source_snapshot_hash':fingerprint(snapshot),'workflow_kind':kind,'location_id':location,
             'client_label_profile':chosen,'new_inventory_confirmed':True,'excluded_not_received_ack':True,'lines':lines}
+        if physical_ownership_version is not None:body['physical_ownership_version']=physical_ownership_version
         if kind=='accepted_trade':
             if not trade or not str(trade.get('state','')).startswith('accepted_') or claim.get('bound_trade_id')!=trade.get('id'):
                 raise StationError('Use the immutable accepted hosted trade linked to this exact physical intake.')
@@ -261,15 +386,21 @@ class HostedReceive:
             if data.get('externalOwnershipConfirmed') is not True:raise StationError('Confirm the store owns these copies outside shared trade credit before inventory-only receiving.')
             body['external_ownership_confirmed']=True
             for row in snapshot['rows']:lines.append({key:row[key] for key in ('source_line_key','identity','quantity','selling_cents','zero_price_confirmed','reviewed')}|{'review_line_id':row['local_row_id']})
+        if physical_ownership_version is not None:
+            by_id={row['local_row_id']:row for row in snapshot['rows']}
+            for line in lines:line['physical_ownership']=copy.deepcopy(by_id[line['review_line_id']]['physical_ownership'])
         return body,snapshot
 
     def _assert_source(self,receipt):
-        intent=receipt['hosted_receive'];current=local_snapshot(self.service,receipt,intent['label_profile'],intent['workflow_kind'],intent['location_id'])
+        require_ordinary_receipt(receipt)
+        intent=receipt['hosted_receive'];current=local_snapshot(self.service,receipt,intent['label_profile'],intent['workflow_kind'],intent['location_id'],
+            physical_ownership_version=intent['plan_body'].get('physical_ownership_version'))
         if fingerprint(current)!=intent['local_snapshot_hash']:
             raise CloudError('The local reviewed source differs from the saved receiving plan. Keep the original operation for owner recovery; no receipt or SKU will be guessed.',status=409,pending=True)
         return current
 
     def _verify(self,receipt,value,*,initial=False):
+        require_ordinary_receipt(receipt)
         intent=receipt['hosted_receive'];snapshot=self._assert_source(receipt);body=intent['plan_body']
         try:
             if not isinstance(value,dict):raise ValueError()
@@ -281,6 +412,10 @@ class HostedReceive:
                 if value.get(key)!=body[key]:raise ValueError()
             for key in ('accepted_trade_id','accepted_receipt_hash'):
                 if value.get(key)!=body.get(key):raise ValueError()
+            if value.get('physical_ownership_version')!=body.get('physical_ownership_version'):raise ValueError()
+            if 'physical_ownership_version' in value and type(value['physical_ownership_version']) is not int:raise ValueError()
+            ownership_version=body.get('physical_ownership_version')
+            if 'physical_ownership_version' in body and (type(ownership_version) is not int or ownership_version!=2):raise ValueError()
             if value.get('client_label_profile')!=intent['label_profile']:raise ValueError()
             provider=value.get('provider')
             if (not isinstance(provider,dict) or set(provider)!={'merchant_id','environment','application_id','location_id'}
@@ -288,13 +423,18 @@ class HostedReceive:
                 or any(provider_id(provider[key])!=provider[key] for key in ('merchant_id','application_id','location_id'))):raise ValueError()
             rows={row['review_line_id']:row for row in body['lines']};mapping=intent.get('row_map',{})
             identities={mapping.get(row['local_row_id'],row['local_row_id']):row['identity_hash'] for row in snapshot['rows']}
+            ownerships={mapping.get(row['local_row_id'],row['local_row_id']):row.get('physical_ownership') for row in snapshot['rows']}
             targets=value.get('targets')
             if not isinstance(targets,list) or len(targets)!=len(rows) or len({row.get('review_line_id') for row in targets})!=len(rows):raise ValueError()
-            used={};allowed={'review_line_id','source_line_key','accepted_line_id','identity_hash','binding_id','binding_version','binding_evidence_hash','source_sku','target_sku','variation_id','parent_id','selling_cents','currency','quantity','action','binding_role','template_id','template_version','template_evidence_hash'}
+            used={};allowed={'review_line_id','source_line_key','accepted_line_id','identity_hash','binding_id','binding_version','binding_evidence_hash','source_sku','target_sku','variation_id','parent_id','selling_cents','currency','quantity','action','binding_role','template_id','template_version','template_evidence_hash','physical_ownership'}
             for target in targets:
                 if not isinstance(target,dict) or set(target)-allowed:raise ValueError()
                 row=rows.get(target.get('review_line_id'))
                 if not row or any(target.get(key)!=row[key] for key in ('source_line_key','quantity','selling_cents')):raise ValueError()
+                if ownership_version==2:
+                    if validate_ownership(target.get('physical_ownership'))!=validate_ownership(row.get('physical_ownership')):raise ValueError()
+                    if target['physical_ownership']!=ownerships[target['review_line_id']]:raise ValueError()
+                elif 'physical_ownership' in target or 'physical_ownership' in row:raise ValueError()
                 if (type(target.get('quantity')) is not int or not 1<=target['quantity']<=100000
                     or type(target.get('selling_cents')) is not int or not 0<=target['selling_cents']<=100_000_000
                     or not isinstance(target.get('target_sku'),str) or not 1<=len(target['target_sku'])<=100
@@ -313,20 +453,18 @@ class HostedReceive:
                 uuid_value(target.get('binding_id'),'Catalog binding ID')
                 if type(target.get('binding_version')) is not int or target['binding_version']<0 or not isinstance(target.get('binding_evidence_hash'),str) or not HASH.fullmatch(target['binding_evidence_hash']):raise ValueError()
                 used[row['source_line_key']]=used.get(row['source_line_key'],0)+row['quantity']
-            budget={row['source_line_key']:row['quantity'] for row in source_lines(receipt['source_manifest'])}
-            for key in ('selected_quantities','excluded_quantities'):
-                if not isinstance(value.get(key),dict) or any(not isinstance(group,str) or not HASH.fullmatch(group) or type(qty) is not int or qty<0 for group,qty in value[key].items()):raise ValueError()
-            if value.get('selected_quantities')!=used or value.get('excluded_quantities')!={key:qty-used.get(key,0) for key,qty in budget.items()}:raise ValueError()
+            verified_receiving_budget(receipt,body,value,self._budget_proof(receipt),snapshot)
             if len({target['variation_id'] or (target['parent_id'],target['target_sku']) for target in targets})>100:raise ValueError()
             catalog=catalog_evidence(value,targets)
             if intent.get('catalog_evidence',{}).get('catalog_confirmed') and catalog!=intent['catalog_evidence']:raise ValueError()
             if type(value.get('inventory_confirmed')) is not bool or value['state']!='received' and value.get('receipt') is not None:raise ValueError()
             if not initial and (value['plan_hash']!=intent['plan_hash'] or value['revision']!=intent['server_revision'] or provider!=intent['provider'] or targets!=intent['targets']):raise ValueError()
             return True
-        except (ValueError,TypeError,KeyError,AttributeError,CloudError):
+        except (ValueError,TypeError,KeyError,AttributeError,StopIteration,CloudError):
             raise CloudError('The hosted receiving plan does not match the locked source, exact SKU, label profile or provider binding. Keep this original operation for owner recovery.',status=502,pending=True) from None
 
     def _perform(self,receipt,kind,expected):
+        require_ordinary_receipt(receipt)
         intent=receipt['hosted_receive'];action=intent['actions'][kind];body=action['body'];key=body['original_plan']['request_key'] if kind=='retire' else body['request_key']
         row=self.cloud.receiving.row(key,expected,kind)
         if row:
@@ -344,18 +482,44 @@ class HostedReceive:
     def _view(self,receipt,value,readiness=None):
         try:labels=label_readiness(value['targets'],receipt['hosted_receive']['label_profile']);error=None
         except ValueError as exc:labels=None;error=str(exc)
-        return {'receipt':receipt,'operation':value,'readiness':readiness,'labelReadiness':labels,'labelError':error,
+        result={'receipt':receipt,'operation':value,'readiness':readiness,'labelReadiness':labels,'labelError':error,
             'readOnly':False,'hardwareAcceptanceComplete':False}
+        if value.get('workflow_kind')=='accepted_trade':
+            facts=verified_receiving_budget(receipt,receipt['hosted_receive']['plan_body'],value,self._budget_proof(receipt))
+            result['quantityBudget']=quantity_budget(facts)
+        return result
 
     @staticmethod
     def _local_target(intent,targets,card):
         local=uuid_value(card['row_id'],'Local row ID')
         return targets[intent.get('row_map',{}).get(local,local)]
 
+    @_budget_scope
     def recover_existing(self,ident,data,expected):
         """Bind independently imported rows without creating a key or admission."""
         with self.cloud.lock:
             saved=self._session(expected);receipt=self._receipt(ident)
+            if 'original_trade_recovery' in receipt and not receipt.get('hosted_receive'):
+                from station_trade_recovery import recovered_marker,validate_recovered_projection
+                from station_recovery_review import OriginalTradeReview
+                marker=recovered_marker(receipt);validate_recovered_projection(receipt)
+                evidence=self.service.recovery_review._authority(receipt,marker,expected,inventory=True)
+                value=OriginalTradeReview.verify_history(evidence)
+                if value is None or value['receiving_id']!=uuid_value(data.get('receivingId')):
+                    raise CloudError('Choose the exact operation in this original trade’s authenticated inventory history.',status=409)
+                with self.cloud._session_guard():
+                    self.cloud.assert_recovery_session_unlocked(expected,evidence['tenantId'],evidence['store'])
+                    with self.service.lock:
+                        current=self._receipt(ident)
+                        if current['revision']!=data.get('revision') or current['revision']!=receipt['revision']:
+                            raise StationError('The recovered trade changed. Reload its original inventory history.')
+                        validate_recovered_projection(current)
+                result={'receipt':current,'operation':value,'readOnly':True,'mappingMismatch':True,
+                    'message':'Original hosted receiving record. Its frozen prices, targets and label profile are preserved. Review does not create a plan, adopt fresh prices or add stock.',
+                    'labelReadiness':None,'hardwareAcceptanceComplete':False}
+                if value.get('workflow_kind')=='accepted_trade' and isinstance(value.get('targets'),list) and value['targets']:
+                    result['quantityBudget']=operation_quantity_budget(current,value,evidence['trade']['accepted_receipt'])
+                return result
             previous=receipt.get('hosted_receive')
             if previous and previous.get('receiving_id'):return self.status(ident,expected)
             if previous:
@@ -371,9 +535,17 @@ class HostedReceive:
             if (value.get('physical_intake_id')!=claim['physical_intake_id'] or value.get('physical_manifest_hash')!=claim['manifest_hash']
                 or kind not in ('accepted_trade','inventory_only') or not isinstance(location,str)):
                 raise CloudError('This operation belongs to another physical intake. No local receipt was changed.',status=409)
-            snapshot=local_snapshot(self.service,receipt,chosen,kind,location);targets=value.get('targets')
+            ownership_version=value.get('physical_ownership_version')
+            if 'physical_ownership_version' in value and (type(ownership_version) is not int or ownership_version!=2):
+                raise CloudError('The original physical ownership protocol is unsupported. Preserve this operation for review.',status=502)
+            snapshot=local_snapshot(self.service,receipt,chosen,kind,location,physical_ownership_version=ownership_version);targets=value.get('targets')
             if not isinstance(targets,list):raise CloudError('The original hosted targets are unavailable.',status=502)
-            def signature(row):return (row.get('source_line_key'),row.get('identity_hash'),row.get('quantity'),row.get('selling_cents'))
+            def signature(row):
+                result=(row.get('source_line_key'),row.get('identity_hash'),row.get('quantity'),row.get('selling_cents'))
+                if ownership_version==2:
+                    try:result+=(json.dumps(validate_ownership(row.get('physical_ownership')),sort_keys=True,ensure_ascii=False,separators=(',',':')),)
+                    except CatalogOwnershipError:raise CloudError('The original physical ownership evidence is invalid.',status=502) from None
+                return result
             local_groups={};server_groups={}
             for row in snapshot['rows']:local_groups.setdefault(signature(row),[]).append(row)
             for row in targets:server_groups.setdefault(signature(row),[]).append(row)
@@ -397,14 +569,17 @@ class HostedReceive:
                 line={key:row[key] for key in ('source_line_key','quantity','selling_cents','zero_price_confirmed','reviewed')};line['review_line_id']=target['review_line_id']
                 if kind=='accepted_trade':line['accepted_line_id']=target['accepted_line_id']
                 else:line['identity']=copy.deepcopy(row['identity'])
+                if ownership_version==2:line['physical_ownership']=copy.deepcopy(row['physical_ownership'])
                 lines.append(line)
             body={key:value[key] for key in ('physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind')}
             body.update(location_id=location,client_label_profile=chosen,lines=lines)
+            if ownership_version==2:body['physical_ownership_version']=2
             if kind=='accepted_trade':body.update(accepted_trade_id=value['accepted_trade_id'],accepted_receipt_hash=value['accepted_receipt_hash'])
             candidate=copy.deepcopy(receipt)
             candidate['hosted_receive']={'version':1,'state':'recovering','store':saved['store'],'created_at':now(),
                 'label_profile':chosen,'workflow_kind':kind,'location_id':location,'local_snapshot_hash':fingerprint(snapshot),
                 'plan_body':body,'actions':{},'row_map':mapping,'recovered_reference':True}
+            if kind=='accepted_trade':self._remember_budget(candidate,body,trade)
             self._verify(candidate,value,initial=True)
             with self.service.lock:
                 current=self._receipt(ident)
@@ -415,6 +590,7 @@ class HostedReceive:
             return self._adopt(current,value,expected,self._readiness(expected))
 
     def _save_plan(self,receipt,value,expected):
+        require_ordinary_receipt(receipt)
         self._verify(receipt,value,initial=True)
         with self.service.lock:
             receipt=self._receipt(receipt['id']);self._assert_source(receipt)
@@ -425,19 +601,32 @@ class HostedReceive:
             self.service.store.save_receipt(receipt,('hosted_receiving_plan','Typed hosted receiving plan bound durably; no provider write authorized by this desktop action.'))
         return receipt
 
+    @_budget_scope
     def prepare(self,ident,data,expected):
         with self.cloud.lock:
             saved=self._session(expected);receipt=self._receipt(ident)
             previous=receipt.get('hosted_receive')
             if previous and previous.get('state')!='retired_before_creation':return self.status(ident,expected)
+            if 'original_trade_recovery' in receipt:
+                from station_recovery_review import require_recovery_retail,OriginalTradeReview
+                from station_trade_recovery import recovered_marker
+                require_recovery_retail(receipt)
+                marker=recovered_marker(receipt)
+                evidence=self.service.recovery_review._authority(receipt,marker,expected,inventory=True)
+                if OriginalTradeReview.verify_history(evidence) is not None:
+                    raise CloudError('This physical intake already has a hosted receiving operation. Recover that original operation; no replacement plan was created.',status=409,code='ORIGINAL_RECEIVING_EXISTS')
             self._eligible(receipt);claim=self._claim(receipt,expected);ready=self._readiness(expected)
+            if ready.get('physical_ownership_versions')!=[1,2]:
+                raise CloudError('Update hosted receiving before creating a new physical ownership plan. Saved operations remain available for recovery.',status=409)
             locations=self.cloud.receiving_locations(expected_session_id=expected).get('locations',[])
             if not any(row.get('id')==data.get('locationId') and row.get('status')=='ACTIVE' and row.get('currency')=='USD' for row in locations):raise StationError('Select an independently verified active USD location; it will not be selected automatically.')
             trade=self.cloud.trade_get(claim['bound_trade_id'],expected_session_id=expected) if claim.get('bound_trade_id') else None
-            body,snapshot=self._plan_body(receipt,data,claim,trade);body['request_key']=uuid.uuid4().hex
+            body,snapshot=self._plan_body(receipt,data,claim,trade,physical_ownership_version=2);body['request_key']=uuid.uuid4().hex
+            if body['workflow_kind']=='accepted_trade':self._remember_budget(receipt,body,trade)
             with self.service.lock:
                 receipt=self._receipt(ident)
                 if receipt['revision']!=data.get('revision') or receipt.get('hosted_receive')!=previous:raise StationError('The reviewed batch changed. Reopen it before creating a receiving plan.')
+                self._require_fresh_review(receipt)
                 if previous:receipt.setdefault('hosted_receiving_history',[]).append(copy.deepcopy(previous))
                 receipt['hosted_receive']={'version':1,'state':'planning','store':saved['store'],'created_at':now(),
                     'label_profile':body['client_label_profile'],'workflow_kind':body['workflow_kind'],'location_id':body['location_id'],
@@ -449,6 +638,7 @@ class HostedReceive:
             return self._adopt(receipt,current,expected,ready)
 
     def _receipt_proof(self,receipt,value):
+        require_ordinary_receipt(receipt)
         self._verify(receipt,value);proof=value.get('receipt');intent=receipt['hosted_receive']
         try:
             if value['state']!='received' or value.get('inventory_confirmed') is not True or not isinstance(proof,dict):raise ValueError()
@@ -456,7 +646,7 @@ class HostedReceive:
             if not isinstance(hashed,str) or not HASH.fullmatch(hashed) or fingerprint({key:item for key,item in proof.items() if key!='receipt_hash'})!=hashed:raise ValueError()
             created=any(row['action']=='create_price' for row in value['targets']);catalog=catalog_evidence(value,value['targets'])
             if proof.get('receipt_schema_version')!=1 or proof.get('inventory_confirmed') is not True or proof.get('catalog_write_performed') is not created:raise ValueError()
-            for key in ('receiving_id','revision','plan_hash','physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind','accepted_trade_id','accepted_receipt_hash','provider','selected_quantities','excluded_quantities','client_label_profile'):
+            for key in ('receiving_id','revision','plan_hash','physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind','accepted_trade_id','accepted_receipt_hash','provider','selected_quantities','excluded_quantities','client_label_profile','physical_ownership_version'):
                 if proof.get(key)!=value.get(key):raise ValueError()
             if created and any(proof.get(key)!=catalog[key] for key in ('catalog_proof_hash','catalog_resolutions_hash','catalog_resolutions')):raise ValueError()
             expected_targets=[dict(target,confirmed_quantity=target['quantity']) for target in final_targets(value,value['targets'])]
@@ -468,6 +658,7 @@ class HostedReceive:
         except (ValueError,TypeError,KeyError,AttributeError):raise CloudError('The hosted receipt does not prove every selected quantity, exact SKU and original provider binding. Keep this same operation for owner recovery; stock will not be guessed.',status=502,pending=True) from None
 
     def _adopt(self,receipt,value,expected,readiness=None):
+        require_ordinary_receipt(receipt)
         self._session(expected,receipt['hosted_receive']['store']);self._verify(receipt,value)
         if value['state']=='received':
             proof=self._receipt_proof(receipt,value)
@@ -504,9 +695,11 @@ class HostedReceive:
 
     def confirmed_cards(self,receipt,cards=None):
         """Reapply only the immutable hosted receipt, never an incoming marker."""
+        require_ordinary_receipt(receipt)
         intent=receipt.get('hosted_receive') or {}
         if intent.get('state')!='confirmed':raise StationError('Hosted label SKUs require a confirmed receiving receipt.')
         proof=intent['server_receipt'];value={key:proof.get(key) for key in ('receiving_id','revision','plan_hash','physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind','accepted_trade_id','accepted_receipt_hash','provider','selected_quantities','excluded_quantities','client_label_profile')}
+        if 'physical_ownership_version' in proof:value['physical_ownership_version']=proof['physical_ownership_version']
         value.update(state='received',inventory_confirmed=True,receipt=proof,targets=intent['targets'],**intent['catalog_evidence']);self._receipt_proof(receipt,value)
         from hosted_labels import mark
         by_id={row['review_line_id']:row for row in proof['confirmed_targets']};result=[]
@@ -519,6 +712,7 @@ class HostedReceive:
             result.append(card)
         return result
 
+    @_budget_scope
     def status(self,ident,expected):
         with self.cloud.lock:
             receipt=self._receipt(ident);intent=receipt.get('hosted_receive')
@@ -527,6 +721,7 @@ class HostedReceive:
             if intent.get('state')=='retiring':return self.retire(ident,{},expected)
             if intent.get('state')=='retired_before_creation':return {'receipt':receipt,'operation':None,'message':intent['message'],'readOnly':False}
             self._assert_source(receipt)
+            self._prime_budget(receipt,expected)
             if intent.get('state')=='revising':receipt=self._save_plan(receipt,self._perform(receipt,'revise',expected),expected)
             elif not intent.get('receiving_id'):receipt=self._save_plan(receipt,self._perform(receipt,'plan',expected),expected)
             value=self.cloud.receiving_get(receipt['hosted_receive']['receiving_id'],expected_session_id=expected)
@@ -559,6 +754,7 @@ class HostedReceive:
             self.cloud.receiving.finish(ident,expected)
             return {'receipt':receipt,'operation':None,'readOnly':False,'message':receipt['hosted_receive']['message']}
 
+    @_budget_scope
     def revise(self,ident,data,expected):
         with self.cloud.lock:
             receipt=self._receipt(ident);old=receipt.get('hosted_receive') or {};self._session(expected,old.get('store'))
@@ -574,10 +770,13 @@ class HostedReceive:
             locations=self.cloud.receiving_locations(expected_session_id=expected).get('locations',[])
             if not any(row.get('id')==data.get('locationId') and row.get('status')=='ACTIVE' and row.get('currency')=='USD' for row in locations):raise StationError('Select a verified active USD location.')
             trade=self.cloud.trade_get(claim['bound_trade_id'],expected_session_id=expected) if claim.get('bound_trade_id') else None
-            body,snapshot=self._plan_body(receipt,data,claim,trade);body.update(request_key=uuid.uuid4().hex,revision=current['revision'])
+            body,snapshot=self._plan_body(receipt,data,claim,trade,
+                physical_ownership_version=old['plan_body'].get('physical_ownership_version'));body.update(request_key=uuid.uuid4().hex,revision=current['revision'])
+            if body['workflow_kind']=='accepted_trade':self._remember_budget(receipt,body,trade)
             with self.service.lock:
                 receipt=self._receipt(ident)
                 if receipt['revision']!=data.get('revision') or receipt['hosted_receive']!=old:raise StationError('The cancelled batch changed. Reopen it before correcting the original plan.')
+                self._require_fresh_review(receipt)
                 receipt.setdefault('hosted_receiving_history',[]).append(copy.deepcopy(old))
                 receipt['hosted_receive']={'version':1,'state':'revising','store':old['store'],'created_at':now(),'receiving_id':old['receiving_id'],
                     'label_profile':copy.deepcopy(body['client_label_profile']),'workflow_kind':body['workflow_kind'],'location_id':body['location_id'],
@@ -586,12 +785,15 @@ class HostedReceive:
             receipt=self._save_plan(receipt,self._perform(receipt,'revise',expected),expected)
             return self._adopt(receipt,self.cloud.receiving_get(old['receiving_id'],expected_session_id=expected),expected,self._readiness(expected))
 
+    @_budget_scope
     def act(self,ident,data,expected,kind):
         if kind not in ('commit','recover','authorize','cancel'):raise StationError('Use a supported saved receiving action.')
         with self.cloud.lock:
             receipt=self._receipt(ident);intent=receipt.get('hosted_receive')
             if not intent or not intent.get('receiving_id'):raise StationError('Recover and review the saved server plan first.')
+            expected_intent=copy.deepcopy(intent);expected_revision=receipt['revision']
             self._session(expected,intent['store']);self._assert_source(receipt)
+            self._prime_budget(receipt,expected)
             current=self.cloud.receiving_get(intent['receiving_id'],expected_session_id=expected);self._verify(receipt,current)
             if current['state']=='received':return self._adopt(receipt,current,expected)
             if intent.get('recovered_reference') and kind!='recover' and not (kind=='authorize' and current.get('catalog_confirmed') is True):
@@ -612,12 +814,12 @@ class HostedReceive:
             if kind=='cancel' and current['state']!='ready':raise CloudError('An admitted or uncertain operation cannot be cancelled locally. Recover its original provider evidence.',status=409,pending=True)
             with self.service.lock:
                 receipt=self._receipt(ident);self._assert_source(receipt);intent=receipt['hosted_receive']
-                action=intent['actions'].get(kind)
-                # An explicitly repeated read-only query may use a new key only
-                # after the prior response was durably acknowledged locally.
-                if action and action.get('completed') and kind in ('recover','authorize'):
-                    intent.setdefault('action_history',[]).append(copy.deepcopy(action));action=None
-                if not action:
+                if receipt['revision']!=expected_revision or intent!=expected_intent:
+                    raise StationError('The saved receiving plan changed while checking its status. Recover and review that same plan before continuing.')
+                action,fresh=self._action_admission(receipt,kind)
+                if fresh and action is not None:
+                    intent.setdefault('action_history',[]).append(copy.deepcopy(action))
+                if fresh:
                     body={'request_key':uuid.uuid4().hex,'revision':intent['server_revision'],'plan_hash':intent['plan_hash']}
                     if kind=='commit':body.update(confirmed=True,excluded_not_received_ack=True)
                     elif kind=='authorize':body['resume_same_operation']=True

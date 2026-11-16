@@ -11,11 +11,14 @@ import uuid
 from unittest.mock import patch
 import psycopg
 from cryptography.fernet import Fernet
-from intake_manifest import capture_manifest
+from intake_manifest import capture_manifest, source_line_id
+from catalog_physical_ownership import ownership_from_card
+from intake_physical_identity import physical_facts_v2
+from hosted.app import create_app
 from hosted.intake import IntakeClaims
 from hosted.receiving import Receiving
 from hosted.receiving_plan import ReceivingError, fingerprint
-from hosted.security import ServiceError
+from hosted.security import ServiceError, digest
 from hosted.trades import Trades
 from test_hosted_settlement_postgres import _PostgreSQLSettlementFixture
 from test_hosted_trades import card_line, draft_data, acceptance_data
@@ -25,6 +28,36 @@ from test_receiving_fixtures import FictionalReceivingProvider
 
 
 class PostgreSQLReceivingAcceptance(_PostgreSQLSettlementFixture):
+    def _physical_mapping(self, *, location='fixture-location', identity=None):
+        identity=deepcopy(identity or self.original['identity'])
+        fields={'game':'game','game_label':'game_label','card_name':'name','card_set':'set','card_num':'number',
+            'condition':'condition','printing':'printing','language':'language','item_type':'kind','grader':'grading_company',
+            'grade':'grade','grade_qualifier':'grade_qualifier','cert_number':'certification','serial_number':'serial_number',
+            'year':'year','sport':'sport','league':'league','manufacturer':'manufacturer','team':'team','player':'player'}
+        facts=physical_facts_v2({field:identity.get(source,'') for field,source in fields.items()})
+        data={'identity':identity,'physical_ownership_version':2,'physical_facts':facts,
+              'variation_id':'fixture-variation','location_id':location}
+        preview=self.service.binding_preview(self.actor,data)
+        body={'request_key':'physical-mapping-'+uuid.uuid4().hex,'preview_hash':preview['preview_hash'],
+              'identity_confirmed':True,'reason':'Fictional owner explicitly reviewed all current physical facts'}
+        return data,preview,body
+
+    def _retire_original_mapping(self):
+        return self.service.revoke_binding(self.actor,self.binding['binding_id'],{
+            'request_key':'retire-before-physical-'+uuid.uuid4().hex,'version':self.binding['version'],
+            'reason':'Fictional owner explicitly retires the earlier identity mapping'})
+
+    def _approve_physical_mapping(self):
+        self._retire_original_mapping()
+        data,preview,body=self._physical_mapping()
+        result=self.service.approve_binding(self.actor,preview['preview_id'],body)
+        return data,preview,body,result
+
+    def _physical_plan(self,ownership):
+        body=plan_data(self.claim);body['physical_ownership_version']=2
+        for line in body['lines']:line['physical_ownership']=deepcopy(ownership)
+        return body
+
     def setUp(self):
         self.tenant,self.customer=uuid.uuid4(),uuid.uuid4()
         self.actors={role:{'tenant_id':self.tenant,'staff_id':uuid.uuid4(),'role':role} for role in ('owner','manager','buyer','cashier')}
@@ -86,6 +119,265 @@ class PostgreSQLReceivingAcceptance(_PostgreSQLSettlementFixture):
         self.assertEqual(first['binding_id'],self.binding['binding_id']);self.assertEqual(self.provider.objects,before)
         self.assertEqual(self.provider.calls,[])
         self.assertNotIn('token',json.dumps(first))
+
+    def _extra_fixture_locations(self):
+        # Additional locations belong only to the injected fictional provider.
+        # Real database transactions, sessions, MFA and approval gates remain.
+        original=self.provider.location
+        def location(access,ident):
+            if ident in ('fixture-location-two','fixture-location-three'):
+                return {'id':ident,'name':'Fictional extra till','status':'ACTIVE','currency':'USD'}
+            return original(access,ident)
+        return patch.object(self.provider,'location',side_effect=location)
+
+    def _mapping_at(self,identity,location,variation='fixture-variation'):
+        preview=self.service.binding_preview(self.actor,{'identity':identity,
+            'variation_id':variation,'location_id':location})
+        body={'request_key':'mapping-'+uuid.uuid4().hex,'preview_hash':preview['preview_hash'],
+            'identity_confirmed':True,'reason':'Fictional owner reviewed this exact physical card'}
+        return preview,body
+
+    def _mapping_review_snapshot(self):
+        with self.database.transaction() as db:
+            return {table:db.execute('SELECT * FROM '+table+' WHERE tenant_id=%s ORDER BY '+order,
+                (self.tenant,)).fetchall() for table,order in (
+                    ('ss_receiving_bindings','id'),('ss_receiving_binding_previews','id'),
+                    ('ss_receiving_requests','request_key'),('ss_receiving_operations','id'),('ss_audit','id'))}
+
+    def test_binding_review_same_identity_is_read_only_and_preserves_original_approval(self):
+        # Real isolated PostgreSQL; fictional provider and seeded MFA only.
+        body={'request_key':'review-original-approval','preview_hash':self.preview['preview_hash'],
+              'identity_confirmed':True,'reason':'Fictional owner retains the original reviewed mapping'}
+        saved=self.service.approve_binding(self.actor,self.preview['preview_id'],body)
+        before=self._mapping_review_snapshot();provider_before=deepcopy(self.provider.objects)
+        with patch.object(self.provider,'access',side_effect=AssertionError('Read-only mapping review accessed the provider.')):
+            result=self.service.binding_review(self.actor,self.preview['preview_id'])
+            self.assertEqual(self.service.approve_binding(self.actor,self.preview['preview_id'],body),saved)
+        self.assertEqual(result,{'review_version':1,'preview_id':self.preview['preview_id'],
+            'preview_hash':self.preview['preview_hash'],'conflict_exists':False,'conflicts':[],'next_cursor':None})
+        self.assertEqual(self._mapping_review_snapshot(),before)
+        self.assertEqual(fingerprint(self.preview['facts']),self.preview['preview_hash'])
+        fresh_body=body|{'request_key':'review-fresh-original-approval'}
+        self.assertEqual(self.service.approve_binding(self.actor,self.preview['preview_id'],fresh_body)['binding_id'],self.binding['binding_id'])
+        self.assertEqual(self.provider.objects,provider_before);self.assertEqual(self.provider.calls,[])
+
+    def test_binding_review_pages_cross_location_conflicts_and_keeps_global_predicate(self):
+        with self._extra_fixture_locations():
+            for location in ('fixture-location-two','fixture-location-three'):
+                preview,body=self._mapping_at(self.original['identity'],location)
+                self.service.approve_binding(self.actor,preview['preview_id'],body)
+            identity=deepcopy(self.original['identity']);identity['name']='Different reviewed physical card'
+            preview,_=self._mapping_at(identity,'fixture-location-two')
+        before=self._mapping_review_snapshot();rows=[];cursor=None
+        with patch.object(self.provider,'access',side_effect=AssertionError('Mapping review fetched provider details.')):
+            for page in range(3):
+                result=self.service.binding_review(self.actor,preview['preview_id'],limit=1,cursor=cursor)
+                self.assertTrue(result['conflict_exists']);self.assertEqual(len(result['conflicts']),1)
+                rows.extend(result['conflicts']);cursor=result['next_cursor']
+                self.assertEqual(cursor is None,page==2)
+            empty=self.service.binding_review(self.actor,preview['preview_id'],limit=1,
+                cursor='ffffffff-ffff-ffff-ffff-ffffffffffff')
+        self.assertTrue(empty['conflict_exists']);self.assertEqual(empty['conflicts'],[]);self.assertIsNone(empty['next_cursor'])
+        self.assertEqual({row['location_id'] for row in rows},{'fixture-location','fixture-location-two','fixture-location-three'})
+        self.assertEqual(len({row['binding_id'] for row in rows}),3)
+        self.assertEqual([row['binding_id'] for row in rows],sorted(row['binding_id'] for row in rows))
+        for row in rows:
+            self.assertEqual(set(row),{'binding_id','version','identity','identity_hash','retained_sku','location_id','selling_cents'})
+            self.assertEqual(row['identity'],self.preview['facts']['identity']);self.assertEqual(row['retained_sku'],'000000001234')
+            self.assertEqual(row['version'],1);self.assertEqual(row['selling_cents'],self.preview['facts']['selling_cents'])
+        self.assertEqual(self._mapping_review_snapshot(),before)
+        self.service.revoke_binding(self.actor,rows[0]['binding_id'],{'request_key':'review-explicit-fixture-revoke',
+            'version':rows[0]['version'],'reason':'Fictional owner explicitly retires this fixture mapping'})
+        remaining=self.service.binding_review(self.actor,preview['preview_id'])
+        self.assertTrue(remaining['conflict_exists']);self.assertEqual(len(remaining['conflicts']),2)
+        self.assertNotIn(rows[0]['binding_id'],{row['binding_id'] for row in remaining['conflicts']})
+
+    def test_binding_review_matches_preview_provider_and_variation_scope(self):
+        identity=deepcopy(self.original['identity']);identity['name']='Different scoped card'
+        preview,_=self._mapping_at(identity,'fixture-location')
+        environment=self.preview['facts']['provider']['environment']
+        decoys=({'environment':'production' if environment=='sandbox' else 'sandbox'},
+                {'merchant_id':'other-fictional-merchant'}, {})
+        with self.database.transaction() as db:
+            for index,provider in enumerate(decoys):
+                db.execute('''INSERT INTO ss_receiving_bindings
+                    (tenant_id,id,identity,identity_hash,provider,variation_id,parent_id,sku,location_id,selling_cents,
+                     identity_anchor_hash,evidence_hash,approved_by,approval_reason)
+                    SELECT tenant_id,%s,identity,identity_hash,provider||%s::jsonb,%s,parent_id,sku,%s,selling_cents,
+                           identity_anchor_hash,evidence_hash,approved_by,approval_reason
+                    FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s''',
+                    (uuid.uuid4(),json.dumps(provider),'other-fictional-variation' if index==2 else 'fixture-variation',
+                     'fixture-scope-location-'+str(index),self.tenant,self.binding['binding_id']))
+        result=self.service.binding_review(self.actor,preview['preview_id'])
+        self.assertTrue(result['conflict_exists']);self.assertEqual([row['binding_id'] for row in result['conflicts']],[self.binding['binding_id']])
+
+    def test_binding_review_requires_current_owner_and_tenant_owned_unexpired_preview(self):
+        for role in ('manager','buyer','cashier'):
+            with self.subTest(role=role),self.assertRaises(ServiceError) as caught:
+                self.service.binding_review(self.actors[role],self.preview['preview_id'])
+            self.assertEqual(caught.exception.status,403)
+        foreign={'tenant_id':uuid.uuid4(),'staff_id':uuid.uuid4(),'role':'owner'}
+        with self.database.transaction() as db:
+            db.execute("INSERT INTO ss_tenants(id,slug,name) VALUES (%s,%s,'Other fictional review store')",
+                (foreign['tenant_id'],'review-'+foreign['tenant_id'].hex))
+            db.execute('''INSERT INTO ss_staff(id,tenant_id,email,password_hash,role)
+                VALUES (%s,%s,'foreign-owner@example.invalid','fictional-invalid-password','owner')''',
+                (foreign['staff_id'],foreign['tenant_id']))
+            foreign=fresh_mfa_actor(db,foreign)
+            foreign_identity=deepcopy(self.preview['facts']['identity']);foreign_identity['name']='Other tenant physical identity'
+            db.execute('''INSERT INTO ss_receiving_bindings
+                (tenant_id,id,identity,identity_hash,provider,variation_id,parent_id,sku,location_id,selling_cents,
+                 identity_anchor_hash,evidence_hash,approved_by,approval_reason)
+                SELECT %s,%s,%s::jsonb,%s,provider,variation_id,parent_id,sku,location_id,selling_cents,
+                       identity_anchor_hash,evidence_hash,%s,'Fictional other tenant reviewed its own mapping'
+                FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s''',
+                (foreign['tenant_id'],uuid.uuid4(),json.dumps(foreign_identity),source_line_id(foreign_identity),
+                 foreign['staff_id'],self.tenant,self.binding['binding_id']))
+        own=self.service.binding_review(self.actor,self.preview['preview_id'])
+        self.assertFalse(own['conflict_exists']);self.assertEqual(own['conflicts'],[])
+        with self.assertRaises(ReceivingError) as foreign_error:self.service.binding_review(foreign,self.preview['preview_id'])
+        with self.assertRaises(ReceivingError) as missing_error:self.service.binding_review(self.actor,uuid.uuid4())
+        with self.database.transaction() as db:
+            db.execute("UPDATE ss_receiving_binding_previews SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=%s AND id=%s",
+                (self.tenant,self.preview['preview_id']))
+        with self.assertRaises(ReceivingError) as expired_error:self.service.binding_review(self.actor,self.preview['preview_id'])
+        self.assertEqual({error.exception.code for error in (foreign_error,missing_error,expired_error)},{'CATALOG_REVIEW_UNAVAILABLE'})
+
+    def test_binding_review_rejects_changed_preview_and_inactive_owner_session(self):
+        with self.database.transaction() as db:
+            db.execute("UPDATE ss_receiving_binding_previews SET preview_hash=repeat('0',64) WHERE tenant_id=%s AND id=%s",
+                (self.tenant,self.preview['preview_id']))
+        with self.assertRaises(ReceivingError) as caught:self.service.binding_review(self.actor,self.preview['preview_id'])
+        self.assertEqual(caught.exception.code,'CATALOG_REVIEW_INVALID')
+        with self.database.transaction() as db:
+            db.execute('UPDATE ss_staff SET enabled=FALSE WHERE tenant_id=%s AND id=%s',(self.tenant,self.actor['staff_id']))
+        with self.assertRaises(ServiceError) as caught:self.service.binding_review(self.actor,self.preview['preview_id'])
+        self.assertEqual(caught.exception.status,403)
+        with self.database.transaction() as db:
+            db.execute('UPDATE ss_staff SET enabled=TRUE WHERE tenant_id=%s AND id=%s',(self.tenant,self.actor['staff_id']))
+            db.execute("UPDATE ss_sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=%s AND token_hash=%s",
+                (self.tenant,self.actor['session_hash']))
+        with self.assertRaises(ServiceError) as caught:self.service.binding_review(self.actor,self.preview['preview_id'])
+        self.assertEqual(caught.exception.status,401)
+
+    def test_binding_review_get_uses_database_owner_authority_without_provider_and_exposes_freshness(self):
+        # This seeded session checks the DB-clock read flag, not real MFA login.
+        token='fictional-mapping-review-owner-session';http_session_hash=digest(token)
+        with self.database.transaction() as db:
+            db.execute('''INSERT INTO ss_sessions(token_hash,tenant_id,staff_id,expires_at,mfa_version,mfa_authenticated_at)
+                SELECT %s,tenant_id,staff_id,expires_at,mfa_version,mfa_authenticated_at
+                FROM ss_sessions WHERE tenant_id=%s AND token_hash=%s''',
+                (http_session_hash,self.tenant,self.actor['session_hash']))
+        base='https://review.fixture.invalid'
+        app=create_app({'TESTING':True,'PUBLIC_BASE_URL':base,'APP_ENCRYPTION_KEYS':Fernet.generate_key().decode()},database=self.database)
+        app.extensions['ss_receiving'].provider=self.provider;client=app.test_client();headers={'Authorization':'Bearer '+token}
+        path='/api/receiving/catalog-bindings/previews/'+self.preview['preview_id']+'/review'
+        with patch.object(self.provider,'access',side_effect=AssertionError('Review GET accessed the provider.')):
+            for offset,fresh in ((-5,True),(-901,False),(60,False)):
+                with self.subTest(offset=offset):
+                    with self.database.transaction() as db:
+                        db.execute("UPDATE ss_sessions SET mfa_authenticated_at=clock_timestamp()+(%s*interval '1 second') WHERE tenant_id=%s AND token_hash=%s",
+                            (offset,self.tenant,http_session_hash))
+                    me=client.get('/api/me',base_url=base,headers=headers)
+                    self.assertEqual(me.status_code,200);self.assertTrue(me.json['mfa_authenticated'])
+                    self.assertIs(me.json['mfa_fresh'],fresh);self.assertNotIn('mfa_authenticated_at',me.json)
+                    result=client.get(path,base_url=base,headers=headers)
+                    self.assertEqual(result.status_code,200);self.assertFalse(result.json['conflict_exists'])
+                    self.assertEqual(result.json['preview_hash'],self.preview['preview_hash'])
+        self.assertEqual(client.get(path,base_url=base).status_code,401)
+
+    def test_owner_mapping_rejects_other_identity_across_locations(self):
+        # UNRUN: database acceptance case, not live Square acceptance.
+        identity=deepcopy(self.original['identity']);identity['name']='Different physical card'
+        before=deepcopy(self.provider.objects)
+        with self._extra_fixture_locations():
+            preview,body=self._mapping_at(identity,'fixture-location-two')
+            with self.assertRaises(ReceivingError) as caught:
+                self.service.approve_binding(self.actor,preview['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_IDENTITY_CONFLICT')
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_bindings WHERE tenant_id=%s',
+                (self.tenant,)).fetchone()['n'],1)
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_requests WHERE tenant_id=%s AND request_key=%s',
+                (self.tenant,body['request_key'])).fetchone()['n'],0)
+        self.assertEqual(self.provider.objects,before);self.assertEqual(self.provider.calls,[])
+
+    def test_owner_mapping_allows_same_identity_at_another_location(self):
+        # One physical variation can be stocked at multiple store locations.
+        before=deepcopy(self.provider.objects)
+        with self._extra_fixture_locations():
+            preview,body=self._mapping_at(self.original['identity'],'fixture-location-two')
+            result=self.service.approve_binding(self.actor,preview['preview_id'],body)
+            self.assertEqual(self.service.approve_binding(self.actor,preview['preview_id'],body),result)
+        self.assertTrue(result['approved']);self.assertNotEqual(result['binding_id'],self.binding['binding_id'])
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_bindings WHERE tenant_id=%s',
+                (self.tenant,)).fetchone()['n'],2)
+        self.assertEqual(self.provider.objects,before);self.assertEqual(self.provider.calls,[])
+
+    def test_owner_mapping_returns_identity_conflict_before_unique_constraint(self):
+        identity=deepcopy(self.original['identity']);identity['name']='Another physical card'
+        preview,body=self._mapping_at(identity,'fixture-location')
+        with self.assertRaises(ReceivingError) as caught:
+            self.service.approve_binding(self.actor,preview['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_IDENTITY_CONFLICT')
+        self.assertEqual(self.provider.calls,[])
+
+    def test_saved_owner_approval_replays_after_reviewed_identity_replacement(self):
+        body={'request_key':'approval-before-replacement','preview_hash':self.preview['preview_hash'],
+            'identity_confirmed':True,'reason':'Fictional owner reviewed the original mapping'}
+        first=self.service.approve_binding(self.actor,self.preview['preview_id'],body)
+        self.service.revoke_binding(self.actor,first['binding_id'],{
+            'request_key':'reviewed-mapping-revocation','version':first['version'],
+            'reason':'Fictional owner explicitly retires the original mapping'})
+        identity=deepcopy(self.original['identity']);identity['name']='Reviewed replacement identity'
+        with self._extra_fixture_locations():
+            preview,replacement_body=self._mapping_at(identity,'fixture-location-two')
+            replacement=self.service.approve_binding(self.actor,preview['preview_id'],replacement_body)
+        self.assertNotEqual(replacement['binding_id'],first['binding_id'])
+        query='SELECT id,version,identity_hash,revoked_at,location_id FROM ss_receiving_bindings WHERE tenant_id=%s ORDER BY id'
+        with self.database.transaction() as db:
+            before=db.execute(query,(self.tenant,)).fetchall()
+        self.assertEqual(len(before),2)
+        self.assertEqual(sum(row['revoked_at'] is None for row in before),1)
+        # This is saved outcome retrieval, not a fresh mapping approval. It must
+        # neither reclassify identity nor touch provider access or replacement.
+        with patch.object(self.provider,'access',side_effect=AssertionError('Saved approval re-entered provider access.')):
+            self.assertEqual(self.service.approve_binding(self.actor,self.preview['preview_id'],body),first)
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute(query,(self.tenant,)).fetchall(),before)
+        self.assertEqual(self.provider.calls,[])
+
+    def test_concurrent_owner_mappings_keep_one_identity_across_locations(self):
+        # Fresh unbound fixture variation. Existing anchor mapping is untouched.
+        variation=deepcopy(self.provider.objects['fixture-variation'])
+        variation['id']='fixture-unbound-variation'
+        variation['item_variation_data']['sku']='987654321098'
+        self.provider.objects[variation['id']]=variation
+        self.provider.objects[variation['item_variation_data']['item_id']]['item_data']['variations'].append(deepcopy(variation))
+        before=deepcopy(self.provider.objects)
+        identities=[deepcopy(self.original['identity']) for _ in range(2)]
+        identities[0]['name']='First physical identity';identities[1]['name']='Second physical identity'
+        with self._extra_fixture_locations():
+            requests=[self._mapping_at(identity,location,variation['id']) for identity,location in
+                zip(identities,('fixture-location-two','fixture-location-three'))]
+            barrier=threading.Barrier(2);original=self.provider.assert_skus
+            def checked(access,targets):
+                original(access,targets);barrier.wait(timeout=10)
+            def approve(value):
+                preview,body=value
+                try:return self.service.approve_binding(self.actor,preview['preview_id'],body)
+                except ReceivingError as exc:return {'error':exc.code}
+            with patch.object(self.provider,'assert_skus',side_effect=checked):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures=[pool.submit(approve,value) for value in requests]
+                    results=[future.result(timeout=20) for future in futures]
+        self.assertEqual(sum(result.get('approved') is True for result in results),1)
+        self.assertEqual(sum(result.get('error')=='CATALOG_IDENTITY_CONFLICT' for result in results),1)
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_bindings WHERE tenant_id=%s AND variation_id=%s',
+                (self.tenant,variation['id'])).fetchone()['n'],1)
+        self.assertEqual(self.provider.objects,before);self.assertEqual(self.provider.calls,[])
 
     def test_global_and_tenant_write_switches_default_off_before_provider_admission(self):
         plan=self.plan();self.service.writes_enabled=False;access_before=len(self.provider.access_calls)
@@ -239,3 +531,219 @@ class PostgreSQLReceivingAcceptance(_PostgreSQLSettlementFixture):
             with self.subTest(statement=statement),self.assertRaises(psycopg.errors.RaiseException):
                 with self.database.transaction() as db:db.execute(statement,(self.tenant,))
         self.database.migrate();self.assertTrue(self.database.ready());self.assertEqual(len(self.provider.calls),1)
+
+    def test_physical_ownership_preview_rejects_partial_unknown_or_inconsistent_facts(self):
+        data,_,_=self._physical_mapping();before=len(self.provider.access_calls)
+        invalid=[data|{'physical_ownership_version':value} for value in (None,True,1,2.0,3,'2')]
+        invalid.extend((data|{'physical_facts':None},data|{'physical_facts':{'card_name':'Incomplete'}},
+                        data|{'physical_facts':data['physical_facts']|{'card_name':'Other card'}},
+                        data|{'physical_facts':data['physical_facts']|{'unknown':'Extra'}}))
+        for body in invalid:
+            with self.subTest(body=body),self.assertRaises(ReceivingError) as caught:
+                self.service.binding_preview(self.actor,body)
+            self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
+        self.assertEqual(len(self.provider.access_calls),before);self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_legacy_mapping_is_not_silently_upgraded(self):
+        _,preview,body=self._physical_mapping()
+        review=self.service.binding_review(self.actor,preview['preview_id'])
+        self.assertTrue(review['conflict_exists']);self.assertEqual(review['conflicts'][0]['binding_id'],self.binding['binding_id'])
+        self.assertEqual(review['conflicts'][0]['identity_hash'],preview['facts']['identity_hash'])
+        with self.assertRaises(ReceivingError) as caught:self.service.approve_binding(self.actor,preview['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_IDENTITY_CONFLICT')
+        with self.database.transaction() as db:
+            rows=db.execute('SELECT physical_ownership,revoked_at FROM ss_receiving_bindings WHERE tenant_id=%s',(self.tenant,)).fetchall()
+        self.assertEqual(len(rows),1);self.assertIsNone(rows[0]['physical_ownership']);self.assertIsNone(rows[0]['revoked_at'])
+        self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_explicit_replacement_keeps_original_sku_and_history(self):
+        original_catalog=deepcopy(self.provider.objects)
+        data,preview,body,result=self._approve_physical_mapping()
+        self.assertEqual(preview['facts']['physical_ownership'],ownership_from_card(data['physical_facts']))
+        self.assertEqual(self.service.approve_binding(self.actor,preview['preview_id'],body),result)
+        self.assertFalse(self.service.binding_review(self.actor,preview['preview_id'])['conflict_exists'])
+        with self.database.transaction() as db:
+            old=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,self.binding['binding_id'])).fetchone()
+            new=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,result['binding_id'])).fetchone()
+        self.assertIsNotNone(old['revoked_at']);self.assertIsNone(old['physical_ownership'])
+        self.assertEqual(new['physical_ownership'],preview['facts']['physical_ownership'])
+        self.assertEqual(new['sku'],old['sku']);self.assertEqual(new['identity_hash'],old['identity_hash'])
+        self.assertEqual(self.provider.objects,original_catalog);self.assertEqual(self.provider.calls,[])
+        self.assertEqual(self.service.readiness(self.actor)['physical_ownership_versions'],[1,2]);self.assertTrue(self.database.ready())
+
+    def test_physical_ownership_saved_legacy_approval_still_replays_after_replacement(self):
+        body={'request_key':'legacy-approval-to-replay','preview_hash':self.preview['preview_hash'],
+              'identity_confirmed':True,'reason':'Fictional saved original owner approval for compatibility'}
+        original=self.service.approve_binding(self.actor,self.preview['preview_id'],body)
+        self._approve_physical_mapping()
+        with patch.object(self.provider,'access',side_effect=AssertionError('Saved approval re-read the provider.')):
+            self.assertEqual(self.service.approve_binding(self.actor,self.preview['preview_id'],body),original)
+        self.assertEqual(original['binding_id'],self.binding['binding_id']);self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_receiving_round_trip_keeps_source_budget_and_exact_sku(self):
+        original_manifest=deepcopy(self.manifest);catalog=deepcopy(self.provider.objects)
+        _,preview,_,binding=self._approve_physical_mapping();body=self._physical_plan(preview['facts']['physical_ownership'])
+        plan=self.plan(body);self.assertEqual(plan['physical_ownership_version'],2)
+        target=plan['targets'][0]
+        self.assertEqual(target['physical_ownership'],body['lines'][0]['physical_ownership'])
+        self.assertEqual(target['source_line_key'],body['lines'][0]['source_line_key'])
+        self.assertEqual(target['identity_hash'],source_line_id(self.original['identity']))
+        self.assertEqual(target['target_sku'],'000000001234');self.assertEqual(target['binding_id'],binding['binding_id'])
+        result=self.commit(plan)
+        self.assertEqual(result['state'],'received');self.assertEqual(result['receipt']['physical_ownership_version'],2)
+        self.assertEqual(result['receipt']['confirmed_targets'][0]['physical_ownership'],target['physical_ownership'])
+        self.assertEqual(result['receipt']['selected_quantities'],{body['lines'][0]['source_line_key']:2})
+        self.assertEqual(len(self.provider.calls),1);self.assertEqual(self.provider.objects,catalog);self.assertEqual(self.manifest,original_manifest)
+
+    def test_physical_ownership_new_plan_requires_explicit_versioned_binding(self):
+        data,_,_=self._physical_mapping();body=self._physical_plan(ownership_from_card(data['physical_facts']))
+        with self.assertRaises(ReceivingError) as caught:self.plan(body)
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED');self.assertEqual(self.provider.calls,[])
+        self._approve_physical_mapping()
+        legacy=plan_data(self.claim);legacy['request_key']='new-unversioned-plan'
+        with self.assertRaises(ReceivingError) as caught:self.plan(legacy)
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_completed_legacy_receiving_remains_exact_after_replacement(self):
+        plan=self.plan();body=self.terms(plan,confirmed=True,excluded_not_received_ack=True)
+        result=self.commit(plan,body=body);receipt=deepcopy(result['receipt'])
+        self._approve_physical_mapping()
+        with patch.object(self.provider,'access',side_effect=AssertionError('Completed replay accessed the provider.')):
+            self.assertEqual(self.service.commit(self.actor,plan['receiving_id'],body),result)
+            self.assertEqual(self.service.get(self.actor,plan['receiving_id'])['receipt'],receipt)
+        self.assertNotIn('physical_ownership_version',receipt);self.assertEqual(len(self.provider.calls),1)
+
+    def test_physical_ownership_cross_location_review_compares_complete_record(self):
+        _,preview,_,_=self._approve_physical_mapping()
+        with self._extra_fixture_locations():
+            _,second,body=self._physical_mapping(location='fixture-location-two')
+            self.assertFalse(self.service.binding_review(self.actor,second['preview_id'])['conflict_exists'])
+            self.service.approve_binding(self.actor,second['preview_id'],body)
+            identity=deepcopy(self.original['identity']);identity['name']='Different physical card'
+            _,other,body=self._physical_mapping(identity=identity)
+            review=self.service.binding_review(self.actor,other['preview_id'],limit=1)
+            self.assertTrue(review['conflict_exists']);self.assertIsNotNone(review['next_cursor'])
+            self.assertEqual(review['conflicts'][0]['physical_ownership'],preview['facts']['physical_ownership'])
+            with self.assertRaises(ReceivingError) as caught:self.service.approve_binding(self.actor,other['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_IDENTITY_CONFLICT');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_binding_is_immutable_and_changed_preview_is_rejected(self):
+        _,preview,_,binding=self._approve_physical_mapping()
+        with self.assertRaises(psycopg.errors.RaiseException):
+            with self.database.transaction() as db:
+                db.execute('UPDATE ss_receiving_bindings SET physical_ownership=NULL WHERE tenant_id=%s AND id=%s',(self.tenant,binding['binding_id']))
+        _,fresh,body=self._physical_mapping()
+        with self.database.transaction() as db:
+            db.execute("UPDATE ss_receiving_binding_previews SET facts=jsonb_set(facts,'{snapshot_hash}',to_jsonb(repeat('0',64))) WHERE tenant_id=%s AND id=%s",(self.tenant,fresh['preview_id']))
+        with self.assertRaises(ReceivingError) as caught:self.service.approve_binding(self.actor,fresh['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_REVIEW_INVALID');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_price_template_cannot_drop_to_legacy_semantics(self):
+        from hosted.receiving_templates import PriceTemplates
+        _,_,_,binding=self._approve_physical_mapping()
+        with self.database.transaction() as db:
+            row=db.execute('SELECT * FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,binding['binding_id'])).fetchone()
+        templates=PriceTemplates(self.database,self.provider,self.service)
+        facts,_=templates._facts(self.actor,row,'fixture-prefix')
+        self.assertEqual(facts['physical_ownership'],row['physical_ownership'])
+        self.assertEqual(facts['binding_evidence_hash'],row['evidence_hash'])
+        self.assertEqual(facts['binding_version'],row['version'])
+        self.assertFalse(facts['receiving_enabled']);self.assertFalse(facts['new_parent_creation'])
+        changed=deepcopy(row);changed['physical_ownership']['facts']['printing']='unreviewed printing'
+        with patch.object(self.provider,'access',side_effect=AssertionError('Malformed ownership accessed provider.')):
+            with self.assertRaises(ReceivingError) as caught:templates._facts(self.actor,changed,'fixture-prefix')
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_removing_preview_record_cannot_downgrade_approval(self):
+        _,preview,body=self._physical_mapping()
+        with self.database.transaction() as db:
+            db.execute("UPDATE ss_receiving_binding_previews SET facts=facts-'physical_ownership' WHERE tenant_id=%s AND id=%s",(self.tenant,preview['preview_id']))
+        with patch.object(self.provider,'access',side_effect=AssertionError('Inconsistent preview reached provider.')):
+            with self.assertRaises(ReceivingError) as caught:self.service.approve_binding(self.actor,preview['preview_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_REVIEW_INVALID');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_revision_cannot_downgrade_original_operation(self):
+        _,preview,_,_=self._approve_physical_mapping();plan=self.plan(self._physical_plan(preview['facts']['physical_ownership']))
+        body=plan_data(self.claim)|{'request_key':'downgrade-original-plan','revision':plan['revision']}
+        with patch.object(self.provider,'access',side_effect=AssertionError('Protocol downgrade reached provider.')):
+            with self.assertRaises(ReceivingError) as caught:self.service.revise(self.actor,plan['receiving_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
+        self.assertEqual(self.service.get(self.actor,plan['receiving_id'])['plan_hash'],plan['plan_hash']);self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_revision_cannot_implicitly_upgrade_legacy_operation(self):
+        plan=self.plan();_,preview,_,_=self._approve_physical_mapping()
+        body=self._physical_plan(preview['facts']['physical_ownership'])|{'request_key':'upgrade-original-plan','revision':plan['revision']}
+        with patch.object(self.provider,'access',side_effect=AssertionError('Implicit protocol upgrade reached provider.')):
+            with self.assertRaises(ReceivingError) as caught:self.service.revise(self.actor,plan['receiving_id'],body)
+        self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED');self.assertEqual(self.provider.calls,[])
+
+    def test_physical_ownership_same_protocol_revision_replays_saved_result(self):
+        _,preview,_,_=self._approve_physical_mapping();body=self._physical_plan(preview['facts']['physical_ownership'])
+        plan=self.plan(body);revised=deepcopy(body)|{'request_key':'physical-same-protocol-revision','revision':plan['revision']}
+        result=self.service.revise(self.actor,plan['receiving_id'],revised)
+        self.assertEqual(result['physical_ownership_version'],2);self.assertEqual(result['revision'],plan['revision']+1)
+        with patch.object(self.provider,'access',side_effect=AssertionError('Saved revision replay reached provider.')):
+            self.assertEqual(self.service.revise(self.actor,plan['receiving_id'],revised),result)
+        self.assertEqual(self.provider.calls,[])
+
+    def test_catalog_games_choices_are_owner_only_and_do_not_call_provider(self):
+        before=len(self.provider.access_calls)
+        with patch.object(self.provider,'access',side_effect=AssertionError('Game choices accessed Square.')):
+            result=self.service.catalog_games(self.actor)
+            self.assertEqual(result['catalog_games_version'],1);self.assertTrue(result['supports_additional_games'])
+            self.assertEqual({row['id'] for row in result['games']},{'pokemon','magic','riftbound','onepiece','unionarena','gundam','sports'})
+            self.assertEqual(next(row['label'] for row in result['games'] if row['id']=='onepiece'),'One Piece')
+            for role in ('manager','buyer','cashier'):
+                for actor in (self.actors[role],self.actors[role]|{'role':'owner'}):
+                    with self.subTest(role=role),self.assertRaises(ServiceError) as caught:self.service.catalog_games(actor)
+                    self.assertEqual(caught.exception.status,403)
+        self.assertEqual(len(self.provider.access_calls),before);self.assertEqual(self.provider.calls,[])
+
+    def test_catalog_games_resolve_intake_aliases_and_preserve_custom_labels(self):
+        aliases={'Pokémon TCG':'pokemon','MTG':'magic','Riftbound TCG':'riftbound','One Piece':'onepiece',
+                 'Union Arena':'unionarena','Gundam Card Game':'gundam','Sports Cards':'sports'}
+        for name,key in aliases.items():
+            with self.subTest(name=name):self.assertEqual(self.service.catalog_games(self.actor,name)['resolved']['game'],key)
+        first=self.service.catalog_games(self.actor,'A&B')['resolved'];second=self.service.catalog_games(self.actor,'A B')['resolved']
+        self.assertEqual(first['game'],'other:a-b');self.assertEqual(first['game'],second['game'])
+        self.assertEqual(first['game_label'],'A&B');self.assertEqual(second['game_label'],'A B')
+        self.assertNotEqual(ownership_from_card(first|{'card_name':'Same physical description'}),ownership_from_card(second|{'card_name':'Same physical description'}))
+        decomposed=self.service.catalog_games(self.actor,'Cafe\u0301 Game')['resolved']
+        self.assertEqual(decomposed['game_label'],'Café Game');self.assertEqual(self.provider.calls,[])
+
+    def test_catalog_games_invalid_names_stop_without_creating_mapping_or_request(self):
+        for name in ('','  ','bad\x00name','bad\nname','\ud800','x'*101,'x'*501,1,False,[],{}):
+            with self.subTest(name_type=type(name).__name__),self.assertRaises(ServiceError) as caught:
+                self.service.catalog_games(self.actor,name)
+            self.assertEqual(caught.exception.status,400)
+        with self.assertRaises(ServiceError):self.service.catalog_games(self.actor,'x'*100)
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_bindings WHERE tenant_id=%s',(self.tenant,)).fetchone()['n'],1)
+            self.assertEqual(db.execute("SELECT count(*) AS n FROM ss_receiving_requests WHERE tenant_id=%s AND action='binding_revoke'",(self.tenant,)).fetchone()['n'],0)
+        self.assertEqual(self.provider.calls,[])
+
+    def test_owner_mapping_retirement_requires_fresh_mfa_without_provider_mutation(self):
+        body={'request_key':'fresh-proof-retirement','version':self.binding['version'],'reason':'Fictional owner reviewed this mapping retirement'}
+        with self.database.transaction() as db:
+            db.execute("UPDATE ss_sessions SET mfa_authenticated_at=clock_timestamp()-interval '16 minutes' WHERE tenant_id=%s AND token_hash=%s",(self.tenant,self.actor['session_hash']))
+        with self.assertRaises(ServiceError) as caught:self.service.revoke_binding(self.actor,self.binding['binding_id'],body)
+        self.assertEqual(caught.exception.status,403)
+        with self.database.transaction() as db:
+            row=db.execute('SELECT revoked_at FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,self.binding['binding_id'])).fetchone()
+            self.assertIsNone(row['revoked_at'])
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_requests WHERE tenant_id=%s AND request_key=%s',(self.tenant,body['request_key'])).fetchone()['n'],0)
+        self.assertEqual(self.provider.calls,[])
+
+    def test_owner_mapping_retirement_retry_replays_same_result_after_proof_expires(self):
+        body={'request_key':'same-original-retirement','version':self.binding['version'],'reason':'Fictional owner explicitly retires this old mapping'}
+        before=len(self.provider.access_calls);result=self.service.revoke_binding(self.actor,self.binding['binding_id'],body)
+        with self.database.transaction() as db:
+            original_revocation=db.execute('SELECT revoked_at,revoke_reason FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,self.binding['binding_id'])).fetchone()
+            self.assertIsNotNone(original_revocation['revoked_at']);self.assertIn(body['reason'],original_revocation['revoke_reason'])
+            db.execute("UPDATE ss_sessions SET mfa_authenticated_at=clock_timestamp()-interval '16 minutes' WHERE tenant_id=%s AND token_hash=%s",(self.tenant,self.actor['session_hash']))
+        self.assertEqual(self.service.revoke_binding(self.actor,self.binding['binding_id'],body),result)
+        with self.database.transaction() as db:
+            row=db.execute('SELECT revoked_at,revoke_reason FROM ss_receiving_bindings WHERE tenant_id=%s AND id=%s',(self.tenant,self.binding['binding_id'])).fetchone()
+            self.assertEqual(row,original_revocation)
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM ss_receiving_requests WHERE tenant_id=%s AND request_key=%s',(self.tenant,body['request_key'])).fetchone()['n'],1)
+        self.assertEqual(len(self.provider.access_calls),before);self.assertEqual(self.provider.calls,[])

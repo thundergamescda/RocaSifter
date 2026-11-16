@@ -3,6 +3,8 @@ import copy
 import re
 import unicodedata
 import uuid
+from catalog_physical_ownership import validate_ownership,identity_for_ownership,require_identity
+from intake_manifest import source_line_id
 from hosted_labels import fingerprint
 
 HASH=re.compile('[a-f0-9]{64}')
@@ -25,8 +27,27 @@ def uid(value):
     return value
 
 
+def _ownership(row):
+    checked=validate_ownership(row.get('physical_ownership'))
+    identity=identity_for_ownership(checked)
+    if source_line_id(identity)!=hashed(row.get('identity_hash')):raise ValueError('Physical ownership identity changed.')
+    if 'identity' in row:require_identity(checked,row['identity'])
+    return checked
+
+
 def catalog_evidence(value,targets):
+    reviews=[row['review_line_id'] for row in targets]
+    if len(reviews)!=len(set(reviews)):raise ValueError('Catalog targets contain duplicate review IDs.')
     creating={row['review_line_id']:row for row in targets if row['action']=='create_price'}
+    ownership_v2='physical_ownership_version' in value
+    if ownership_v2 and (type(value['physical_ownership_version']) is not int or value['physical_ownership_version']!=2):
+        raise ValueError('Unsupported physical ownership protocol.')
+    ownerships={}
+    for review,target in creating.items():
+        if ownership_v2:
+            ownerships[review]=_ownership(target)
+            if type(target.get('template_version')) is not int or not 1<=target['template_version']<=2**63-1:raise ValueError('Physical price template changed.')
+        elif 'physical_ownership' in target:raise ValueError('Legacy catalog targets cannot assert physical ownership.')
     result={key:copy.deepcopy(value.get(key)) for key in CATALOG_FIELDS}
     if type(result['catalog_confirmed']) is not bool:raise ValueError('Catalog proof status is missing.')
     if not result['catalog_confirmed']:
@@ -43,20 +64,28 @@ def catalog_evidence(value,targets):
     if hashed(result['catalog_proof_hash'])!=fingerprint(proof):raise ValueError('Catalog proof hash changed.')
     if not isinstance(resolutions,list) or not 1<=len(resolutions)<=100 or hashed(result['catalog_resolutions_hash'])!=fingerprint(resolutions):raise ValueError('Catalog resolution hash changed.')
     fields={'review_line_id','review_line_ids','identity_hash','target_sku','parent_id','selling_cents','template_id','template_version','variation_id','currency','binding_id','binding_version','binding_evidence_hash'}
+    if ownership_v2:fields=fields|{'physical_ownership'}
     seen=set();variations={target['variation_id'] for target in targets if target['action']=='reuse_existing'};bindings=set()
     for row in resolutions:
         if not isinstance(row,dict) or set(row)!=fields:raise ValueError('Unknown catalog resolution fields.')
         representative=uid(row['review_line_id']);aliases=row['review_line_ids']
+        ownership=_ownership(row) if ownership_v2 else None
         if not isinstance(aliases,list) or not aliases or len(aliases)>1000 or representative not in aliases or len(set(aliases))!=len(aliases):raise ValueError('Invalid catalog review aliases.')
-        if type(row['selling_cents']) is not int or type(row['template_version']) is not int or row['template_version']<0 or row['currency']!='USD':raise ValueError('Catalog price/template changed.')
+        if (type(row['selling_cents']) is not int or type(row['template_version']) is not int or
+                row['template_version']<(1 if ownership_v2 else 0) or
+                ownership_v2 and row['template_version']>2**63-1 or row['currency']!='USD'):raise ValueError('Catalog price/template changed.')
         variation=provider_id(row['variation_id']);provider_id(row['parent_id']);uid(row['template_id']);uid(row['binding_id']);hashed(row['binding_evidence_hash'])
-        if variation.startswith('#') or variation in variations or row['binding_id'] in bindings or type(row['binding_version']) is not int or row['binding_version']!=1:raise ValueError('Catalog target was not resolved uniquely.')
+        if (variation.startswith('#') or variation in variations or row['binding_id'] in bindings or type(row['binding_version']) is not int
+                or (not 1<=row['binding_version']<=2**63-1 if ownership_v2 else row['binding_version']!=1)):raise ValueError('Catalog target was not resolved uniquely.')
         variations.add(variation);bindings.add(row['binding_id'])
         family=None
         for alias in aliases:
             uid(alias);target=creating.get(alias)
             if alias in seen or target is None or any(row[key]!=target[key] for key in ('identity_hash','target_sku','parent_id','selling_cents','template_id','template_version')):raise ValueError('Catalog alias differs from frozen source family.')
             current_family=tuple(target[key] for key in ('binding_id','binding_version','binding_evidence_hash','source_sku','template_evidence_hash'))
+            if ownership_v2:
+                if ownerships[alias]!=ownership:raise ValueError('Catalog alias physical ownership changed.')
+                current_family+=(ownerships[alias],)
             if family is not None and family!=current_family:raise ValueError('Coalesced rows do not share the same immutable source family.')
             family=current_family
             seen.add(alias)

@@ -116,7 +116,7 @@ def issue_session(db, staff, *, mfa_version=None):
                   VALUES (%s,%s,%s,now()+interval '8 hours',%s,CASE WHEN %s::BIGINT IS NULL THEN NULL ELSE now() END)''',
                (digest(token), staff['tenant_id'], staff['id'], mfa_version, mfa_version))
     audit(db, staff['tenant_id'], staff['id'], 'staff-login', staff['id'], {'mfa': mfa_version is not None})
-    return token, {'store': staff['slug'], 'store_name': staff.get('name', staff['slug']),
+    return token, {'tenant_id': str(staff['tenant_id']), 'store': staff['slug'], 'store_name': staff.get('name', staff['slug']),
                    'role': staff['role'], 'expires_in': 28800, 'mfa_authenticated': mfa_version is not None}
 
 

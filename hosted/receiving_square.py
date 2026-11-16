@@ -18,7 +18,9 @@ class ReceivingSquare:
     def assert_current(self, db, tenant, access):
         row=db.execute('SELECT * FROM ss_square_connections WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()
         try:
-            if not row or row['revoked_at'] or any(row[key]!=access.proof[key] for key in ('merchant_id','environment')):raise ValueError()
+            if not row or row['revoked_at'] or row.get('pending_notice_cursor') is not None or any(row[key]!=access.proof[key] for key in ('merchant_id','environment')):raise ValueError()
+            generation=str(row['authorization_generation']) if row.get('authorization_generation') is not None else None
+            if generation!=access.generation:raise ValueError()
             tokens=json.loads(self.square.cipher.decrypt(row['encrypted_tokens'].encode()))
             if not hmac.compare_digest(tokens['access_token'],access.token):raise ValueError()
             if access.proof['application_id']!=self.square.config['SQUARE_APPLICATION_ID']:raise ValueError()
@@ -97,7 +99,7 @@ class ReceivingSquare:
                 seen[ident]=row;found[sku.casefold()].add(ident)
                 if len(found[sku.casefold()])>1:raise ReceivingError('An identical SKU belongs to multiple Square variations.',code='SKU_COLLISION_REVIEW_REQUIRED')
             cursor=result.get('cursor')
-            if not cursor:
+            if cursor is None or (isinstance(cursor,str) and cursor==''):
                 if any(found[key] != ({ident} if ident else set()) for key,ident in expected.items()):
                     raise ReceivingError('The retained SKU is missing or belongs to another variation.',code='SKU_COLLISION_REVIEW_REQUIRED')
                 return
@@ -153,7 +155,7 @@ class ReceivingSquare:
                 changes[ident]=row
                 if len(changes)>2*len(expected):raise ReceivingError('Duplicate history references require review.',code='PROVIDER_OUTCOME_UNKNOWN')
             cursor=result.get('cursor')
-            if not cursor:return list(changes.values())
+            if cursor is None or (isinstance(cursor,str) and cursor==''):return list(changes.values())
             if not isinstance(cursor,str) or not 1<=len(cursor)<=4096 or cursor in cursors:
                 raise ReceivingError('Inventory history pagination is inconsistent.',code='PROVIDER_OUTCOME_UNKNOWN')
             cursors.add(cursor);query=dict(query,cursor=cursor)

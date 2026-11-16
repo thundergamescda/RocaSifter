@@ -1,5 +1,6 @@
 'use strict';
 let csrfToken='',portalEpoch=0,portalMe=null,authTransitionBusy=false;
+let portalSquare=null,squareStatusRequest=0,squareLoading=false,squareConnectBusy=false;
 const byId=id=>document.getElementById(id);
 async function api(path,data){
  const requestEpoch=portalEpoch;
@@ -15,6 +16,43 @@ async function api(path,data){
  return result;
 }
 function clearInvitation(){byId('staffInvitationLink').value='';byId('staffInvitationResult').hidden=true}
+function canConnectSquare(){
+ return !authTransitionBusy&&!byId('workspace').hidden&&portalMe?.role==='owner'&&!squareLoading&&!squareConnectBusy&&
+  portalSquare?.oauth_configured===true&&portalSquare.connection_status!=='environment_mismatch';
+}
+function squareControls(){
+ byId('connectSquare').disabled=!canConnectSquare();
+ byId('connectSquare').textContent=portalSquare?.connected?'Reconnect Square':'Connect Square';
+ byId('refreshSquare').disabled=!portalMe||byId('workspace').hidden||authTransitionBusy||squareLoading||squareConnectBusy;
+}
+function clearSquareStatus(message='Sign in to check the Square connection.'){
+ ++squareStatusRequest;portalSquare=null;squareLoading=false;squareConnectBusy=false;
+ byId('squareStatus').textContent=message;squareControls();
+}
+function checkedSquareStatus(value){
+ const states=['not_connected','environment_mismatch','revocation_pending','revoked','connected'];
+ if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.connected!=='boolean'||
+  typeof value.oauth_configured!=='boolean'||!states.includes(value.connection_status)||
+  !['sandbox','production'].includes(value.environment)||value.connected!==(value.connection_status==='connected')||
+  (value.message!==undefined&&typeof value.message!=='string'))throw Error('Square status could not be confirmed.');
+ return value;
+}
+async function refreshSquareStatus(epoch=portalEpoch){
+ if(epoch!==portalEpoch||!portalMe||byId('workspace').hidden||squareConnectBusy)return;
+ const sequence=++squareStatusRequest;portalSquare=null;squareLoading=true;
+ byId('squareStatus').textContent='Checking connection…';squareControls();
+ try{
+  const square=checkedSquareStatus(await api('/api/square/status'));
+  if(epoch!==portalEpoch||sequence!==squareStatusRequest)return;
+  portalSquare=square;
+  byId('squareStatus').textContent=square.message||(square.connected?'A Square authorization is saved for '+square.environment+'. Checkout is not enabled.':square.oauth_configured?'The store owner can authorize this store’s Square account.':'Square application setup is required before store authorization can begin.');
+ }catch(error){
+  if(epoch!==portalEpoch||sequence!==squareStatusRequest)return;
+  byId('squareStatus').textContent=error.status?'Square status could not be checked. '+error.message+' Choose Check again to retry.':'Square status could not be confirmed. Check your connection, then choose Check again.';
+ }finally{
+  if(epoch===portalEpoch&&sequence===squareStatusRequest){squareLoading=false;squareControls()}
+ }
+}
 function notifyAuthTransition(){
  try{localStorage.setItem('ss-auth-epoch',crypto.randomUUID())}catch{}
  try{const channel=new BroadcastChannel('ss-auth-transition');channel.postMessage({changed:true});channel.close()}catch{}
@@ -22,6 +60,7 @@ function notifyAuthTransition(){
 function beginAuthTransition(){
  if(authTransitionBusy)return false;
  authTransitionBusy=true;
+ clearSquareStatus('Check again to confirm your Square connection.');
  notifyAuthTransition();
  for(const id of ['signin','workspace','invitation','pilotSetup','mfaSignin','accountSecurity'])byId(id).inert=true;
  return true;
@@ -29,11 +68,13 @@ function beginAuthTransition(){
 function endAuthTransition(){
  authTransitionBusy=false;
  for(const id of ['signin','workspace','invitation','pilotSetup','mfaSignin','accountSecurity'])byId(id).inert=false;
+ squareControls();
 }
 function signedOutView(){
  ++portalEpoch;portalMe=null;csrfToken='';clearInvitation();byId('staffList').replaceChildren();byId('staffPanel').hidden=true;
  if(typeof clearMfaSecrets==='function')clearMfaSecrets();byId('mfaSignin').hidden=true;byId('accountSecurity').hidden=true;
  byId('storeName').textContent='';byId('workspace').hidden=true;byId('signin').hidden=false;
+ clearSquareStatus();byId('workspaceStatus').textContent='';
  for(const input of document.querySelectorAll('input[type="password"]'))input.value='';
  byId('inviteStaffForm').reset();byId('staffStatus').textContent='';
  byId('inviteStaffForm').querySelector('button').disabled=false;byId('refreshStaff').disabled=false;
@@ -44,6 +85,7 @@ function showAccountForm(target){
  ++portalEpoch;
  if(typeof clearMfaSecrets==='function')clearMfaSecrets();byId('mfaSignin').hidden=true;byId('accountSecurity').hidden=true;
  byId('workspace').hidden=true;
+ clearSquareStatus();
  for(const id of ['signin','invitation','pilotSetup'])byId(id).hidden=id!==target;
  for(const id of ['acceptInviteForm','pilotSetupForm']){byId(id).reset();byId(id).querySelector('button').disabled=false}
  byId('inviteStatus').textContent=byId('setupStatus').textContent='';
@@ -55,10 +97,7 @@ async function workspace(epoch=portalEpoch){
  if(typeof updateMfaView==='function')updateMfaView(me);
  byId('storeName').textContent=me.store;byId('signin').hidden=true;byId('invitation').hidden=true;byId('pilotSetup').hidden=true;byId('workspace').hidden=false;
  byId('staffPanel').hidden=me.role!=='owner';
- const square=await api('/api/square/status');if(epoch!==portalEpoch)return;
- byId('squareStatus').textContent=square.message||(square.connected?'Connected to Square '+square.environment+'. Checkout is still in pilot testing.':square.oauth_configured?'The store owner can authorize this store’s Square account.':'Square application setup is required before store authorization can begin.');
- byId('connectSquare').disabled=me.role!=='owner'||!square.oauth_configured||square.connection_status==='environment_mismatch';
- byId('connectSquare').textContent=square.connected?'Reconnect Square':'Connect Square';
+ await refreshSquareStatus(epoch);if(epoch!==portalEpoch)return;
  if(me.role==='owner')await refreshStaff(epoch);
 }
 async function refreshStaff(epoch=portalEpoch){
@@ -86,6 +125,7 @@ async function refreshStaff(epoch=portalEpoch){
  finally{if(epoch===portalEpoch)byId('refreshStaff').disabled=false}
 }
 byId('refreshStaff').onclick=()=>refreshStaff();
+byId('refreshSquare').onclick=()=>refreshSquareStatus();
 byId('loginForm').onsubmit=async event=>{
  event.preventDefault();if(!beginAuthTransition())return;
  const button=event.target.querySelector('button'),epoch=++portalEpoch;button.disabled=true;byId('loginStatus').textContent='Signing in…';
@@ -94,9 +134,16 @@ byId('loginForm').onsubmit=async event=>{
  finally{byId('password').value='';button.disabled=false;endAuthTransition()}
 };
 byId('connectSquare').onclick=async()=>{
- const epoch=portalEpoch;byId('connectSquare').disabled=true;
- try{const result=await api('/api/square/connect',{});if(epoch!==portalEpoch)return;const url=new URL(result.authorization_url);if(!['connect.squareup.com','connect.squareupsandbox.com'].includes(url.hostname)||url.protocol!=='https:'||url.username||url.password)throw Error('Authorization destination was rejected.');window.location.assign(url.href)}
- catch(error){if(epoch===portalEpoch){byId('workspaceStatus').textContent=error.message;byId('connectSquare').disabled=portalMe?.role!=='owner'}}
+ if(!canConnectSquare())return;
+ const epoch=portalEpoch,sequence=squareStatusRequest;squareConnectBusy=true;squareControls();
+ try{
+  const result=await api('/api/square/connect',{});if(epoch!==portalEpoch||sequence!==squareStatusRequest)return;
+  const url=new URL(result.authorization_url);
+  if(!['connect.squareup.com','connect.squareupsandbox.com'].includes(url.hostname)||url.protocol!=='https:'||url.port||url.pathname!=='/oauth2/authorize'||url.hash||url.username||url.password)throw Error('Authorization destination was rejected.');
+  window.location.assign(url.href);
+ }catch(error){
+  if(epoch===portalEpoch&&sequence===squareStatusRequest)clearSquareStatus((error.status?error.message:'Square authorization could not be started.')+' Choose Check again before reconnecting.');
+ }
 };
 byId('signOut').onclick=async()=>{
  if(!beginAuthTransition())return;
@@ -156,5 +203,6 @@ function openAccountFragment(){
  else showAccountForm('pilotSetup');
  return true;
 }
+clearSquareStatus();
 window.addEventListener('hashchange',openAccountFragment);
 if(!openAccountFragment()&&!sessionStorage.getItem('ss-signed-out'))workspace().catch(error=>{if(error.status!==401)byId('loginStatus').textContent=error.message});

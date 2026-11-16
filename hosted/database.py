@@ -4,14 +4,45 @@ from pathlib import Path
 import os
 import re
 import threading
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 
+def _tls_mode(url):
+    """Preserve explicit URL > environment TLS policy; never weaken verification.
+
+    A service can override environment defaults, so an opaque service requires
+    an explicit URL mode. Nested database conninfo is unsupported, not expanded.
+    Otherwise require encryption for the private pilot; system trust retains
+    libpq's verify-full default. Require alone does not authenticate a hostname.
+    Trust paths and all other connection parameters remain libpq-owned.
+    """
+    if not isinstance(url,str):raise ValueError('Invalid database connection configuration.')
+    try:parameters=conninfo_to_dict(url)
+    except (ProgrammingError,TypeError,ValueError):
+        raise ValueError('Invalid database connection configuration.') from None
+    dbname=parameters.get('dbname') or os.environ.get('PGDATABASE','')
+    if '=' in dbname or dbname.startswith(('postgres://','postgresql://')):
+        raise ValueError('Nested database connection configuration is not supported.')
+    mode=parameters.get('sslmode')
+    if mode is None:
+        if parameters.get('service') or os.environ.get('PGSERVICE'):
+            raise ValueError('Database services require an explicit TLS mode in the connection string.')
+        mode=os.environ.get('PGSSLMODE')
+        if mode is None:
+            root=parameters.get('sslrootcert') or os.environ.get('PGSSLROOTCERT')
+            mode='verify-full' if root=='system' else 'require'
+    if mode not in ('require','verify-ca','verify-full'):
+        raise ValueError('Database TLS mode must be require, verify-ca or verify-full.')
+    return mode
+
+
 class Database:
     def __init__(self,url,*,max_size=5,schema=None):
-        kwargs={'row_factory':dict_row,'connect_timeout':10,'sslmode':'require'}
+        kwargs={'row_factory':dict_row,'connect_timeout':10,'sslmode':_tls_mode(url)}
         if schema is not None:
             if not re.fullmatch(r'ss_test_[a-f0-9]{32}',schema):raise ValueError('Invalid isolated test schema.')
             kwargs['options']='-c search_path='+schema+',pg_catalog'
@@ -50,7 +81,7 @@ class Database:
 
     def ready(self):
         with self.transaction() as db:
-            return db.execute('SELECT version FROM ss_schema_versions WHERE version=6').fetchone() is not None
+            return db.execute('SELECT version FROM ss_schema_versions WHERE version=9').fetchone() is not None
 
     def close(self):
         if self._pool is not None and self._pid==os.getpid():self._pool.close()
