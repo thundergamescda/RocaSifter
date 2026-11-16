@@ -16,6 +16,7 @@ from .security import ServiceError, digest, provider_id, webhook_valid
 from .ledger import require_role
 from .database import audit
 from .intake import current_authority
+from .cleanup_events import signed_envelope, inventory_event, record_inventory
 
 
 @dataclass(frozen=True)
@@ -311,8 +312,11 @@ class Square:
         if not isinstance(application,str) or not application.strip():
             raise ServiceError('Square event ingress application identity is not configured.',503)
         if not webhook_valid(signature,self.webhook_url,raw,key):raise ServiceError('Event signature is invalid.',403)
+        payload=signed_envelope(raw)
+        if payload.get('type')=='inventory.count.updated':
+            return record_inventory(self,raw,inventory_event(payload))
         try:
-            payload=json.loads(raw);event_id=provider_id(payload['event_id'],'Event ID')
+            event_id=provider_id(payload['event_id'],'Event ID')
             merchant=provider_id(payload['merchant_id'],'Merchant ID');kind=payload['type']
             resource=merchant if kind=='oauth.authorization.revoked' else provider_id(payload['data']['id'],'Resource ID')
         except (ValueError,KeyError,TypeError):raise ServiceError('Event envelope is invalid.') from None

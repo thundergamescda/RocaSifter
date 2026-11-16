@@ -744,3 +744,132 @@ INSERT INTO ss_schema_versions(version) VALUES (8) ON CONFLICT DO NOTHING;
 -- The existing immutable-binding trigger includes this column automatically.
 ALTER TABLE ss_receiving_bindings ADD COLUMN IF NOT EXISTS physical_ownership JSONB;
 INSERT INTO ss_schema_versions(version) VALUES (9) ON CONFLICT DO NOTHING;
+
+-- Schema 10: authenticated inventory evidence, not a continuous-zero observer.
+-- Exact provider timestamp strings retain sub-microsecond precision. Local
+-- received_at is the persistence clock, never substituted for provider time.
+CREATE OR REPLACE FUNCTION ss_cleanup_timestamp_valid(value TEXT) RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+    IF length(value)>35 OR value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$' THEN
+        RETURN FALSE;
+    END IF;
+    -- Validate the local calendar separately: TIMESTAMPTZ's displacement range
+    -- is narrower than RFC3339, and TIMESTAMP normalizes 24:00. Neither may
+    -- silently change or reject a correctly bounded original wire timestamp.
+    IF substring(value FROM 12 FOR 2)::INTEGER>23
+       OR substring(value FROM 15 FOR 2)::INTEGER>59
+       OR substring(value FROM 18 FOR 2)::INTEGER>59 THEN
+        RETURN FALSE;
+    END IF;
+    IF right(value,1)<>'Z' THEN
+        IF substring(value FROM length(value)-4 FOR 2)::INTEGER>23 OR right(value,2)::INTEGER>59 THEN
+            RETURN FALSE;
+        END IF;
+    END IF;
+    PERFORM left(value,19)::TIMESTAMP;
+    RETURN TRUE;
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+    RETURN FALSE;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ss_cleanup_inventory_receipts (
+    receipt_cursor BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+    application_id TEXT NOT NULL CHECK (length(application_id) BETWEEN 1 AND 255 AND application_id=btrim(application_id)),
+    environment TEXT NOT NULL CHECK (environment IN ('sandbox','production')),
+    event_id TEXT NOT NULL CHECK (length(event_id) BETWEEN 1 AND 255 AND event_id=btrim(event_id)),
+    merchant_id TEXT NOT NULL CHECK (length(merchant_id) BETWEEN 1 AND 255 AND merchant_id=btrim(merchant_id)),
+    event_type TEXT NOT NULL CHECK (event_type='inventory.count.updated'),
+    body_hash TEXT NOT NULL CHECK (body_hash ~ '^[0-9a-f]{64}$'),
+    provider_created_at TEXT NOT NULL CHECK (ss_cleanup_timestamp_valid(provider_created_at)),
+    resource_id TEXT NOT NULL CHECK (length(resource_id) BETWEEN 1 AND 255 AND resource_id=btrim(resource_id)),
+    payload_status TEXT NOT NULL CHECK (payload_status IN ('counts_present','empty_counts','object_absent')),
+    fact_count INTEGER NOT NULL CHECK (fact_count BETWEEN 0 AND 1000),
+    tenant_id UUID REFERENCES ss_tenants(id),
+    authorization_generation UUID,
+    binding_status TEXT NOT NULL CHECK (binding_status IN ('active','unbound','environment_mismatch','revocation_pending','revoked','token_expired')),
+    refresh_queued BOOLEAN NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(application_id,environment,event_id),
+    UNIQUE(receipt_cursor,application_id,environment,merchant_id,tenant_id,authorization_generation,binding_status),
+    CHECK ((binding_status='unbound' AND tenant_id IS NULL AND authorization_generation IS NULL)
+        OR (binding_status<>'unbound' AND tenant_id IS NOT NULL AND authorization_generation IS NOT NULL)),
+    CHECK (refresh_queued=(binding_status='active')),
+    CHECK ((payload_status='counts_present' AND fact_count>0) OR (payload_status<>'counts_present' AND fact_count=0))
+);
+CREATE INDEX IF NOT EXISTS ss_cleanup_inventory_receipt_scope
+    ON ss_cleanup_inventory_receipts(application_id,environment,merchant_id,receipt_cursor);
+CREATE INDEX IF NOT EXISTS ss_cleanup_inventory_receipt_generation
+    ON ss_cleanup_inventory_receipts(tenant_id,authorization_generation,receipt_cursor);
+
+CREATE TABLE IF NOT EXISTS ss_cleanup_inventory_facts (
+    receipt_cursor BIGINT NOT NULL REFERENCES ss_cleanup_inventory_receipts(receipt_cursor),
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 999),
+    catalog_object_id TEXT NOT NULL CHECK (length(catalog_object_id) BETWEEN 1 AND 100 AND catalog_object_id=btrim(catalog_object_id)),
+    catalog_object_type TEXT NOT NULL CHECK (catalog_object_type IN ('ITEM','ITEM_VARIATION')),
+    location_id TEXT NOT NULL CHECK (length(location_id) BETWEEN 1 AND 100 AND location_id=btrim(location_id)),
+    state TEXT NOT NULL CHECK (state IN ('CUSTOM','IN_STOCK','SOLD','RETURNED_BY_CUSTOMER','RESERVED_FOR_SALE',
+        'SOLD_ONLINE','ORDERED_FROM_VENDOR','RECEIVED_FROM_VENDOR','IN_TRANSIT_TO','NONE','WASTE','UNLINKED_RETURN',
+        'COMPOSED','DECOMPOSED','SUPPORTED_BY_NEWER_VERSION','IN_TRANSIT','UNTRACKED')),
+    quantity TEXT NOT NULL CHECK (length(quantity) BETWEEN 1 AND 26 AND quantity ~ '^-?[0-9]+(\.[0-9]{1,5})?$'),
+    provider_calculated_at TEXT NOT NULL CHECK (ss_cleanup_timestamp_valid(provider_calculated_at)),
+    is_estimated BOOLEAN,
+    PRIMARY KEY(receipt_cursor,ordinal)
+);
+CREATE INDEX IF NOT EXISTS ss_cleanup_inventory_fact_object
+    ON ss_cleanup_inventory_facts(catalog_object_id,location_id,state,receipt_cursor);
+
+-- An immutable per-receipt intent, NOT an executable lease/job. Historical
+-- generation membership survives reconnect; it never follows the connection.
+-- A future worker needs a separate reviewed claim/finish/highwater protocol.
+CREATE TABLE IF NOT EXISTS ss_cleanup_refresh_queue (
+    receipt_cursor BIGINT PRIMARY KEY,
+    application_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    merchant_id TEXT NOT NULL,
+    tenant_id UUID NOT NULL,
+    authorization_generation UUID NOT NULL,
+    binding_status TEXT NOT NULL DEFAULT 'active' CHECK (binding_status='active'),
+    state TEXT NOT NULL DEFAULT 'queued_not_executed' CHECK (state='queued_not_executed'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    FOREIGN KEY(receipt_cursor,application_id,environment,merchant_id,tenant_id,authorization_generation,binding_status)
+        REFERENCES ss_cleanup_inventory_receipts(receipt_cursor,application_id,environment,merchant_id,tenant_id,authorization_generation,binding_status)
+);
+CREATE INDEX IF NOT EXISTS ss_cleanup_refresh_generation
+    ON ss_cleanup_refresh_queue(tenant_id,authorization_generation,receipt_cursor);
+
+CREATE OR REPLACE FUNCTION ss_cleanup_fact_within_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_count INTEGER;
+BEGIN
+    SELECT fact_count INTO expected_count FROM ss_cleanup_inventory_receipts WHERE receipt_cursor=NEW.receipt_cursor;
+    IF expected_count IS NULL OR NEW.ordinal>=expected_count THEN
+        RAISE EXCEPTION 'Inventory fact is outside its immutable receipt';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_fact_within_receipt ON ss_cleanup_inventory_facts;
+CREATE TRIGGER ss_cleanup_fact_within_receipt BEFORE INSERT ON ss_cleanup_inventory_facts
+    FOR EACH ROW EXECUTE FUNCTION ss_cleanup_fact_within_receipt();
+
+CREATE OR REPLACE FUNCTION ss_cleanup_receipt_complete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (SELECT count(*) FROM ss_cleanup_inventory_facts WHERE receipt_cursor=NEW.receipt_cursor)<>NEW.fact_count
+       OR (SELECT count(*) FROM ss_cleanup_refresh_queue WHERE receipt_cursor=NEW.receipt_cursor)<>(CASE WHEN NEW.refresh_queued THEN 1 ELSE 0 END) THEN
+        RAISE EXCEPTION 'Inventory receipt facts and refresh intent must commit together';
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_receipt_complete ON ss_cleanup_inventory_receipts;
+CREATE CONSTRAINT TRIGGER ss_cleanup_receipt_complete AFTER INSERT ON ss_cleanup_inventory_receipts
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ss_cleanup_receipt_complete();
+
+DROP TRIGGER IF EXISTS ss_cleanup_inventory_receipt_immutable ON ss_cleanup_inventory_receipts;
+CREATE TRIGGER ss_cleanup_inventory_receipt_immutable BEFORE UPDATE OR DELETE ON ss_cleanup_inventory_receipts
+    FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+DROP TRIGGER IF EXISTS ss_cleanup_inventory_fact_immutable ON ss_cleanup_inventory_facts;
+CREATE TRIGGER ss_cleanup_inventory_fact_immutable BEFORE UPDATE OR DELETE ON ss_cleanup_inventory_facts
+    FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+DROP TRIGGER IF EXISTS ss_cleanup_refresh_intent_immutable ON ss_cleanup_refresh_queue;
+CREATE TRIGGER ss_cleanup_refresh_intent_immutable BEFORE UPDATE OR DELETE ON ss_cleanup_refresh_queue
+    FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+INSERT INTO ss_schema_versions(version) VALUES (10) ON CONFLICT DO NOTHING;
