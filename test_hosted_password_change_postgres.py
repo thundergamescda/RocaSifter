@@ -190,7 +190,7 @@ class PostgreSQLPasswordChangeAcceptance(_PasswordChangeFixture):
         self.assertEqual(sorted(row['failures'] for row in self._budget_rows()),[5,6])
         self.assertEqual(self._security_rows(),before)
         with self.database.transaction() as db:
-            rows=db.execute("SELECT action,entity_id,details FROM ss_audit WHERE tenant_id=%s AND action LIKE 'staff-password-%'",(self.tenant,)).fetchall()
+            rows=db.execute("SELECT action,entity_id,details FROM ss_audit WHERE tenant_id=%s AND action LIKE %s",(self.tenant,'staff-password-%')).fetchall()
         self.assertEqual(len(rows),5)
         encoded=json.dumps(rows)
         for secret in (self.old_password,self.new_password,'fictional-wrong-current',self.old_hash,self.session_token):self.assertNotIn(secret,encoded)
