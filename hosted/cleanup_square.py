@@ -10,6 +10,7 @@ Catalog query contract: https://developer.squareup.com/docs/catalog-api/search-c
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import hashlib
 import json
 import math
 import re
@@ -27,7 +28,7 @@ _READS = frozenset((('GET', '/v2/locations'),
 _PAGE_SIZE = 1000
 _BATCH_SIZE = 100
 _MAX_JSON_DEPTH = 64
-_QUANTITY = re.compile(r'[+-]?[0-9]+(?:\.[0-9]+)?\Z')
+_QUANTITY = re.compile(r'[+-]?[0-9]+(?:\.[0-9]{1,5})?\Z')
 _TIMESTAMP = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
                         r'(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z')
 
@@ -277,7 +278,7 @@ chunk, not a hard wall-clock guarantee while blocking I/O is pending.
     def counts(self, access, variation_ids, location_ids):
         return self._counts(access, variation_ids, location_ids, _ReadBudget(self))
 
-    def _counts(self, access, variation_ids, location_ids, budget):
+    def _counts(self, access, variation_ids, location_ids, budget, *, on_count=None):
         self._merchant(access)
         variations = self._ids(variation_ids, budget)
         locations = self._ids(location_ids, budget)
@@ -302,10 +303,12 @@ chunk, not a hard wall-clock guarantee while blocking I/O is pending.
                         if ident not in variation_batch or location not in location_batch:
                             raise _incomplete()
                         self._merchant_matches(access, row)
+                        if 'is_estimated' in row and type(row['is_estimated']) is not bool:
+                            raise _incomplete()
                         if 'calculated_at' in row:
                             _timestamp(row['calculated_at'])
                         quantity = row.get('quantity')
-                        if type(quantity) is not str or not 1 <= len(quantity) <= 128 or not _QUANTITY.fullmatch(quantity):
+                        if type(quantity) is not str or not 1 <= len(quantity) <= 26 or not _QUANTITY.fullmatch(quantity):
                             raise _incomplete()
                         try:
                             if not Decimal(quantity).is_finite():
@@ -313,9 +316,15 @@ chunk, not a hard wall-clock guarantee while blocking I/O is pending.
                         except InvalidOperation:
                             raise _incomplete() from None
                         key = (ident, location)
+                        validated = deepcopy(row)
+                        if on_count is not None:
+                            # A repeated tuple invalidates coverage, but both
+                            # individually typed witnesses must survive. In
+                            # particular, a later positive cannot be discarded.
+                            on_count(deepcopy(validated))
                         if key in found:
                             raise _incomplete()
-                        found[key] = deepcopy(row)
+                        found[key] = validated
                     cursor = _cursor(result, cursors)
                     if cursor is None:
                         break
@@ -336,3 +345,70 @@ chunk, not a hard wall-clock guarantee while blocking I/O is pending.
                 'missing': counts['missing'], 'pagination_complete': True,
                 'atomic_snapshot': False, 'continuous_zero_verified': False,
                 'deletion_enabled': False}
+
+    @staticmethod
+    def _context_hash(locations, objects):
+        # Hash complete validated bookends; do not substitute catalog version
+        # alone for a provider response that changes while keeping that version.
+        payload = json.dumps({'locations': locations, 'objects': objects},
+                             ensure_ascii=False, sort_keys=True,
+                             separators=(',', ':'), allow_nan=False).encode('utf-8')
+        return hashlib.sha256(payload).hexdigest()
+
+    def collect_attempt(self, access):
+        """Bracket one bounded read and retain validated partial count evidence.
+
+        All five phases share the same aggregate resource/deadline budget.
+        Equal bookends still do not make the intervening count pages atomic or
+        prove gap-free inventory history. No result authorizes deletion.
+        A caller must separately fence current grants, connection generation,
+        consent, lease and notification highwater before committing any history.
+        """
+        budget = _ReadBudget(self)
+        result = {'coverage_complete': False, 'pagination_complete': False,
+                  'context_unchanged': False, 'bracketed': False,
+                  'reason_codes': [], 'before_context_hash': None,
+                  'after_context_hash': None, 'locations': [], 'objects': {},
+                  'counts': [], 'missing': None, 'atomic_snapshot': False,
+                  'continuous_zero_verified': False, 'deletion_enabled': False}
+        phase = 'locations_incomplete'
+        variations = None
+        try:
+            result['locations'] = self._locations(access, budget)
+            phase = 'catalog_incomplete'
+            result['objects'] = self._catalog(access, budget)
+            result['before_context_hash'] = self._context_hash(result['locations'], result['objects'])
+            variations = [ident for ident, row in result['objects'].items()
+                          if row['type'] == 'ITEM_VARIATION']
+            phase = 'counts_incomplete'
+            counts = self._counts(access, variations, [row['id'] for row in result['locations']],
+                                  budget, on_count=result['counts'].append)
+            result['counts'] = counts['counts']
+            result['missing'] = counts['missing']
+            phase = 'context_check_incomplete'
+            after_locations = self._locations(access, budget)
+            after_objects = self._catalog(access, budget)
+            result['after_context_hash'] = self._context_hash(after_locations, after_objects)
+            budget.check()
+            result['pagination_complete'] = result['bracketed'] = True
+            result['context_unchanged'] = result['before_context_hash'] == result['after_context_hash']
+            if not result['context_unchanged']:
+                result['reason_codes'].append('context_changed')
+            if result['missing']:
+                result['reason_codes'].append('missing_counts')
+            result['coverage_complete'] = result['context_unchanged'] and not result['missing']
+        except Exception:
+            # Never expose provider text, credentials or arbitrary exception data.
+            # Rows are appended only after all per-count validation succeeds.
+            result['reason_codes'].append(phase)
+            if variations is not None and len(variations) * len(result['locations']) <= budget.max_records:
+                present = {(row['catalog_object_id'], row['location_id']) for row in result['counts']}
+                result['missing'] = [(ident, location['id']) for ident in variations
+                                     for location in result['locations'] if (ident, location['id']) not in present]
+        if any('calculated_at' not in row for row in result['counts']):
+            result['reason_codes'].append('count_timestamps_unknown')
+        if any(row.get('is_estimated') is True for row in result['counts']):
+            result['reason_codes'].append('estimated_counts')
+        if result['reason_codes']:
+            result['coverage_complete'] = False
+        return result

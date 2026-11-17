@@ -24,6 +24,7 @@ function squareControls(){
  byId('connectSquare').disabled=!canConnectSquare();
  byId('connectSquare').textContent=portalSquare?.connected?'Reconnect Square':'Connect Square';
  byId('refreshSquare').disabled=!portalMe||byId('workspace').hidden||authTransitionBusy||squareLoading||squareConnectBusy;
+ document.dispatchEvent(new CustomEvent('ss-cleanup-observer-context',{detail:{epoch:portalEpoch,active:!!portalMe&&!authTransitionBusy&&!byId('workspace').hidden&&!squareLoading&&!squareConnectBusy}}));
 }
 function clearSquareStatus(message='Sign in to check the Square connection.'){
  ++squareStatusRequest;portalSquare=null;squareLoading=false;squareConnectBusy=false;

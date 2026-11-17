@@ -1,0 +1,21 @@
+.cleanup-observer h3{font-size:18px;margin:4px 0 0;letter-spacing:-.2px}
+.cleanup-observer .panel-heading{align-items:flex-start;gap:14px;flex-wrap:wrap}
+.cleanup-state{padding:5px 9px;background:#f0ede7;border:1px solid #ded8cf;border-radius:5px;font-size:11px;font-weight:750;color:#5b5146}
+.cleanup-facts{margin:18px 0;display:grid;gap:9px}
+.cleanup-facts>div{display:grid;grid-template-columns:minmax(110px,1fr) 2fr;gap:12px}
+.cleanup-facts dt{color:var(--muted);font-size:12px}
+.cleanup-facts dd{margin:0;font-size:12px;overflow-wrap:anywhere}
+.cleanup-reasons{font-size:12px;color:var(--muted);padding-left:18px}
+.cleanup-reasons:empty{display:none}
+.cleanup-actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+.cleanup-observer fieldset{border:1px solid var(--line);border-radius:7px;padding:16px;margin:20px 0 0;min-width:0}
+.cleanup-observer legend{font-size:12px;font-weight:700;padding:0 5px}
+.cleanup-observer .cleanup-check{display:flex;flex-direction:row;align-items:flex-start;gap:9px;font-size:12px;line-height:1.5;margin:14px 0}
+.cleanup-check input{width:17px;height:17px;flex:0 0 auto;margin:1px 0 0;accent-color:var(--rust)}
+.cleanup-timing{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}
+.cleanup-timing label{font-size:11px;margin-bottom:14px}
+.cleanup-timing input{margin-top:6px}
+.cleanup-boundary{border-left:2px solid #d0a292;padding-left:12px;margin-top:20px}
+.cleanup-observer button:disabled{cursor:not-allowed}
+.cleanup-observer[aria-busy="true"] #cleanupObserverCheck{cursor:wait}
+@media(max-width:480px){.cleanup-facts>div,.cleanup-timing{grid-template-columns:1fr;gap:5px}.cleanup-facts>div{padding-bottom:7px}.cleanup-actions button{width:100%}}

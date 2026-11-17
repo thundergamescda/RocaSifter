@@ -1,8 +1,8 @@
 """Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Four
-companion hosted unit modules run all 41 approved cases with fictional database
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Five
+companion hosted unit modules run all 85 approved cases with fictional database
 responses and transports, not real SQL or provider acceptance.
 This helper adds copied-source preservation and an actual test-client TLS probe.
 """
@@ -25,7 +25,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 411
+POSTGRES_EXPECTED_COUNT = 446
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
@@ -79,6 +79,53 @@ REVOCATION_UNIT_IDS = (
     'test_square_revocation_guards.SquareRevocationGuardTests.test_same_signed_event_replay_has_no_repeated_effect',
     'test_square_revocation_guards.SquareRevocationGuardTests.test_unknown_merchant_notice_is_durable_without_inventing_a_connection',
 )
+CLEANUP_UNIT_MODULE = 'test_hosted_cleanup_square'
+CLEANUP_UNIT_IDS = (
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_changed_catalog_version_or_same_version_payload_blocks_current_coverage',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_complete_read_brackets_canonical_context_and_keeps_all_trust_limits',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_count_matrix_bound_does_not_allocate_an_unbounded_missing_list',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_duplicate_or_malformed_later_row_cannot_erase_a_valid_positive_prefix',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_empty_catalog_is_bracketed_without_an_unfiltered_inventory_request',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_expired_attempt_returns_incomplete_without_contacting_provider',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_later_count_page_failure_retains_positive_rows_and_unknown_pairs',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_location_status_currency_or_membership_change_blocks_current_coverage',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_missing_count_is_explicit_partial_coverage_after_successful_bookends',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_missing_timestamps_and_composed_estimates_are_retained_without_complete_coverage',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_one_shared_budget_covers_both_context_bookends_and_counts',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_unknown_expected_matrix_is_not_reported_as_no_missing_counts',
+    'test_hosted_cleanup_square.CleanupBracketedCollectionTests.test_wrong_estimate_flag_types_are_not_validated_count_evidence',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_access_requests_only_inventory_catalog_and_merchant_read_grants',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_all_count_pages_are_consumed_and_missing_pairs_remain_unknown',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_catalog_bad_types_versions_deleted_and_foreign_merchant_are_rejected',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_catalog_consumes_every_page_and_preserves_nested_variations',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_catalog_duplicate_top_level_and_conflicting_mirrors_are_rejected',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_catalog_record_budget_includes_returned_objects_and_nested_rows',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_catalog_requires_parent_closure_and_consistent_child_binding',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_collection_has_explicit_nonatomic_nondeletion_results_and_no_secret',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_collection_retains_unknown_count_coverage_even_with_complete_pagination',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_collection_shares_resource_budget_across_phases',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_count_batches_cover_every_requested_pair_without_dropping_empty_pages',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_count_pair_budget_is_checked_before_large_missing_output_or_requests',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_duplicate_count_tuple_is_rejected_even_when_identical',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_empty_catalog_does_not_request_unfiltered_inventory',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_excessively_nested_catalog_metadata_fails_with_sanitized_read_error',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_exhausting_page_or_byte_budget_never_returns_a_partial_catalog',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_expired_collection_budget_does_not_start_a_provider_read',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_falsey_nontext_and_repeated_cursors_never_end_a_paged_read',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_inactive_and_other_currency_locations_are_not_filtered_out',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_invalid_or_duplicate_requested_ids_fail_before_provider_contact',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_invalid_or_foreign_locations_fail_without_partial_coverage',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_invalid_resource_settings_are_rejected_before_any_read',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_malformed_quantities_and_unusable_timestamps_are_rejected',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_malformed_response_fields_and_nonfinite_values_are_incomplete',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_missing_null_or_empty_text_cursor_end_only_after_all_rows_checked',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_missing_optional_count_timestamp_is_preserved_without_invented_freshness',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_negative_and_positive_stock_are_retained_as_evidence_not_zeroed',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_opaque_count_identifiers_are_preserved_without_becoming_url_paths',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_provider_errors_and_redirects_are_sanitized_incomplete_reads_without_retry',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_transport_is_fixed_read_shapes_no_redirects_and_closes_every_response',
+    'test_hosted_cleanup_square.CleanupReadCollectionTests.test_unrequested_count_ids_locations_states_and_types_are_rejected',
+)
 UNIT_GROUPS = (
     ('unit_identity', IDENTITY_UNIT_MODULE, IDENTITY_UNIT_IDS, 'unit-identity',
      'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.'),
@@ -88,6 +135,8 @@ UNIT_GROUPS = (
      'Five hosted Square status DTO unit cases with fictional database responses; not SQL or live authorization acceptance.'),
     ('unit_revocation_guards', REVOCATION_UNIT_MODULE, REVOCATION_UNIT_IDS, 'unit-revocation-guards',
      'Twenty-one hosted revocation and reconciliation method-guard units with recording SQL and fictional signatures; not real SQL or provider acceptance.'),
+    ('unit_cleanup_square', CLEANUP_UNIT_MODULE, CLEANUP_UNIT_IDS, 'unit-cleanup-square',
+     'Forty-four hosted read-facade, pagination, bracket and partial-evidence units with fictional streamed responses; not live Square, SQL, continuity or deletion acceptance.'),
 )
 
 

@@ -2,6 +2,7 @@
 from functools import wraps
 import hashlib
 import hmac
+import json
 import logging
 import os
 from urllib.parse import urlsplit
@@ -22,6 +23,7 @@ from .receiving_pipeline import CatalogReceiving
 from .receiving_square import ReceivingSquare
 from .receiving_plan import ReceivingError,public_response_bytes
 from .owner_onboarding import OwnerOnboarding,EnrollmentError
+from .cleanup_observer import CleanupObserver,CleanupObserverError
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -37,6 +39,7 @@ def create_app(config=None,*,database=None,square_transport=None):
                       SQUARE_ENVIRONMENT=os.environ.get('SQUARE_ENVIRONMENT','sandbox'),
                       SQUARE_WEBHOOK_SIGNATURE_KEY=os.environ.get('SQUARE_WEBHOOK_SIGNATURE_KEY',''))
     app.config['RECEIVING_WRITES_ENABLED']=os.environ.get('RECEIVING_WRITES_ENABLED','').lower()=='true'
+    app.config.update(CLEANUP_OBSERVER_ENABLED=False,CLEANUP_OBSERVER_ALLOWED_ENVIRONMENTS=('production',))
     app.config.update(supplied)
     public=app.config['PUBLIC_BASE_URL'].rstrip('/')
     uri=urlsplit(public)
@@ -53,11 +56,14 @@ def create_app(config=None,*,database=None,square_transport=None):
     intake=IntakeClaims(db) if db else None
     owner_onboarding=OwnerOnboarding(db) if db else None
     receiving=CatalogReceiving(db,ReceivingSquare(square),square.cipher,writes_enabled=app.config.get('RECEIVING_WRITES_ENABLED') is True) if db else None
+    cleanup_observer=CleanupObserver(db,square,enabled=app.config.get('CLEANUP_OBSERVER_ENABLED') is True,
+        allowed_environments=app.config.get('CLEANUP_OBSERVER_ALLOWED_ENVIRONMENTS',('production',))) if db else None
     privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
                     proof_key=app.config['APP_ENCRYPTION_KEYS'].split(',')[0],
                     limits=app.config.get('PRIVACY_EXPORT_LIMITS') or PrivacyLimits()) if db else None
     app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake,ss_receiving=receiving)
     app.extensions['ss_owner_onboarding']=owner_onboarding
+    app.extensions['ss_cleanup_observer']=cleanup_observer
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -98,7 +104,7 @@ def create_app(config=None,*,database=None,square_transport=None):
         if isinstance(error,ReceivingError):
             result['code']=error.code
             if error.receiving_id:result['receiving_id']=error.receiving_id
-        if isinstance(error,EnrollmentError):result['code']=error.code
+        if isinstance(error,(EnrollmentError,CleanupObserverError)):result['code']=error.code
         return jsonify(result),error.status
 
     @app.errorhandler(HTTPException)
@@ -331,6 +337,44 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.post('/api/credit/customers/<uuid:customer_id>/reserve')
     @authenticated
     def reserve(customer_id):return jsonify(ledger.reserve(g.actor,customer_id,body()))
+
+    def observer_body(fields):
+        # Keep this boundary local: legacy routes retain their existing decoder.
+        def invalid(*unused):
+            raise CleanupObserverError('Send a small JSON object with the exact observer fields.',400,code='OBSERVER_INPUT_INVALID')
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value:invalid()
+                value[key]=item
+            return value
+        if request.content_length is not None and request.content_length>4096:invalid()
+        raw=request.stream.read(4097)
+        if len(raw)>4096:invalid()
+        try:
+            value=json.loads(raw.decode('utf-8'),object_pairs_hook=pairs,parse_constant=invalid,parse_float=invalid)
+        except (ValueError,UnicodeError,RecursionError):invalid()
+        if type(value) is not dict or set(value)!=set(fields):invalid()
+        for name,kind in fields.items():
+            if type(value[name]) is not kind:invalid()
+        return value
+
+    observer_cas={'request_key':str,'expected_generation':str,'expected_config_version':int}
+
+    @app.get('/api/catalog-cleanup/status')
+    @authenticated
+    def cleanup_observer_status():return jsonify(cleanup_observer.status(g.actor))
+
+    @app.post('/api/catalog-cleanup/config')
+    @authenticated
+    def cleanup_observer_config():
+        values=observer_body(observer_cas|{'enabled':bool,'background_enabled':bool,
+            'cadence_seconds':int,'stale_after_seconds':int})
+        return jsonify(cleanup_observer.configure(g.actor,values))
+
+    @app.post('/api/catalog-cleanup/refresh')
+    @authenticated
+    def cleanup_observer_refresh():return jsonify(cleanup_observer.request_manual(g.actor,observer_body(observer_cas)))
 
     @app.get('/api/square/status')
     @authenticated

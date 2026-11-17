@@ -895,3 +895,183 @@ END $$;
 CREATE INDEX IF NOT EXISTS ss_square_renewal_due ON ss_square_connections(renewal_retry_after,renewal_attempted_at)
     WHERE revoked_at IS NULL AND pending_notice_cursor IS NULL;
 INSERT INTO ss_schema_versions(version) VALUES (11) ON CONFLICT DO NOTHING;
+
+-- Schema 12: diagnostic read history only. No zero_since, eligibility, deletion,
+-- provider mutation, legacy observer or automatic activation is introduced.
+CREATE TABLE IF NOT EXISTS ss_cleanup_observer_config (
+    tenant_id UUID NOT NULL REFERENCES ss_tenants(id), application_id TEXT NOT NULL,
+    environment TEXT NOT NULL CHECK(environment IN ('production','sandbox')), merchant_id TEXT NOT NULL,
+    authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL CHECK(config_version>0),
+    enabled BOOLEAN NOT NULL DEFAULT FALSE, background_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    cadence_seconds INTEGER NOT NULL CHECK(cadence_seconds BETWEEN 300 AND 86400),
+    stale_after_seconds INTEGER NOT NULL CHECK(stale_after_seconds BETWEEN cadence_seconds AND 604800),
+    owner_staff_id UUID NOT NULL, audit_id BIGINT NOT NULL REFERENCES ss_audit(id),
+    request_key TEXT NOT NULL, request_hash TEXT NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version),
+    UNIQUE(tenant_id,request_key), FOREIGN KEY(tenant_id,owner_staff_id) REFERENCES ss_staff(tenant_id,id),
+    CHECK(NOT background_enabled OR enabled)
+);
+CREATE TABLE IF NOT EXISTS ss_cleanup_collection_work (
+    id UUID PRIMARY KEY, tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL,
+    merchant_id TEXT NOT NULL, authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL,
+    receipt_hwm BIGINT NOT NULL CHECK(receipt_hwm>=0),
+    receipt_manifest JSONB NOT NULL CHECK(jsonb_typeof(receipt_manifest)='array' AND jsonb_array_length(receipt_manifest)<=10000),
+    manifest_hash TEXT NOT NULL CHECK(manifest_hash ~ '^[0-9a-f]{64}$'),
+    trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('manual','notification','periodic')),
+    principal_kind TEXT NOT NULL CHECK(principal_kind IN ('manual','platform')),
+    staff_id UUID, session_hash TEXT, requested_role TEXT,
+    state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','reading','done','blocked','superseded')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 100),
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), lease_token UUID, lease_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), finished_at TIMESTAMPTZ,
+    FOREIGN KEY(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version)
+        REFERENCES ss_cleanup_observer_config(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version),
+    FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff(tenant_id,id),
+    UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash),
+    CHECK((principal_kind='platform' AND staff_id IS NULL AND session_hash IS NULL AND requested_role IS NULL AND trigger_kind<>'manual')
+       OR (principal_kind='manual' AND staff_id IS NOT NULL AND session_hash IS NOT NULL AND requested_role IS NOT NULL AND session_hash ~ '^[0-9a-f]{64}$' AND requested_role IN ('owner','manager') AND trigger_kind='manual')),
+    CHECK((state='reading' AND lease_token IS NOT NULL AND lease_until IS NOT NULL)
+       OR (state<>'reading' AND lease_token IS NULL AND lease_until IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ss_cleanup_work_active_scope
+    ON ss_cleanup_collection_work(tenant_id,application_id,environment,merchant_id,authorization_generation)
+    WHERE state IN ('queued','reading');
+CREATE INDEX IF NOT EXISTS ss_cleanup_work_due ON ss_cleanup_collection_work(next_attempt_at,created_at,id)
+    WHERE state IN ('queued','reading');
+
+CREATE TABLE IF NOT EXISTS ss_cleanup_manual_requests (
+    tenant_id UUID NOT NULL, request_key TEXT NOT NULL, request_hash TEXT NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+    work_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, merchant_id TEXT NOT NULL,
+    authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL, receipt_hwm BIGINT NOT NULL, manifest_hash TEXT NOT NULL,
+    staff_id UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(tenant_id,request_key), FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash)
+        REFERENCES ss_cleanup_collection_work(id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash)
+);
+CREATE TABLE IF NOT EXISTS ss_cleanup_collection_attempts (
+    id UUID PRIMARY KEY, attempt_cursor BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+    work_id UUID NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 100),
+    tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, merchant_id TEXT NOT NULL,
+    authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL, receipt_hwm BIGINT NOT NULL, manifest_hash TEXT NOT NULL,
+    notice_cursor BIGINT NOT NULL CHECK(notice_cursor>=0), access_digest TEXT NOT NULL CHECK(access_digest ~ '^[0-9a-f]{64}$'),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), lease_until TIMESTAMPTZ NOT NULL,
+    UNIQUE(work_id,attempt),
+    UNIQUE(id,work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash),
+    FOREIGN KEY(work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash)
+        REFERENCES ss_cleanup_collection_work(id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash)
+);
+CREATE INDEX IF NOT EXISTS ss_cleanup_attempt_history ON ss_cleanup_collection_attempts
+    (tenant_id,application_id,environment,merchant_id,authorization_generation,attempt_cursor DESC);
+CREATE TABLE IF NOT EXISTS ss_cleanup_collections (
+    id UUID PRIMARY KEY, attempt_id UUID NOT NULL UNIQUE, work_id UUID NOT NULL,
+    tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, merchant_id TEXT NOT NULL,
+    authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL, receipt_hwm BIGINT NOT NULL, manifest_hash TEXT NOT NULL,
+    result_hash TEXT NOT NULL CHECK(result_hash ~ '^[0-9a-f]{64}$'),
+    outcome TEXT NOT NULL CHECK(outcome IN ('complete','partial','fenced')),
+    started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    coverage_complete BOOLEAN NOT NULL, pagination_complete BOOLEAN NOT NULL, context_unchanged BOOLEAN NOT NULL, bracketed BOOLEAN NOT NULL,
+    reason_codes JSONB NOT NULL CHECK(jsonb_typeof(reason_codes)='array' AND jsonb_array_length(reason_codes)<=32),
+    before_context_hash TEXT CHECK(before_context_hash ~ '^[0-9a-f]{64}$'), after_context_hash TEXT CHECK(after_context_hash ~ '^[0-9a-f]{64}$'),
+    context JSONB NOT NULL CHECK(jsonb_typeof(context)='object' AND octet_length(context::TEXT)<=16777216),
+    missing JSONB CHECK(missing IS NULL OR (jsonb_typeof(missing)='array' AND jsonb_array_length(missing)<=100000)),
+    missing_count INTEGER CHECK(missing_count>=0), count_rows INTEGER NOT NULL CHECK(count_rows BETWEEN 0 AND 100000),
+    nonzero_count INTEGER NOT NULL CHECK(nonzero_count BETWEEN 0 AND count_rows),
+    receipt_flags JSONB NOT NULL CHECK(jsonb_typeof(receipt_flags)='array' AND jsonb_array_length(receipt_flags)<=16),
+    UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation),
+    FOREIGN KEY(attempt_id,work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash)
+        REFERENCES ss_cleanup_collection_attempts(id,work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash),
+    CHECK(coverage_complete=(outcome='complete')),
+    CHECK(NOT coverage_complete OR (pagination_complete AND context_unchanged AND bracketed AND missing_count IS NOT NULL AND missing_count=0 AND missing='[]'::JSONB)),
+    CHECK(outcome<>'fenced' OR (count_rows=0 AND nonzero_count=0 AND context='{}'::JSONB AND before_context_hash IS NULL AND after_context_hash IS NULL))
+);
+CREATE TABLE IF NOT EXISTS ss_cleanup_collection_counts (
+    collection_id UUID NOT NULL REFERENCES ss_cleanup_collections(id), ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 99999),
+    catalog_object_id TEXT NOT NULL CHECK(length(catalog_object_id) BETWEEN 1 AND 100),
+    location_id TEXT NOT NULL CHECK(length(location_id) BETWEEN 1 AND 100),
+    catalog_object_type TEXT CHECK(catalog_object_type='ITEM_VARIATION'), state TEXT NOT NULL CHECK(state='IN_STOCK'),
+    quantity TEXT NOT NULL CHECK(length(quantity) BETWEEN 1 AND 26 AND quantity ~ '^[+-]?[0-9]+(\.[0-9]{1,5})?$'),
+    calculated_at TEXT CHECK(ss_cleanup_timestamp_valid(calculated_at)), is_estimated BOOLEAN,
+    PRIMARY KEY(collection_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS ss_cleanup_current_projection (
+    tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, merchant_id TEXT NOT NULL,
+    authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL,
+    latest_collection_id UUID, last_complete_id UUID, acknowledged_hwm BIGINT NOT NULL DEFAULT 0 CHECK(acknowledged_hwm>=0),
+    diagnostic_epoch UUID NOT NULL DEFAULT gen_random_uuid(),
+    health TEXT NOT NULL CHECK(health IN ('disabled','complete','partial','stale','authority_blocked')),
+    reason_codes JSONB NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(reason_codes)='array' AND jsonb_array_length(reason_codes)<=32),
+    context_hash TEXT CHECK(context_hash ~ '^[0-9a-f]{64}$'), next_due_at TIMESTAMPTZ,
+    PRIMARY KEY(tenant_id,application_id,environment,merchant_id,authorization_generation),
+    FOREIGN KEY(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version)
+        REFERENCES ss_cleanup_observer_config(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version),
+    FOREIGN KEY(latest_collection_id,tenant_id,application_id,environment,merchant_id,authorization_generation)
+        REFERENCES ss_cleanup_collections(id,tenant_id,application_id,environment,merchant_id,authorization_generation),
+    FOREIGN KEY(last_complete_id,tenant_id,application_id,environment,merchant_id,authorization_generation)
+        REFERENCES ss_cleanup_collections(id,tenant_id,application_id,environment,merchant_id,authorization_generation)
+);
+CREATE TABLE IF NOT EXISTS ss_cleanup_work_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, work_id UUID NOT NULL REFERENCES ss_cleanup_collection_work(id),
+    attempt_id UUID REFERENCES ss_cleanup_collection_attempts(id),
+    reason_code TEXT NOT NULL CHECK(reason_code ~ '^[a-z][a-z0-9_]{0,63}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE OR REPLACE FUNCTION ss_cleanup_projection_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.last_complete_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM ss_cleanup_collections
+        WHERE id=NEW.last_complete_id AND coverage_complete) THEN
+        RAISE EXCEPTION 'Last complete cleanup read must reference complete coverage';
+    END IF;
+    IF NEW.health='complete' AND (NEW.latest_collection_id IS NULL OR NOT EXISTS(SELECT 1 FROM ss_cleanup_collections
+        WHERE id=NEW.latest_collection_id AND coverage_complete AND config_version=NEW.config_version)) THEN
+        RAISE EXCEPTION 'Current complete cleanup projection requires matching complete evidence';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_projection_guard ON ss_cleanup_current_projection;
+CREATE TRIGGER ss_cleanup_projection_guard BEFORE INSERT OR UPDATE ON ss_cleanup_current_projection
+    FOR EACH ROW EXECUTE FUNCTION ss_cleanup_projection_guard();
+CREATE OR REPLACE FUNCTION ss_cleanup_work_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.id,NEW.tenant_id,NEW.application_id,NEW.environment,NEW.merchant_id,NEW.authorization_generation,
+           NEW.config_version,NEW.receipt_hwm,NEW.receipt_manifest,NEW.manifest_hash,NEW.trigger_kind,NEW.principal_kind,
+           NEW.staff_id,NEW.session_hash,NEW.requested_role,NEW.created_at)
+       IS DISTINCT FROM ROW(OLD.id,OLD.tenant_id,OLD.application_id,OLD.environment,OLD.merchant_id,OLD.authorization_generation,
+           OLD.config_version,OLD.receipt_hwm,OLD.receipt_manifest,OLD.manifest_hash,OLD.trigger_kind,OLD.principal_kind,
+           OLD.staff_id,OLD.session_hash,OLD.requested_role,OLD.created_at) THEN
+        RAISE EXCEPTION 'Original cleanup work scope and principal cannot be changed';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_work_identity ON ss_cleanup_collection_work;
+CREATE TRIGGER ss_cleanup_work_identity BEFORE UPDATE ON ss_cleanup_collection_work FOR EACH ROW EXECUTE FUNCTION ss_cleanup_work_identity_guard();
+DROP TRIGGER IF EXISTS ss_cleanup_work_no_delete ON ss_cleanup_collection_work;
+CREATE TRIGGER ss_cleanup_work_no_delete BEFORE DELETE ON ss_cleanup_collection_work FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+
+CREATE OR REPLACE FUNCTION ss_cleanup_collection_complete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (SELECT count(*) FROM ss_cleanup_collection_counts WHERE collection_id=NEW.id)<>NEW.count_rows THEN
+        RAISE EXCEPTION 'Collection counts must commit with their immutable collection';
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_collection_complete ON ss_cleanup_collections;
+CREATE CONSTRAINT TRIGGER ss_cleanup_collection_complete AFTER INSERT ON ss_cleanup_collections
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ss_cleanup_collection_complete();
+CREATE OR REPLACE FUNCTION ss_cleanup_collection_count_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_count INTEGER;
+BEGIN
+    SELECT count_rows INTO expected_count FROM ss_cleanup_collections WHERE id=NEW.collection_id;
+    IF expected_count IS NULL OR NEW.ordinal>=expected_count THEN RAISE EXCEPTION 'Count is outside its immutable collection'; END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_collection_count_guard ON ss_cleanup_collection_counts;
+CREATE TRIGGER ss_cleanup_collection_count_guard BEFORE INSERT ON ss_cleanup_collection_counts
+    FOR EACH ROW EXECUTE FUNCTION ss_cleanup_collection_count_guard();
+DO $$ DECLARE table_name TEXT; BEGIN
+    FOREACH table_name IN ARRAY ARRAY['ss_cleanup_observer_config','ss_cleanup_manual_requests','ss_cleanup_collection_attempts','ss_cleanup_collections','ss_cleanup_collection_counts','ss_cleanup_work_events'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS ss_cleanup_evidence_immutable ON %I',table_name);
+        EXECUTE format('CREATE TRIGGER ss_cleanup_evidence_immutable BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update()',table_name);
+    END LOOP;
+END $$;
+INSERT INTO ss_schema_versions(version) VALUES (12) ON CONFLICT DO NOTHING;
