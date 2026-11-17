@@ -22,8 +22,10 @@ class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSett
         self.http_token='fictional-observer-http-session-'+uuid.uuid4().hex
         with self.database.transaction() as db:
             self.assertRegex(db.execute('SELECT current_schema() AS name').fetchone()['name'],r'^ss_test_[a-f0-9]{32}$')
-            db.execute('UPDATE ss_sessions SET token_hash=%s WHERE token_hash=%s',
-                       (digest(self.http_token),self.actor['session_hash']))
+            # Seed the known fictional bearer at INSERT; never reassign session identity.
+            db.execute('''INSERT INTO ss_sessions(token_hash,tenant_id,staff_id,expires_at,mfa_version,mfa_authenticated_at)
+                          VALUES (%s,%s,%s,now()+interval '1 hour',1,now())''',
+                       (digest(self.http_token),self.tenant,self.actor['staff_id']))
         self.actor['session_hash']=digest(self.http_token)
         self._observer_reconnect()
         self.http_app=create_app(self.config|{'TESTING':True,'CLEANUP_OBSERVER_ENABLED':True},
