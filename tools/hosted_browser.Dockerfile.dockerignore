@@ -1,0 +1,35 @@
+# Only the hosted application and this finite browser fixture enter the image.
+**
+!hosted/
+!hosted/**
+!requirements-hosted.txt
+!tools/
+!tools/hosted_browser_ci.py
+!tools/hosted_browser_fixture.py
+!tools/hosted_browser_cases.py
+!tools/hosted_browser_constraints.txt
+!tools/hosted_browser_requirements.txt
+!tools/playwright-1.64.1-seccomp.json
+!tools/hosted_browser-seccomp.json
+!tools/HOSTED_BROWSER_SECCOMP_PROVENANCE.txt
+!tools/PLAYWRIGHT-LICENSE.txt
+!tools/hosted_browser.Dockerfile
+!tools/hosted_browser.Dockerfile.dockerignore
+!intake_manifest.py
+!catalog_physical_ownership.py
+!intake_physical_identity.py
+!scanner_adapters.py
+!intake_label_contract.py
+# Keep these exclusions last: hosted/** must never reopen private/cache inputs.
+**/.git
+**/.git/**
+**/__pycache__
+**/__pycache__/**
+**/*.pyc
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.db
+**/*.sqlite
+**/*.sqlite3

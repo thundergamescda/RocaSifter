@@ -1,0 +1,29 @@
+UNRUN container-only hosted Linux browser fixture profile derivation.
+
+Upstream tools/playwright-1.64.1-seccomp.json is preserved byte for byte:
+SHA256 cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849
+https://raw.githubusercontent.com/microsoft/playwright/v1.64.1/utils/docker/seccomp_profile.json
+Its Apache-2.0 license is preserved in tools/PLAYWRIGHT-LICENSE.txt.
+The original six-file source foundation remains in the private Planning folder.
+
+tools/hosted_browser-seccomp.json is a separate local derivative:
+SHA256 e56c2f17869890cbd1fed1b44e584af59ffca5f44cb946832b194c5662cc049f
+The sole change inserts this unconditional first syscall rule:
+  {"names":["clone3"],"action":"SCMP_ACT_ERRNO","errnoRet":38}
+Removing that inserted rule and its following comma recovers the exact upstream
+bytes. defaultAction, architectures and every existing rule remain unchanged.
+clone3 remains denied. No capability, syscall allow or sandbox bypass is added.
+
+Source rationale, reviewed 2026-11-17; compatibility is inferred, not executed:
+https://raw.githubusercontent.com/bminor/glibc/release/2.41/master/sysdeps/unix/sysv/linux/clone-internal.c
+__clone_internal falls back from clone3 to clone only for errno ENOSYS.
+https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json
+Moby's current default denies clone3 with errnoRet 38 without CAP_SYS_ADMIN.
+This browser container drops ALL capabilities. The dedicated derivative returns
+the same ENOSYS result unconditionally while retaining the upstream clone rules.
+
+The shell pins the derivative SHA256 and passes it only through Docker's
+container security-opt seccomp setting. Chromium sandboxing stays explicit,
+UID stays 10001, IPC stays private and no fallback configuration is attempted.
+This source data changes no host policy or Windows application-control setting.
+No profile load, container/browser launch, parser or compatibility test was run.

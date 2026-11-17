@@ -7,10 +7,50 @@ PostgreSQL database with TLS. It runs the complete module selection in
 tools/test_hosted_postgres.py. Skipped, omitted, failed or errored cases cannot
 be counted as a successful acceptance run.
 
+The current companion selection runs five entire hosted-only unit modules with
+85 fixed approved IDs: store identity (5), provider IDs (10), Square status (5),
+revocation/reconciliation guards (21) and inventory read collection (44).
+They use fictional database/transport
+responses and are separate from PostgreSQL acceptance. Every module receives its
+own exact-ID, loader, result and log checks; ordinary unit failures do not omit
+the other groups or the full PostgreSQL child. Final success requires all groups.
+No desktop/browser definitions or alternative Windows runtime are selected.
+
 The workflow runs only for pushes to stock-sleeve-hosted-ci-* preview branches
 in thundergamescda/RocaSifter. It has read-only repository permission and checks
 out the exact triggering commit without persisting checkout credentials. It has
 no deployment, paid-resource provisioning or artifact-upload step.
+
+Latest hosted fixture evidence, 2026-11-17
+
+Commit 2aa667d57f2d61cb9e866223a0ba9d095dd5e1a4 passed all 480 PostgreSQL
+cases across 32 modules and all 85 hosted units. Zero failures/errors/skips.
+All prior 464 IDs and 16 new own-password-change IDs passed. All 20 payloads,
+240 copied public source files and 118 runner fingerprints were independently
+reconciled and stable. This does not execute the full private 597-file app.
+https://github.com/thundergamescda/RocaSifter/actions/runs/44179698055
+Private report: PASSWORD_CHANGE_TEST_REPORT_20261117_r2.txt
+Initial run 44162487028 failed with 479 PG passes, one fixture ProgrammingError
+and 85 unit passes. Its raw failure remains. Only the LIKE-prefix parameter in
+one audit-query test statement changed; IDs, assertions and app code stayed.
+The exact previous schema13 fixture is tests/fixtures/schema13.sql, SHA256
+ab19f9bc38a8b6be85a68562ee840bc5acf21440543fe06bd72cce85a0cb057e.
+The genuine repeated schema13-to14 upgrade preserves authentication records and
+adds the staff-session seek index. Browser HTTPS/cookies/two-tab usability,
+Windows/native/device/provider/legal and customer-release gates remain open.
+
+Earlier bounded backlog evidence, 2026-11-17
+
+Commit 58e8f6e1da189b61d2f25417d442b36f9b854865 passed all 464 PostgreSQL
+cases across 31 modules plus all 85 companion units, on the first attempt. Zero
+failures/errors/skips; all 20 required payloads passed byte/hash verification.
+Independent reconciliation checked the exact retained 446 IDs plus 18 new IDs,
+237 copied public files and all 116 runner fingerprints, unchanged before/after.
+This is not execution acceptance of the private 594-file working copy.
+https://github.com/thundergamescda/RocaSifter/actions/runs/44152563236
+Private report: CLEANUP_BACKLOG_TEST_REPORT_20261117_r1.txt
+The global observer gate and automatic OAuth scheduling remain inactive. No
+production database, hosted deployment, installed app or Square data was changed.
 
 Inputs and isolation
 
@@ -40,9 +80,20 @@ remain failed outcomes. The evidence must be reconciled with the exact commit
 before reporting any passing count. Preparing these files alone does not prove
 that the workflow has run or that the current application passes.
 
+Delivered payloads have explicit names, UTF8 byte lengths and SHA256 markers.
+Reconstruction removes exactly one provider timestamp prefix per log record,
+including an optional leading BOM directly before that prefix. It must not strip
+payload text a second time. Verify the resulting bytes against both markers;
+preserve any raw mismatch and any separately derived recovery without overwriting
+the original. The full source/commit and actual terminal run/job must agree.
+
 The historical schema7 migration fixture lives in tests/fixtures/schema7.sql.
 Its existing SHA256 assertion is unchanged; the fixture is not derived from a
 newer schema or fetched from an untracked sibling development directory.
+The exact prior passed schema12 fixture is tests/fixtures/schema12.sql, SHA256
+c4cb1e6139798d0d193f03a4cf15799dfe6f2e75566b22db087d8d933354aab4.
+Its bytes match the prior published schema blob. The schema12-to13 test verifies
+that hash, repeats migration, preserves old records and exercises version2 recovery.
 
 This is Linux hosted PostgreSQL fixture acceptance. It does not clear Windows
 Application Control, publisher signing, desktop/browser installation or updates,

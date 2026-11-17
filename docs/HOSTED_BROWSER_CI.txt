@@ -1,0 +1,125 @@
+STOCK & SLEEVE | REAL HTTPS HOSTED PORTAL BROWSER FIXTURE
+Source candidate — UNRUN, November 17, 2026
+
+Purpose
+Exercise the actual hosted portal forms and Auth/MFA/session/CSRF handlers in
+bundled Chromium against a new disposable PostgreSQL schema. This is a Linux
+hosted-portal compartment. Native desktop and provider/device acceptance retain
+their own release gates.
+
+Execution is not admitted merely by the presence of these files. The complete
+fixture, browser cases, evidence runner, dependencies, container and workflow
+must be source-reviewed and pinned together before a finite run. A startup,
+sandbox, TLS, dependency, source or cleanup failure remains a failed outcome.
+
+Components
+tools/hosted_browser_fixture.py — owned database/schema, real HTTPS app, private
+  CA/NSS trust, fictional account seeds, one-shot committed-response barrier.
+tools/hosted_browser_cases.py — nine fixed whole user flows.
+tools/hosted_browser_ci.py — exact case selection, sandbox/binary/source checks,
+  outcome ledger, bounded masked screenshots and safe evidence.
+tools/run_hosted_browser_ci.sh — owned Docker resources, TLS database, private
+  network, deadlines, capture/delivery and cleanup.
+tools/hosted_browser.Dockerfile and adjacent .dockerignore — narrow image input:
+  hosted/**, the exact browser tools/requirements and five shared pure production
+  modules (intake_manifest.py, catalog_physical_ownership.py,
+  intake_physical_identity.py, scanner_adapters.py, intake_label_contract.py).
+  These unchanged modules are already public and present in the passed hosted
+  runtime. No desktop/test root-module wildcard is used.
+.github/workflows/hosted-browser.yml — read-only exact-SHA checkout on only
+  stock-sleeve-browser-ci-* branches; no deployment or artifact upload.
+
+Fixed selection
+HUI01 trusted HTTPS, actual cookie attributes and CSRF rejection.
+HUI02 actual untrusted-CA and hostname-mismatch rejection.
+HUI03 real sign-in for owner, manager, buyer and cashier; role/default-off UI
+  and explicit logout.
+HUI04 desktop 1440x1000 and mobile 390x844 labels, keyboard/focus and overflow.
+HUI05 actual owner authenticator enrollment and subsequent real MFA challenge.
+HUI06 wrong current password and immediate form-secret clearing.
+HUI07 actual password change, revocation of all owned sessions and new sign-in.
+HUI08 actual committed change with intentionally lost reply, manual recovery
+  and no automatic password replay.
+HUI09 delayed actual A reply after B's newer real login; current B identity and
+  workspace must survive and the old response must not mutate the newer cookie.
+
+All selected flows must start and pass. Missing/not-run cases are never accepted
+as skips. The original 480 PostgreSQL and 85 unit results remain separate evidence;
+these nine browser flows do not replace them or represent nine extra unit cases.
+
+Trust, authentication and isolation
+The app runs with TESTING=False and the exact prebound fixture HTTPS origin.
+Accounts use real password hashes; sessions, MFA proofs, CSRF and Secure cookies
+are produced by actual handlers. There is no fulfilled auth/me response or
+injected authenticated cookie. Browser-side fetches use the real document and
+cookie context. The delay/drop barrier preserves the real committed WSGI reply;
+it holds no database transaction while another tab signs in.
+
+The ephemeral web CA enters only a fresh owned nonroot user's private NSS DB.
+No host/OS trust change, forwarded-proto fiction, certificate ignore flag,
+external account or merchant data is used. Negative CA/hostname cases must fail.
+Private keys and other fixture secrets belong under /ci-runtime or owned home,
+outside the captured /ci-evidence directory.
+
+Build dependencies resolve before the runtime network exists. Runtime uses the
+reviewed Python3.12.16 and PG18.6 image digests, generated database credentials,
+a fresh owned ss_test_<uuid> schema and one owned internal network. Browser
+requests allow only the exact fixture origin and the two known negative-test
+origins during HUI02. Server provider transport is denied.
+
+Chromium runs as UID10001 with chromium_sandbox=True, private bounded shm, init,
+all host capabilities dropped and a pinned derivative of the upstream seccomp
+profile. The sole derivative rule keeps clone3 denied with ENOSYS so glibc can
+use the existing clone fallback; every upstream allow/default rule is retained.
+The unmodified upstream profile, license and exact provenance are also kept.
+See tools/HOSTED_BROWSER_SECCOMP_PROVENANCE.txt. There is
+no privileged/SYS_ADMIN/hostIPC/host-network/no-sandbox fallback. The runner
+checks the actual bundled executable/version, process UID/no-new-privileges,
+seccomp and an additional renderer filter. Readiness failures remain failures.
+
+Evidence and privacy
+Fourteen finite files plus harness-summary.json are required:
+browser-summary.json; browser-cases.log; copied-source-before.json;
+copied-source-after.json; browser-runtime.json; network-ledger.json;
+js-errors.json; screenshots-manifest.json; screenshots.json;
+tls-client-probe.json; pip-freeze.txt; pip-bootstrap-report.json;
+pip-install-report.json; os-packages.txt.
+
+Screenshots use bounded base64 PNGs with byte/hash manifests. All inputs,
+MFA/recovery material and staff/store identity displays are masked. Only safe
+fixture screens are captured. No HAR, raw trace, DOM dump, request body, cookie,
+credential, seed or recovery-code logging is permitted. The network ledger keeps
+only bounded method/path/status/fixed failure codes, without query/fragment or
+headers. JS/console diagnostics contain fixed codes rather than raw text.
+
+Only two controlled failure types are expected: exact negative TLS navigations
+in HUI02, and one committed-password response socket loss in HUI08. All other
+ordinary failed requests or HTTP error responses (except the exact intentional
+auth/CSRF checks), external attempts, unhandled JS errors, missing
+screenshots, changed source, incomplete cleanup or adverse outcomes fail the run.
+
+The harness checks unpredictable resource ownership before stop/copy/remove and
+captures finite evidence before cleanup. Delivered files carry explicit UTF8
+length/SHA256 framing. Actual terminal run/job identities, source tree, case IDs,
+raw frames, masked PNGs and cleanup evidence must be reconciled before reporting
+a pass. Windows local parsing/import/browser execution is not part of this phase.
+
+Primary references
+Pinned Playwright launch/source and default sandbox behavior:
+https://raw.githubusercontent.com/microsoft/playwright/v1.64.1/packages/playwright-core/src/server/chromium/chromium.ts
+Official Docker profile and license:
+https://raw.githubusercontent.com/microsoft/playwright/v1.64.1/utils/docker/seccomp_profile.json
+https://raw.githubusercontent.com/microsoft/playwright/v1.64.1/LICENSE
+Official Python package metadata:
+https://pypi.org/pypi/playwright/1.64.1/json
+Chromium private NSS certificate-store behavior:
+https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md
+Playwright custom Linux image/nonroot guidance:
+https://playwright.dev/python/docs/docker
+
+This candidate does not authorize a deployed service, app distribution, paid
+hosting/signing resource, global observer/scheduler activation or live Square
+call. Commercial usability, physical devices, checkout/reporting/funding,
+pricing rights, restore/offboarding, privacy/legal/tax and Marketplace acceptance
+remain broader requirements.
+
