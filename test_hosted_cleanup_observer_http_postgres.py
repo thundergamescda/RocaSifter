@@ -13,6 +13,8 @@ from hosted.app import create_app
 from hosted.security import digest
 import test_hosted_receiving_oauth_postgres as oauth_fixture
 import test_hosted_settlement_postgres as settlement_fixture
+import test_hosted_cleanup_backlog_adversarial_postgres as backlog_fixture
+import test_hosted_cleanup_observer_postgres as observer_fixture
 
 
 class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSettlementFixture):
@@ -45,6 +47,18 @@ class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSett
         state,_=oauth_fixture.PostgreSQLReceivingOAuthAcceptance.begin(self)
         self.square.complete(self.actor,state,'fictional-observer-http-oauth-code')
 
+    def _observer_scope_row(self):
+        row=oauth_fixture.PostgreSQLReceivingOAuthAcceptance.connection(self)
+        return {'tenant_id':self.tenant,'application_id':row['oauth_application_id'],'environment':row['environment'],
+                'merchant_id':row['merchant_id'],'authorization_generation':row['authorization_generation']}
+
+    def _observer_queued_work_row(self,scope):
+        with self.database.transaction() as db:
+            return db.execute('''SELECT id FROM ss_cleanup_collection_work WHERE tenant_id=%s AND application_id=%s
+                AND environment=%s AND merchant_id=%s AND authorization_generation=%s AND state='queued'
+                ORDER BY created_at DESC,id DESC LIMIT 1''',tuple(scope[key] for key in
+                    ('tenant_id','application_id','environment','merchant_id','authorization_generation'))).fetchone()
+
     def _observer_get(self,path='/api/catalog-cleanup/status',*,client=None,headers=None):
         return (client or self.http_client).get(path,base_url=self.config['PUBLIC_BASE_URL'],
             headers={'Authorization':'Bearer '+self.http_token} if headers is None else headers)
@@ -75,11 +89,16 @@ class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSett
         value=response.json
         self.assertEqual(set(value),{'generation','config_version','enabled','background_enabled','worker_enabled',
             'cadence_seconds','stale_after_seconds','state','reason_codes','coverage_current','last_attempt','last_complete',
-            'observed_age_seconds','pending_notification_count','missing_count','missing','missing_truncated','next_due_at',
+            'observed_age_seconds','pending_notification_count','pending_notification_count_exact',
+            'receipt_processing_pending_count','receipt_processing_pending_count_exact','missing_count','missing','missing_truncated','next_due_at',
             'atomic_snapshot','continuous_zero_verified','deletion_enabled'})
         self.assertEqual(str(uuid.UUID(value['generation'])),value['generation'])
         self.assertEqual(value['config_version'],0);self.assertFalse(value['enabled']);self.assertFalse(value['background_enabled'])
         self.assertTrue(value['worker_enabled']);self.assertFalse(value['coverage_current'])
+        for count,exact in (('pending_notification_count','pending_notification_count_exact'),
+                            ('receipt_processing_pending_count','receipt_processing_pending_count_exact')):
+            self.assertIs(type(value[count]),int)
+            self.assertEqual(value[count],0);self.assertIs(value[exact],True)
         self.assertIsNone(value['last_attempt']);self.assertIsNone(value['last_complete']);self.assertIsNone(value['missing_count'])
         for name in ('atomic_snapshot','continuous_zero_verified','deletion_enabled'):self.assertIs(value[name],False)
         self.assertEqual(response.headers['Cache-Control'],'no-store')
@@ -167,9 +186,17 @@ class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSett
 
     def test_reconnect_rejects_original_generation_and_new_generation_starts_off(self):
         before=self._observer_enable();old_config=self._observer_config_body(before,enabled=False)
+        backlog_fixture.seed_backlog(self,scope=self._observer_scope_row(),receipts=2,first_quantity='0')
+        old_status=self._observer_get().json
+        self.assertEqual(old_status['pending_notification_count'],2);self.assertIs(old_status['pending_notification_count_exact'],True)
+        self.assertEqual(old_status['receipt_processing_pending_count'],2);self.assertIs(old_status['receipt_processing_pending_count_exact'],True)
         old_manual=self._observer_manual_body(before)
         self._observer_reconnect();current=self._observer_get().json
         self.assertNotEqual(current['generation'],before['generation']);self.assertEqual(current['config_version'],0)
+        for count,exact in (('pending_notification_count','pending_notification_count_exact'),
+                            ('receipt_processing_pending_count','receipt_processing_pending_count_exact')):
+            self.assertIs(type(current[count]),int)
+            self.assertEqual(current[count],0);self.assertIs(current[exact],True)
         self.assertFalse(current['enabled']);self.assertFalse(current['background_enabled']);self.assertFalse(current['coverage_current'])
         for path,body in (('config',old_config),('refresh',old_manual)):
             with self.subTest(path=path):
@@ -241,3 +268,66 @@ class PostgreSQLCleanupObserverHTTPAcceptance(settlement_fixture._PostgreSQLSett
         expected=self._observer_get().json
         response=self._observer_get('/api/catalog-cleanup/status?tenant_id='+str(uuid.uuid4()))
         self.assertEqual(response.status_code,200);self.assertEqual(response.json,expected)
+
+    def test_bounded_backlog_counts_remain_precise_or_lower_bounds_with_worker_off(self):
+        app=create_app(self.config|{'TESTING':True},database=self.database,square_transport=self.transport)
+        client=app.test_client();scope=self._observer_scope_row()
+        initial=self._observer_get(client=client).json
+        self.assertFalse(initial['worker_enabled']);self.assertFalse(initial['enabled'])
+        backlog_fixture.seed_backlog(self,scope=scope,receipts=1000,first_quantity='0')
+        small=self._observer_get(client=client)
+        self.assertEqual(small.status_code,200)
+        for count,exact in (('pending_notification_count','pending_notification_count_exact'),
+                            ('receipt_processing_pending_count','receipt_processing_pending_count_exact')):
+            self.assertIs(type(small.json[count]),int)
+            self.assertEqual(small.json[count],1000);self.assertIs(small.json[exact],True)
+        backlog_fixture.seed_backlog(self,scope=scope,receipts=1,first_quantity='0')
+        large=self._observer_get(client=client)
+        self.assertEqual(large.status_code,200)
+        for count,exact in (('pending_notification_count','pending_notification_count_exact'),
+                            ('receipt_processing_pending_count','receipt_processing_pending_count_exact')):
+            self.assertIs(type(large.json[count]),int)
+            self.assertEqual(large.json[count],1001);self.assertIs(large.json[exact],False)
+        self.assertEqual(large.json['state'],'disabled');self.assertFalse(large.json['worker_enabled'])
+        self.assertFalse(large.json['enabled']);self.assertFalse(large.json['coverage_current'])
+        self.assertIsNone(large.json['last_attempt']);self.assertIsNone(large.json['last_complete'])
+
+    def test_same_principal_history_preparation_keeps_read_point_but_never_makes_it_current(self):
+        observer=self.http_app.extensions['ss_cleanup_observer']
+        self.http_reader=observer_fixture.FictionalCleanupReader(self.database,self.http_square)
+        observer.reader=self.http_reader
+        current=self._observer_enable();scope=self._observer_scope_row()
+        first=self._observer_post('refresh',self._observer_manual_body(current))
+        self.assertEqual(first.status_code,200)
+        work=self._observer_queued_work_row(scope);self.assertIsNotNone(work)
+        self.assertEqual(observer.run_once(work_id=work['id'])['status'],'complete')
+        before=self._observer_get()
+        self.assertEqual(before.status_code,200);self.assertTrue(before.json['coverage_current'])
+        self.assertIsNotNone(before.json['last_complete'])
+        for count,exact in (('pending_notification_count','pending_notification_count_exact'),
+                            ('receipt_processing_pending_count','receipt_processing_pending_count_exact')):
+            self.assertIs(type(before.json[count]),int)
+            self.assertEqual(before.json[count],0);self.assertIs(before.json[exact],True)
+        backlog_fixture.seed_backlog(self,scope=scope,receipts=1,first_quantity='0')
+        pending=self._observer_get()
+        self.assertEqual(pending.status_code,200);self.assertFalse(pending.json['coverage_current'])
+        self.assertEqual(pending.json['last_complete'],before.json['last_complete'])
+        for count in ('pending_notification_count','receipt_processing_pending_count'):
+            self.assertIs(type(pending.json[count]),int)
+        self.assertEqual(pending.json['pending_notification_count'],1)
+        self.assertEqual(pending.json['receipt_processing_pending_count'],1)
+        self.assertIs(pending.json['pending_notification_count_exact'],True)
+        self.assertIs(pending.json['receipt_processing_pending_count_exact'],True)
+        calls=(self.http_reader.access_calls,list(self.http_reader.calls))
+        queued=self._observer_post('refresh',self._observer_manual_body(pending.json))
+        self.assertEqual(queued.status_code,200)
+        preparing=self._observer_queued_work_row(scope);self.assertIsNotNone(preparing)
+        self.assertTrue(observer.prepare_once(preparing['id'])['ready'])
+        self.assertEqual((self.http_reader.access_calls,list(self.http_reader.calls)),calls)
+        after=self._observer_get()
+        self.assertEqual(after.status_code,200);self.assertFalse(after.json['coverage_current'])
+        self.assertEqual(after.json['last_complete'],before.json['last_complete'])
+        for count in ('pending_notification_count','receipt_processing_pending_count'):
+            self.assertIs(type(after.json[count]),int)
+        self.assertEqual(after.json['pending_notification_count'],1);self.assertIs(after.json['pending_notification_count_exact'],True)
+        self.assertEqual(after.json['receipt_processing_pending_count'],0);self.assertIs(after.json['receipt_processing_pending_count_exact'],True)

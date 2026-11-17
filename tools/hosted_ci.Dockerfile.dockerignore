@@ -14,6 +14,7 @@
 !tests/
 !tests/fixtures/
 !tests/fixtures/schema7.sql
+!tests/fixtures/schema12.sql
 **/.git
 **/.git/**
 **/__pycache__

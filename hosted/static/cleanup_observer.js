@@ -8,6 +8,9 @@
     reading:'Reading',complete:'Read complete',partial:'Partial read',stale:'Stale',authority_blocked:'Authority blocked'};
   let context=null,snapshot=null,serial=0,busy=false,pending=null,configBlocked=false;
   const integer=value=>Number.isSafeInteger(value)&&value>=0;
+  const boundedCount=(count,exact)=>integer(count)&&typeof exact==='boolean'&&
+    (exact?count<=1000:count===1001);
+  const countText=(count,exact)=>exact?String(count):'At least '+count;
   const timestamp=value=>typeof value==='string'&&value.length<=64&&Number.isFinite(Date.parse(value))&&
     /(?:Z|[+-]\d{2}:\d{2})$/.test(value);
   const interval=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&
@@ -32,6 +35,7 @@
     el('cleanupObserverComplete').textContent='Unavailable';
     el('cleanupObserverMissing').textContent='Unknown';
     el('cleanupObserverPending').textContent='Unknown';
+    el('cleanupObserverProcessing').textContent='Unknown';
     el('cleanupObserverDue').textContent='Unavailable';
     el('cleanupObserverReasons').replaceChildren();
     el('cleanupObserverStatus').textContent=message;
@@ -64,7 +68,9 @@
         !['enabled','background_enabled','worker_enabled','coverage_current','missing_truncated'].every(key=>typeof value[key]==='boolean')||
         value.background_enabled&&!value.enabled||
         value.atomic_snapshot!==false||value.continuous_zero_verified!==false||value.deletion_enabled!==false||
-        !integer(value.pending_notification_count)||!(value.missing_count===null||integer(value.missing_count))||
+        !boundedCount(value.pending_notification_count,value.pending_notification_count_exact)||
+        !boundedCount(value.receipt_processing_pending_count,value.receipt_processing_pending_count_exact)||
+        !(value.missing_count===null||integer(value.missing_count))||
         !(value.observed_age_seconds===null||integer(value.observed_age_seconds))||
         !(value.next_due_at===null||timestamp(value.next_due_at))||
         !Array.isArray(value.reason_codes)||value.reason_codes.length>32||
@@ -89,14 +95,17 @@
     el('cleanupObserverState').textContent=states[value.state];
     el('cleanupObserverGate').textContent=(value.worker_enabled?'Global worker gate: enabled.':'Global worker gate: off; no background worker is activated here.')+
       ' Store consent: '+(value.enabled?'enabled':'off')+'. Background consent: '+(value.background_enabled?'enabled':'off')+'.';
-    const current=value.coverage_current&&value.pending_notification_count===0&&value.state==='complete'&&value.missing_count===0;
+    const current=value.coverage_current&&value.pending_notification_count_exact&&value.pending_notification_count===0&&
+      value.receipt_processing_pending_count_exact&&value.receipt_processing_pending_count===0&&
+      value.state==='complete'&&value.missing_count===0;
     el('cleanupObserverCoverage').textContent=current?
       'At this status check, the latest bounded read met the service checks. Separate reads are not an atomic snapshot.':
       'Current complete coverage is not established. Queued notices, missing evidence or changed authority may require another read.';
     el('cleanupObserverAttempt').textContent=showInterval(value.last_attempt)+(value.last_attempt?' · '+value.last_attempt.outcome+' · '+value.last_attempt.count_rows+' count rows':'');
     el('cleanupObserverComplete').textContent=showInterval(value.last_complete);
     el('cleanupObserverMissing').textContent=value.missing_count===null?'Unknown':String(value.missing_count)+(value.missing_truncated?' (detail list capped)':'');
-    el('cleanupObserverPending').textContent=String(value.pending_notification_count);
+    el('cleanupObserverPending').textContent=countText(value.pending_notification_count,value.pending_notification_count_exact);
+    el('cleanupObserverProcessing').textContent=countText(value.receipt_processing_pending_count,value.receipt_processing_pending_count_exact);
     el('cleanupObserverDue').textContent=value.next_due_at?new Date(value.next_due_at).toLocaleString()+' (due metadata; no scheduler promise)':'Not scheduled';
     const reasons=el('cleanupObserverReasons');reasons.replaceChildren();
     for (const code of value.reason_codes) {const item=document.createElement('li');item.textContent=code.replaceAll('_',' ');reasons.append(item);}

@@ -156,6 +156,8 @@ class PostgreSQLCleanupObserverAcceptance(_CleanupObserverFixture):
         current=self.observer.status(self.actor)
         self.assertEqual(current['config_version'],0); self.assertFalse(current['enabled']); self.assertFalse(current['background_enabled'])
         self.assertFalse(current['coverage_current']); self.assertIsNone(current['last_attempt'])
+        self.assertEqual((current['pending_notification_count'],current['receipt_processing_pending_count']),(0,0))
+        self.assertTrue(current['pending_notification_count_exact']); self.assertTrue(current['receipt_processing_pending_count_exact'])
         isolated=Database(self.url,schema=self.schema,max_size=1); self.addCleanup(isolated.close)
         with isolated.pool.connection() as connection:connection.isolation_level=IsolationLevel.REPEATABLE_READ
         square=Square(isolated,self.config,self.transport); reader=FictionalCleanupReader(isolated,square)
@@ -381,6 +383,7 @@ class PostgreSQLCleanupObserverAcceptance(_CleanupObserverFixture):
                 db.execute('INSERT INTO ss_schema_versions(version) VALUES (11)')
             self.assertFalse(database.ready()); database.migrate(); self.assertTrue(database.ready()); database.migrate()
             with database.transaction() as db:
+                self.assertIsNotNone(db.execute('SELECT version FROM ss_schema_versions WHERE version=13').fetchone())
                 current=db.execute('SELECT * FROM ss_square_connections WHERE tenant_id=%s',(tenant,)).fetchone()
                 self.assertEqual({key:current[key] for key in old_conn},old_conn)
                 self.assertEqual(db.execute('SELECT * FROM ss_square_jobs WHERE tenant_id=%s',(tenant,)).fetchone(),old_job)

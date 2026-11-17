@@ -1075,3 +1075,217 @@ DO $$ DECLARE table_name TEXT; BEGIN
     END LOOP;
 END $$;
 INSERT INTO ss_schema_versions(version) VALUES (12) ON CONFLICT DO NOTHING;
+
+-- Schema 13: bounded local receipt processing, separate from read coverage.
+CREATE INDEX IF NOT EXISTS ss_cleanup_receipt_full_scope_seek ON ss_cleanup_inventory_receipts
+    (tenant_id,application_id,environment,merchant_id,authorization_generation,receipt_cursor)
+    WHERE binding_status IN ('active','revoked','revocation_pending','token_expired');
+CREATE INDEX IF NOT EXISTS ss_cleanup_intent_full_scope_seek ON ss_cleanup_refresh_queue
+    (tenant_id,application_id,environment,merchant_id,authorization_generation,receipt_cursor);
+CREATE OR REPLACE FUNCTION ss_cleanup_counter_shape(value JSONB) RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+DECLARE field TEXT;
+BEGIN
+    IF jsonb_typeof(value)<>'object' OR octet_length(value::TEXT)>4096 THEN RETURN FALSE; END IF;
+    FOREACH field IN ARRAY ARRAY['receipts','facts','positive','negative','estimated','item','other_state','unknown_payload','interrupted_authority'] LOOP
+        IF jsonb_typeof(value->field) IS DISTINCT FROM 'number' OR (value->>field) !~ '^(0|[1-9][0-9]{0,29})$' THEN RETURN FALSE; END IF;
+    END LOOP;
+    RETURN (SELECT count(*) FROM jsonb_object_keys(value))=9;
+END $$;
+CREATE TABLE IF NOT EXISTS ss_cleanup_receipt_batches (
+    id UUID PRIMARY KEY, tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL,
+    merchant_id TEXT NOT NULL, authorization_generation UUID NOT NULL, config_version BIGINT NOT NULL,
+    is_genesis BOOLEAN NOT NULL, previous_id UUID, previous_hash TEXT,
+    low_exclusive BIGINT NOT NULL CHECK(low_exclusive>=0), high_inclusive BIGINT NOT NULL CHECK(high_inclusive>=low_exclusive),
+    receipt_manifest JSONB NOT NULL CHECK(jsonb_typeof(receipt_manifest)='array' AND jsonb_array_length(receipt_manifest)<=100),
+    manifest_hash TEXT NOT NULL CHECK(manifest_hash ~ '^[0-9a-f]{64}$'),
+    delta_counts JSONB NOT NULL CHECK(ss_cleanup_counter_shape(delta_counts)), prefix_counts JSONB NOT NULL CHECK(ss_cleanup_counter_shape(prefix_counts)),
+    chain_hash TEXT NOT NULL CHECK(chain_hash ~ '^[0-9a-f]{64}$'), created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation),
+    UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash,high_inclusive),
+    UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash),
+    FOREIGN KEY(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version)
+        REFERENCES ss_cleanup_observer_config(tenant_id,application_id,environment,merchant_id,authorization_generation,config_version),
+    FOREIGN KEY(previous_id,tenant_id,application_id,environment,merchant_id,authorization_generation,previous_hash,low_exclusive)
+        REFERENCES ss_cleanup_receipt_batches(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash,high_inclusive),
+    CHECK((is_genesis AND previous_id IS NULL AND previous_hash IS NULL AND low_exclusive=0 AND high_inclusive=0)
+       OR (NOT is_genesis AND previous_id IS NOT NULL AND previous_hash IS NOT NULL AND high_inclusive>low_exclusive))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ss_cleanup_batch_genesis ON ss_cleanup_receipt_batches
+    (tenant_id,application_id,environment,merchant_id,authorization_generation) WHERE is_genesis;
+CREATE UNIQUE INDEX IF NOT EXISTS ss_cleanup_batch_successor ON ss_cleanup_receipt_batches(previous_id) WHERE previous_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS ss_cleanup_receipt_progress (
+    tenant_id UUID NOT NULL, application_id TEXT NOT NULL, environment TEXT NOT NULL, merchant_id TEXT NOT NULL, authorization_generation UUID NOT NULL,
+    head_id UUID NOT NULL, head_hash TEXT NOT NULL, processed_hwm BIGINT NOT NULL CHECK(processed_hwm>=0), revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0),
+    PRIMARY KEY(tenant_id,application_id,environment,merchant_id,authorization_generation),
+    FOREIGN KEY(head_id,tenant_id,application_id,environment,merchant_id,authorization_generation,head_hash,processed_hwm)
+        REFERENCES ss_cleanup_receipt_batches(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash,high_inclusive)
+);
+CREATE OR REPLACE FUNCTION ss_cleanup_batch_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE previous ss_cleanup_receipt_batches%ROWTYPE;
+DECLARE expected_manifest JSONB;
+DECLARE expected_delta JSONB;
+DECLARE expected_prefix JSONB;
+DECLARE ids BIGINT[];
+DECLARE field TEXT;
+BEGIN
+    IF NEW.is_genesis THEN
+        expected_delta='{"receipts":0,"facts":0,"positive":0,"negative":0,"estimated":0,"item":0,"other_state":0,"unknown_payload":0,"interrupted_authority":0}'::JSONB;
+        IF NEW.receipt_manifest<>'[]'::JSONB OR NEW.delta_counts<>expected_delta OR NEW.prefix_counts<>expected_delta THEN
+            RAISE EXCEPTION 'Genesis cannot invent receipt processing';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT * INTO previous FROM ss_cleanup_receipt_batches WHERE id=NEW.previous_id;
+    IF previous.id IS NULL OR previous.chain_hash<>NEW.previous_hash OR previous.high_inclusive<>NEW.low_exclusive THEN
+        RAISE EXCEPTION 'Receipt batch predecessor changed';
+    END IF;
+    SELECT COALESCE(jsonb_agg(jsonb_build_object('receipt_cursor',r.receipt_cursor,'body_hash',r.body_hash) ORDER BY r.receipt_cursor),'[]'::JSONB),
+           array_agg(r.receipt_cursor ORDER BY r.receipt_cursor),
+           jsonb_build_object('receipts',count(*),'unknown_payload',count(*) FILTER(WHERE r.payload_status<>'counts_present'),
+               'interrupted_authority',count(*) FILTER(WHERE r.binding_status<>'active'))
+      INTO expected_manifest,ids,expected_delta FROM (
+        SELECT receipt_cursor,body_hash,payload_status,binding_status FROM ss_cleanup_inventory_receipts
+        WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND environment=NEW.environment
+          AND merchant_id=NEW.merchant_id AND authorization_generation=NEW.authorization_generation
+          AND binding_status IN ('active','revoked','revocation_pending','token_expired')
+          AND receipt_cursor>NEW.low_exclusive AND receipt_cursor<=NEW.high_inclusive ORDER BY receipt_cursor LIMIT 101
+      ) r;
+    IF jsonb_array_length(expected_manifest)=0 OR jsonb_array_length(expected_manifest)>100 OR expected_manifest<>NEW.receipt_manifest
+       OR (expected_manifest->-1->>'receipt_cursor')::BIGINT<>NEW.high_inclusive THEN
+        RAISE EXCEPTION 'Receipt batch must contain its exact bounded scoped prefix';
+    END IF;
+    SELECT expected_delta || jsonb_build_object('facts',count(*),'positive',count(*) FILTER(WHERE quantity::NUMERIC>0),
+        'negative',count(*) FILTER(WHERE quantity::NUMERIC<0),'estimated',count(*) FILTER(WHERE is_estimated IS TRUE),
+        'item',count(*) FILTER(WHERE catalog_object_type='ITEM'),'other_state',count(*) FILTER(WHERE state<>'IN_STOCK'))
+      INTO expected_delta FROM ss_cleanup_inventory_facts WHERE receipt_cursor=ANY(ids);
+    expected_prefix=previous.prefix_counts;
+    FOREACH field IN ARRAY ARRAY['receipts','facts','positive','negative','estimated','item','other_state','unknown_payload','interrupted_authority'] LOOP
+        expected_prefix=jsonb_set(expected_prefix,ARRAY[field],to_jsonb((previous.prefix_counts->>field)::NUMERIC+(expected_delta->>field)::NUMERIC));
+    END LOOP;
+    IF expected_delta<>NEW.delta_counts OR expected_prefix<>NEW.prefix_counts THEN RAISE EXCEPTION 'Receipt prefix counts cannot omit witnesses'; END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_batch_guard ON ss_cleanup_receipt_batches;
+CREATE TRIGGER ss_cleanup_batch_guard BEFORE INSERT ON ss_cleanup_receipt_batches FOR EACH ROW EXECUTE FUNCTION ss_cleanup_batch_guard();
+DROP TRIGGER IF EXISTS ss_cleanup_batch_immutable ON ss_cleanup_receipt_batches;
+CREATE TRIGGER ss_cleanup_batch_immutable BEFORE UPDATE OR DELETE ON ss_cleanup_receipt_batches FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+CREATE OR REPLACE FUNCTION ss_cleanup_progress_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE node ss_cleanup_receipt_batches%ROWTYPE;
+BEGIN
+    SELECT * INTO node FROM ss_cleanup_receipt_batches WHERE id=NEW.head_id;
+    IF TG_OP='INSERT' THEN
+        IF NOT node.is_genesis OR NEW.processed_hwm<>0 OR NEW.revision<>0 THEN RAISE EXCEPTION 'Receipt progress must start at genesis'; END IF;
+    ELSE
+        IF ROW(NEW.tenant_id,NEW.application_id,NEW.environment,NEW.merchant_id,NEW.authorization_generation)
+           IS DISTINCT FROM ROW(OLD.tenant_id,OLD.application_id,OLD.environment,OLD.merchant_id,OLD.authorization_generation)
+           OR node.previous_id IS DISTINCT FROM OLD.head_id OR node.previous_hash IS DISTINCT FROM OLD.head_hash
+           OR node.low_exclusive<>OLD.processed_hwm OR NEW.revision<>OLD.revision+1 OR NEW.processed_hwm<=OLD.processed_hwm THEN
+            RAISE EXCEPTION 'Receipt progress may advance only to its direct immutable successor';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_progress_guard ON ss_cleanup_receipt_progress;
+CREATE TRIGGER ss_cleanup_progress_guard BEFORE INSERT OR UPDATE ON ss_cleanup_receipt_progress FOR EACH ROW EXECUTE FUNCTION ss_cleanup_progress_guard();
+DROP TRIGGER IF EXISTS ss_cleanup_progress_no_delete ON ss_cleanup_receipt_progress;
+CREATE TRIGGER ss_cleanup_progress_no_delete BEFORE DELETE ON ss_cleanup_receipt_progress FOR EACH ROW EXECUTE FUNCTION ss_reject_immutable_evidence_update();
+
+DO $$ DECLARE table_name TEXT; BEGIN
+    FOREACH table_name IN ARRAY ARRAY['ss_cleanup_collection_work','ss_cleanup_collection_attempts','ss_cleanup_collections'] LOOP
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_basis_version SMALLINT NOT NULL DEFAULT 1 CHECK(receipt_basis_version IN (1,2))',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS work_kind TEXT NOT NULL DEFAULT ''collection'' CHECK(work_kind IN (''collection'',''receipt_prepare''))',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_basis_hash TEXT',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_floor_batch_id UUID',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_floor_hash TEXT',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_head_batch_id UUID',table_name);
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS receipt_head_hash TEXT',table_name);
+        IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=table_name::REGCLASS AND conname='ss_cleanup_basis_shape') THEN
+            EXECUTE format('ALTER TABLE %I ADD CONSTRAINT ss_cleanup_basis_shape CHECK(
+                (receipt_basis_version=1 AND work_kind=''collection'' AND receipt_basis_hash IS NULL AND receipt_floor_batch_id IS NULL AND receipt_floor_hash IS NULL AND receipt_head_batch_id IS NULL AND receipt_head_hash IS NULL)
+                OR (receipt_basis_version=2 AND receipt_basis_hash IS NOT NULL AND receipt_basis_hash ~ ''^[0-9a-f]{64}$'' AND receipt_floor_batch_id IS NOT NULL AND receipt_floor_hash IS NOT NULL AND receipt_floor_hash ~ ''^[0-9a-f]{64}$'' AND receipt_head_batch_id IS NOT NULL AND receipt_head_hash IS NOT NULL AND receipt_head_hash ~ ''^[0-9a-f]{64}$''))',table_name);
+            EXECUTE format('ALTER TABLE %I ADD CONSTRAINT ss_cleanup_floor_scope FOREIGN KEY(receipt_floor_batch_id,tenant_id,application_id,environment,merchant_id,authorization_generation,receipt_floor_hash) REFERENCES ss_cleanup_receipt_batches(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash)',table_name);
+            EXECUTE format('ALTER TABLE %I ADD CONSTRAINT ss_cleanup_head_scope FOREIGN KEY(receipt_head_batch_id,tenant_id,application_id,environment,merchant_id,authorization_generation,receipt_head_hash) REFERENCES ss_cleanup_receipt_batches(id,tenant_id,application_id,environment,merchant_id,authorization_generation,chain_hash)',table_name);
+        END IF;
+    END LOOP;
+END $$;
+ALTER TABLE ss_cleanup_collection_work ADD COLUMN IF NOT EXISTS parent_work_id UUID REFERENCES ss_cleanup_collection_work(id);
+CREATE UNIQUE INDEX IF NOT EXISTS ss_cleanup_work_single_child ON ss_cleanup_collection_work(parent_work_id) WHERE parent_work_id IS NOT NULL;
+ALTER TABLE ss_cleanup_current_projection ADD COLUMN IF NOT EXISTS acknowledged_batch_id UUID;
+DO $$ BEGIN
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_cleanup_collection_work'::REGCLASS AND conname='ss_cleanup_work_version_key') THEN
+        ALTER TABLE ss_cleanup_collection_work ADD CONSTRAINT ss_cleanup_work_version_key UNIQUE(id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash,receipt_basis_version);
+        ALTER TABLE ss_cleanup_collection_work ADD CONSTRAINT ss_cleanup_work_basis_key UNIQUE(id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash);
+        ALTER TABLE ss_cleanup_collection_attempts ADD CONSTRAINT ss_cleanup_attempt_work_version FOREIGN KEY(work_id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash,receipt_basis_version)
+            REFERENCES ss_cleanup_collection_work(id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash,receipt_basis_version);
+        ALTER TABLE ss_cleanup_collection_attempts ADD CONSTRAINT ss_cleanup_attempt_work_basis FOREIGN KEY(work_id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash)
+            REFERENCES ss_cleanup_collection_work(id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash);
+        ALTER TABLE ss_cleanup_collection_attempts ADD CONSTRAINT ss_cleanup_attempt_version_key UNIQUE(id,receipt_basis_version);
+        ALTER TABLE ss_cleanup_collection_attempts ADD CONSTRAINT ss_cleanup_attempt_basis_key UNIQUE(id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash);
+        ALTER TABLE ss_cleanup_collections ADD CONSTRAINT ss_cleanup_collection_attempt_version FOREIGN KEY(attempt_id,receipt_basis_version) REFERENCES ss_cleanup_collection_attempts(id,receipt_basis_version);
+        ALTER TABLE ss_cleanup_collections ADD CONSTRAINT ss_cleanup_collection_attempt_basis FOREIGN KEY(attempt_id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash)
+            REFERENCES ss_cleanup_collection_attempts(id,receipt_basis_version,work_kind,receipt_basis_hash,receipt_floor_batch_id,receipt_floor_hash,receipt_head_batch_id,receipt_head_hash);
+        ALTER TABLE ss_cleanup_current_projection ADD CONSTRAINT ss_cleanup_ack_batch_scope FOREIGN KEY(acknowledged_batch_id,tenant_id,application_id,environment,merchant_id,authorization_generation)
+            REFERENCES ss_cleanup_receipt_batches(id,tenant_id,application_id,environment,merchant_id,authorization_generation);
+    END IF;
+END $$;
+CREATE OR REPLACE FUNCTION ss_cleanup_work_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.id,NEW.tenant_id,NEW.application_id,NEW.environment,NEW.merchant_id,NEW.authorization_generation,
+           NEW.config_version,NEW.receipt_hwm,NEW.receipt_manifest,NEW.manifest_hash,NEW.trigger_kind,NEW.principal_kind,
+           NEW.staff_id,NEW.session_hash,NEW.requested_role,NEW.created_at,NEW.receipt_basis_version,NEW.work_kind,
+           NEW.receipt_basis_hash,NEW.receipt_floor_batch_id,NEW.receipt_floor_hash,NEW.receipt_head_batch_id,NEW.receipt_head_hash,NEW.parent_work_id)
+       IS DISTINCT FROM ROW(OLD.id,OLD.tenant_id,OLD.application_id,OLD.environment,OLD.merchant_id,OLD.authorization_generation,
+           OLD.config_version,OLD.receipt_hwm,OLD.receipt_manifest,OLD.manifest_hash,OLD.trigger_kind,OLD.principal_kind,
+           OLD.staff_id,OLD.session_hash,OLD.requested_role,OLD.created_at,OLD.receipt_basis_version,OLD.work_kind,
+           OLD.receipt_basis_hash,OLD.receipt_floor_batch_id,OLD.receipt_floor_hash,OLD.receipt_head_batch_id,OLD.receipt_head_hash,OLD.parent_work_id) THEN
+        RAISE EXCEPTION 'Original cleanup work identity and receipt basis cannot change';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION ss_cleanup_child_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE parent ss_cleanup_collection_work%ROWTYPE;
+BEGIN
+    IF NEW.parent_work_id IS NULL THEN RETURN NEW; END IF;
+    SELECT * INTO parent FROM ss_cleanup_collection_work WHERE id=NEW.parent_work_id;
+    IF parent.id IS NULL OR parent.state NOT IN ('done','blocked','superseded') OR NEW.receipt_basis_version<>2 OR
+       ROW(NEW.tenant_id,NEW.application_id,NEW.environment,NEW.merchant_id,NEW.authorization_generation,NEW.config_version,
+           NEW.principal_kind,NEW.staff_id,NEW.session_hash,NEW.requested_role,NEW.trigger_kind)
+       IS DISTINCT FROM ROW(parent.tenant_id,parent.application_id,parent.environment,parent.merchant_id,parent.authorization_generation,parent.config_version,
+           parent.principal_kind,parent.staff_id,parent.session_hash,parent.requested_role,parent.trigger_kind) THEN
+        RAISE EXCEPTION 'Receipt preparation child must retain its original scope and principal';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ss_cleanup_child_guard ON ss_cleanup_collection_work;
+CREATE TRIGGER ss_cleanup_child_guard BEFORE INSERT ON ss_cleanup_collection_work FOR EACH ROW EXECUTE FUNCTION ss_cleanup_child_guard();
+DO $$ BEGIN
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ss_cleanup_collection_attempts'::REGCLASS AND conname='ss_cleanup_attempt_read_only') THEN
+        ALTER TABLE ss_cleanup_collection_attempts ADD CONSTRAINT ss_cleanup_attempt_read_only CHECK(work_kind='collection');
+        ALTER TABLE ss_cleanup_collections ADD CONSTRAINT ss_cleanup_collection_read_only CHECK(work_kind='collection');
+    END IF;
+END $$;
+CREATE OR REPLACE FUNCTION ss_cleanup_projection_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE latest ss_cleanup_collections%ROWTYPE;
+DECLARE acknowledged ss_cleanup_receipt_batches%ROWTYPE;
+BEGIN
+    IF NEW.last_complete_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM ss_cleanup_collections WHERE id=NEW.last_complete_id AND coverage_complete) THEN
+        RAISE EXCEPTION 'Last complete cleanup read must reference complete coverage';
+    END IF;
+    IF NEW.latest_collection_id IS NOT NULL THEN
+        SELECT * INTO latest FROM ss_cleanup_collections WHERE id=NEW.latest_collection_id;
+        IF latest.receipt_basis_version=1 THEN NEW.acknowledged_batch_id=NULL; END IF;
+    END IF;
+    IF NEW.acknowledged_batch_id IS NOT NULL THEN
+        SELECT * INTO acknowledged FROM ss_cleanup_receipt_batches WHERE id=NEW.acknowledged_batch_id;
+        IF acknowledged.high_inclusive IS DISTINCT FROM NEW.acknowledged_hwm THEN RAISE EXCEPTION 'Read acknowledgement must match its exact receipt frontier'; END IF;
+    END IF;
+    IF NEW.health='complete' AND (latest.id IS NULL OR NOT latest.coverage_complete OR latest.config_version<>NEW.config_version) THEN
+        RAISE EXCEPTION 'Current complete cleanup projection requires matching complete evidence';
+    END IF;
+    IF latest.receipt_basis_version=2 AND NEW.health IN ('complete','partial') AND
+       NEW.acknowledged_batch_id IS DISTINCT FROM latest.receipt_head_batch_id THEN
+        RAISE EXCEPTION 'Prepared receipts alone cannot acknowledge a provider read';
+    END IF;
+    RETURN NEW;
+END $$;
+INSERT INTO ss_schema_versions(version) VALUES (13) ON CONFLICT DO NOTHING;

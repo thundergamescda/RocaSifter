@@ -19,6 +19,7 @@ import uuid
 from psycopg.types.json import Jsonb
 
 from .cleanup_events import _timestamp
+from . import cleanup_receipt_batches as batches
 from .cleanup_square import CleanupSquare
 from .intake import current_authority
 from .receiving_plan import READ_SCOPES
@@ -217,6 +218,9 @@ class CleanupObserver:
         if target:
             config=db.execute('SELECT * FROM ss_cleanup_observer_config WHERE '+_WHERE+' ORDER BY config_version DESC LIMIT 1 FOR UPDATE',_key(target)).fetchone()
             projection=db.execute('SELECT * FROM ss_cleanup_current_projection WHERE '+_WHERE+' FOR UPDATE',_key(target)).fetchone()
+            # Progress always precedes work locks, including claim/finish. An
+            # absent head is created only by authorized admission/preparation.
+            batches.progress(db,target,lock=True)
         return conn,target,config,projection,denied
 
     @staticmethod
@@ -235,10 +239,11 @@ class CleanupObserver:
         return None
 
     def _receipts(self,db,scope):
-        rows=db.execute('''SELECT receipt_cursor,body_hash,binding_status,payload_status FROM ss_cleanup_inventory_receipts
+        rows=db.execute('''SELECT receipt_cursor,body_hash,binding_status,payload_status,fact_count FROM ss_cleanup_inventory_receipts
             WHERE '''+_WHERE+''' AND binding_status IN ('active','revoked','revocation_pending','token_expired')
             ORDER BY receipt_cursor LIMIT 10001''',_key(scope)).fetchall()
-        if len(rows)>10000:raise CleanupObserverError('Cleanup notification backlog exceeds the supported read budget.')
+        if len(rows)>10000 or sum(row['fact_count'] for row in rows)>100000:
+            raise CleanupObserverError('Legacy cleanup receipt basis requires bounded preparation.',409,code='OBSERVER_RECEIPT_UPGRADE_REQUIRED')
         manifest=[{'receipt_cursor':row['receipt_cursor'],'body_hash':row['body_hash']} for row in rows]
         return (rows[-1]['receipt_cursor'] if rows else 0),manifest,_hash(manifest),rows
 
@@ -305,12 +310,26 @@ class CleanupObserver:
         self._break_projection(db,work,'lease_expired')
         db.execute("UPDATE ss_cleanup_collection_work SET state='superseded',lease_token=NULL,lease_until=NULL,finished_at=clock_timestamp() WHERE id=%s AND lease_token=%s",(work['id'],work['lease_token']))
 
-    def _enqueue(self,db,scope,config,projection,trigger,actor=None):
-        hwm,manifest,digest,_=self._receipts(db,scope)
+    def _insert_work(self,db,scope,config,trigger,actor,floor,head,hwm,*,parent=None):
+        kind='collection' if head['high_inclusive']==hwm else 'receipt_prepare'
+        proof=batches.basis(scope,config['config_version'],kind,hwm,floor,head)
+        fields=('id',*_K,'config_version','receipt_hwm','receipt_manifest','manifest_hash','trigger_kind',
+            'principal_kind','staff_id','session_hash','requested_role',*batches.BASIS_FIELDS,'parent_work_id')
+        values=(uuid.uuid4(),*_key(scope),config['config_version'],hwm,Jsonb(head['receipt_manifest']),head['manifest_hash'],trigger,
+            'manual' if actor is not None else 'platform',actor['staff_id'] if actor else None,
+            actor['session_hash'] if actor else None,actor['role'] if actor else None,
+            *(proof[name] for name in batches.BASIS_FIELDS),parent)
+        return db.execute('INSERT INTO ss_cleanup_collection_work('+','.join(fields)+') VALUES ('+
+            ','.join(['%s']*len(fields))+') RETURNING *',values).fetchone()
+
+    def _enqueue(self,db,scope,config,projection,trigger,actor=None,*,fold=True):
+        hwm=batches.latest_hwm(db,scope)
+        head=batches.ensure_head(db,scope,config['config_version'])
         now=db.execute('SELECT clock_timestamp() AS at').fetchone()['at']
         existing=db.execute("SELECT * FROM ss_cleanup_collection_work WHERE "+_WHERE+" AND state IN ('queued','reading') FOR UPDATE",_key(scope)).fetchone()
         if existing:
-            stale=existing['config_version']!=config['config_version'] or existing['receipt_hwm']!=hwm or existing['manifest_hash']!=digest
+            stale=(existing['config_version']!=config['config_version'] or existing['receipt_basis_version']==1 or
+                (existing['work_kind']=='collection' and existing['receipt_hwm']!=hwm))
             if existing['state']=='reading' and existing['lease_until']<=now:
                 self._retire_expired(db,existing); existing=None
             elif existing['state']=='queued' and stale:
@@ -318,13 +337,9 @@ class CleanupObserver:
                 self._event(db,existing,'superseded_before_read'); existing=None
             elif stale:return None
             else:return existing
-        principal='manual' if actor is not None else 'platform'
-        return db.execute('''INSERT INTO ss_cleanup_collection_work
-            (id,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,receipt_manifest,manifest_hash,
-             trigger_kind,principal_kind,staff_id,session_hash,requested_role)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
-            (uuid.uuid4(),*_key(scope),config['config_version'],hwm,Jsonb(manifest),digest,trigger,principal,
-             actor['staff_id'] if actor else None,actor['session_hash'] if actor else None,actor['role'] if actor else None)).fetchone()
+        if fold:head,_=batches.fold_once(db,scope,config['config_version'],hwm)
+        floor=batches.read_floor(db,scope,projection,config['config_version'])
+        return self._insert_work(db,scope,config,trigger,actor,floor,head,hwm)
 
     def schedule_notification_scope(self,scope):
         if not self.enabled:return {'status':'disabled','scheduled':0}
@@ -339,7 +354,7 @@ class CleanupObserver:
             work=self._enqueue(db,target,config,projection,'notification')
             return {'status':'queued' if work else 'blocked','scheduled':int(work is not None)}
 
-    def _schedule(self,kind,limit):
+    def _schedule(self,kind,limit,*,fold=True,skip_active=False):
         if type(limit) is not int or not 1<=limit<=100:raise ValueError('Invalid observer schedule limit.')
         if not self.enabled:return {'status':'disabled','scheduled':0}
         context=self.square._token_context()
@@ -359,27 +374,35 @@ class CleanupObserver:
                 WHERE h.enabled AND h.background_enabled AND c.revoked_at IS NULL AND c.pending_notice_cursor IS NULL AND '''+condition+'''
                 AND NOT EXISTS(SELECT 1 FROM ss_cleanup_collection_work w WHERE w.tenant_id=h.tenant_id AND w.application_id=h.application_id
                     AND w.environment=h.environment AND w.merchant_id=h.merchant_id AND w.authorization_generation=h.authorization_generation
-                    AND ((w.state='reading' AND w.lease_until>clock_timestamp()) OR (w.state='queued' AND w.config_version=h.config_version
-                         AND w.receipt_hwm=COALESCE((SELECT max(r.receipt_cursor) FROM ss_cleanup_inventory_receipts r
+                    AND ((w.state='reading' AND w.lease_until>clock_timestamp()) OR (w.state='queued' AND w.receipt_basis_version=2 AND w.config_version=h.config_version
+                         AND (w.work_kind='receipt_prepare' OR w.receipt_hwm=COALESCE((SELECT max(r.receipt_cursor) FROM ss_cleanup_inventory_receipts r
                              WHERE r.tenant_id=h.tenant_id AND r.application_id=h.application_id AND r.environment=h.environment
                                AND r.merchant_id=h.merchant_id AND r.authorization_generation=h.authorization_generation
-                               AND r.binding_status IN ('active','revoked','revocation_pending','token_expired')),0))))
+                               AND r.binding_status IN ('active','revoked','revocation_pending','token_expired')),0)))))'''+
+                (''' AND NOT EXISTS(SELECT 1 FROM ss_cleanup_collection_work w WHERE w.tenant_id=h.tenant_id
+                    AND w.application_id=h.application_id AND w.environment=h.environment AND w.merchant_id=h.merchant_id
+                    AND w.authorization_generation=h.authorization_generation AND w.receipt_basis_version=2
+                    AND w.state IN ('queued','reading'))''' if skip_active else '')+'''
                 ORDER BY COALESCE(p.next_due_at,h.created_at),h.tenant_id LIMIT %s''',(context.application_id,context.environment,limit)).fetchall()
         scheduled=0
         for scope in rows:
-            if kind=='notification':scheduled+=self.schedule_notification_scope(scope)['scheduled']; continue
             with self.database.transaction() as db:
                 conn,target,config,projection,_=self._begin(db,context,scope['tenant_id'],scope=scope)
                 now=db.execute('SELECT clock_timestamp() AS at').fetchone()['at']
-                if (self._live(conn,target,context) or not config or not config['enabled'] or not config['background_enabled'] or
-                        (projection and projection['next_due_at'] and projection['next_due_at']>now)):continue
-                scheduled+=int(self._enqueue(db,target,config,projection,'periodic') is not None)
+                if self._live(conn,target,context) or not config or not config['enabled'] or not config['background_enabled']:continue
+                if skip_active and db.execute('''SELECT 1 FROM ss_cleanup_collection_work WHERE '''+_WHERE+'''
+                    AND receipt_basis_version=2 AND state IN ('queued','reading') LIMIT 1''',_key(target)).fetchone():continue
+                if kind=='notification':
+                    ack=projection['acknowledged_hwm'] if projection else 0
+                    if not db.execute('SELECT 1 FROM ss_cleanup_refresh_queue WHERE '+_WHERE+' AND receipt_cursor>%s LIMIT 1',(*_key(target),ack)).fetchone():continue
+                elif projection and projection['next_due_at'] and projection['next_due_at']>now:continue
+                scheduled+=int(self._enqueue(db,target,config,projection,kind,fold=fold) is not None)
         return {'status':'scheduled' if scheduled else 'idle','scheduled':scheduled}
 
     def schedule_notifications(self,*,limit=25):return self._schedule('notification',limit)
     def schedule_periodic(self,*,limit=25):return self._schedule('periodic',limit)
 
-    def _work_check(self,db,work,conn,config,context,denied=None):
+    def _work_check(self,db,work,conn,config,context,denied=None,*,preparing=False):
         if denied:return denied
         if not self.enabled:return 'worker_disabled'
         try:self.square._require_token_context(context)
@@ -387,9 +410,51 @@ class CleanupObserver:
         if self._live(conn,work,context):return 'authorization_changed'
         if not config or not config['enabled'] or config['config_version']!=work['config_version']:return 'configuration_changed'
         if work['principal_kind']=='platform' and not config['background_enabled']:return 'background_disabled'
-        hwm,manifest,digest,_=self._receipts(db,work)
-        if hwm!=work['receipt_hwm'] or digest!=work['manifest_hash'] or manifest!=work['receipt_manifest']:return 'notification_advanced'
+        if work['receipt_basis_version']==2:
+            try:batches.validate_basis(db,work,ready=not preparing)
+            except ServiceError:return 'receipt_basis_changed'
+            if not preparing and batches.latest_hwm(db,work)!=work['receipt_hwm']:return 'notification_advanced'
+        else:
+            try:hwm,manifest,digest,_=self._receipts(db,work)
+            except CleanupObserverError:return 'receipt_basis_upgrade_required'
+            if hwm!=work['receipt_hwm'] or digest!=work['manifest_hash'] or manifest!=work['receipt_manifest']:return 'notification_advanced'
         return None
+
+    def prepare_once(self,work_id):
+        """One SQL-only bounded step; preparation never acknowledges a read.
+
+        Ready collection checks are idempotent and perform no permission/data
+        HTTP. A terminal preparation has exactly one durable same-principal child.
+        """
+        if not self.enabled:return {'status':'disabled','processed':False,'ready':False,**_FALSE}
+        context=self.square._token_context()
+        with self.database.transaction() as db:
+            self.square._notice_barrier(db,configuration=context)
+            hint=db.execute('SELECT * FROM ss_cleanup_collection_work WHERE id=%s',(_uuid(work_id),)).fetchone()
+        if not hint:return {'status':'idle','processed':False,'ready':False,**_FALSE}
+        actor=self._principal(hint)
+        with self.database.transaction() as db:
+            conn,scope,config,projection,denied=self._begin(db,context,hint['tenant_id'],actor=actor,scope=hint,allow_denied=True)
+            work=db.execute('SELECT * FROM ss_cleanup_collection_work WHERE id=%s FOR UPDATE',(hint['id'],)).fetchone()
+            if work['receipt_basis_version']!=2 or work['work_kind']=='collection':
+                ready=work['state']=='queued' and not self._work_check(db,work,conn,config,context,denied)
+                return {'status':'ready' if ready else 'idle','processed':False,'ready':ready,**_FALSE}
+            if work['state']!='queued':return {'status':'idle','processed':False,'ready':False,**_FALSE}
+            reason=self._work_check(db,work,conn,config,context,denied,preparing=True)
+            if reason:
+                self._block_queued(db,work,reason)
+                return {'status':'blocked','processed':False,'ready':False,**_FALSE}
+            head,advanced=batches.fold_once(db,work,work['config_version'],work['receipt_hwm'])
+            if head['high_inclusive']<work['receipt_hwm']:
+                db.execute('UPDATE ss_cleanup_collection_work SET next_attempt_at=clock_timestamp() WHERE id=%s',(work['id'],))
+                return {'status':'receipt_progress','processed':advanced,'ready':False,**_FALSE}
+            # Finish parent and insert child atomically. Do not call _enqueue:
+            # a new tail must not cause a second fold in this operation.
+            db.execute("UPDATE ss_cleanup_collection_work SET state='done',finished_at=clock_timestamp() WHERE id=%s",(work['id'],))
+            target=batches.latest_hwm(db,work)
+            floor=batches.read_floor(db,work,projection,config['config_version'])
+            child=self._insert_work(db,work,config,work['trigger_kind'],actor,floor,head,target,parent=work['id'])
+            return {'status':'receipt_progress','processed':True,'ready':child['work_kind']=='collection',**_FALSE}
 
     def _stable_access(self,access,work,*,now=None,fresh=True):
         try:
@@ -423,6 +488,7 @@ class CleanupObserver:
             hint=db.execute('SELECT * FROM ss_cleanup_collection_work WHERE '+('id=%s' if work_id else "(state='queued' AND next_attempt_at<=clock_timestamp()) OR (state='reading' AND lease_until<=clock_timestamp()) ORDER BY next_attempt_at,created_at,id LIMIT 1"),
                             (_uuid(work_id),) if work_id else ()).fetchone()
         if not hint:return None
+        if hint['work_kind']=='receipt_prepare':return None
         actor=self._principal(hint)
         with self.database.transaction() as db:
             conn,scope,config,projection,denied=self._begin(db,context,hint['tenant_id'],actor=actor,scope=hint,allow_denied=True)
@@ -461,15 +527,20 @@ class CleanupObserver:
                 # Keep original K/config/H on takeover; the old lease is dead.
                 db.execute("UPDATE ss_cleanup_collection_work SET state='queued',finished_at=NULL WHERE id=%s",(current['id'],))
             lease=uuid.uuid4(); until=now+timedelta(seconds=self.lease_seconds)
-            attempt=db.execute('''INSERT INTO ss_cleanup_collection_attempts
-                (id,work_id,attempt,tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,receipt_hwm,manifest_hash,
-                 notice_cursor,access_digest,started_at,lease_until) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
-                (lease,current['id'],current['attempts']+1,*_key(current),current['config_version'],current['receipt_hwm'],current['manifest_hash'],
-                 self.square._notice_cursor(db,current['merchant_id'],configuration=context),access_digest,now,until)).fetchone()
+            fields=('id','work_id','attempt',*_K,'config_version','receipt_hwm','manifest_hash',
+                'notice_cursor','access_digest','started_at','lease_until',*batches.BASIS_FIELDS)
+            values=(lease,current['id'],current['attempts']+1,*_key(current),current['config_version'],current['receipt_hwm'],current['manifest_hash'],
+                self.square._notice_cursor(db,current['merchant_id'],configuration=context),access_digest,now,until,
+                *(current[name] for name in batches.BASIS_FIELDS))
+            attempt=db.execute('INSERT INTO ss_cleanup_collection_attempts('+','.join(fields)+') VALUES ('+
+                ','.join(['%s']*len(fields))+') RETURNING *',values).fetchone()
             current=db.execute("UPDATE ss_cleanup_collection_work SET state='reading',attempts=attempts+1,lease_token=%s,lease_until=%s,finished_at=NULL WHERE id=%s RETURNING *",(lease,until,current['id'])).fetchone()
             return ObserverClaim(dict(current),dict(attempt),access,context)
 
     def _receipt_flags(self,db,work):
+        if work['receipt_basis_version']==2:
+            floor,head=batches.validate_basis(db,work,ready=True)
+            return batches.interval_flags(floor,head)
         _,manifest,digest,receipts=self._receipts(db,work)
         if manifest!=work['receipt_manifest'] or digest!=work['manifest_hash']:raise CleanupObserverError('Cleanup receipt scope changed.')
         flags=set()
@@ -496,11 +567,12 @@ class CleanupObserver:
         rows=result['counts']; missing=result['missing']
         fields=('id','attempt_id','work_id',*_K,'config_version','receipt_hwm','manifest_hash','result_hash','outcome','started_at',
             'coverage_complete','pagination_complete','context_unchanged','bracketed','reason_codes','before_context_hash','after_context_hash',
-            'context','missing','missing_count','count_rows','nonzero_count','receipt_flags')
+            'context','missing','missing_count','count_rows','nonzero_count','receipt_flags',*batches.BASIS_FIELDS)
         values=(uuid.uuid4(),attempt['id'],work['id'],*_key(work),work['config_version'],work['receipt_hwm'],work['manifest_hash'],digest,outcome,attempt['started_at'],
             outcome=='complete',result['pagination_complete'],result['context_unchanged'],result['bracketed'],Jsonb(result['reason_codes']),
             result['before_context_hash'],result['after_context_hash'],Jsonb(result['context']),Jsonb(missing) if missing is not None else None,
-            len(missing) if missing is not None else None,len(rows),sum(Decimal(row['quantity'])!=0 for row in rows),Jsonb(receipt_flags))
+            len(missing) if missing is not None else None,len(rows),sum(Decimal(row['quantity'])!=0 for row in rows),Jsonb(receipt_flags),
+            *(attempt[name] for name in batches.BASIS_FIELDS))
         collection=db.execute('INSERT INTO ss_cleanup_collections('+','.join(fields)+') VALUES ('+','.join(['%s']*len(fields))+') RETURNING *',values).fetchone()
         if rows:
             with db.cursor() as cursor:
@@ -529,7 +601,7 @@ class CleanupObserver:
             conn,scope,config,projection,denied=self._begin(db,context,work['tenant_id'],actor=actor,scope=work,allow_denied=True)
             current=db.execute('SELECT * FROM ss_cleanup_collection_work WHERE id=%s FOR UPDATE',(work['id'],)).fetchone()
             attempt=db.execute('SELECT * FROM ss_cleanup_collection_attempts WHERE id=%s AND work_id=%s',(claim.attempt['id'],work['id'])).fetchone()
-            if not attempt or any(attempt[name]!=work[name] for name in (*_K,'config_version','receipt_hwm','manifest_hash')):
+            if not attempt or any(attempt[name]!=work[name] for name in (*_K,'config_version','receipt_hwm','manifest_hash',*batches.BASIS_FIELDS)):
                 raise CleanupObserverError('Cleanup attempt identity is unavailable.')
             existing=db.execute('SELECT * FROM ss_cleanup_collections WHERE attempt_id=%s',(attempt['id'],)).fetchone()
             now=db.execute('SELECT clock_timestamp() AS at').fetchone()['at']
@@ -550,6 +622,10 @@ class CleanupObserver:
                 if existing['result_hash']!=digest:raise CleanupObserverError('Cleanup attempt replay conflicts with saved evidence.',409,code='OBSERVER_REQUEST_CONFLICT')
                 if reason:raise CleanupObserverError('Current cleanup authority no longer accepts this replay.')
                 return {'status':existing['outcome'],'processed':True,'duplicate':True,**_FALSE}
+            if not reason and work['receipt_basis_version']==2:
+                floor=batches.read_floor(db,work,projection,work['config_version'])
+                if floor['id']!=work['receipt_floor_batch_id'] or floor['chain_hash']!=work['receipt_floor_hash']:
+                    reason='receipt_read_frontier_changed'
             own_lease=bool(current and current['state']=='reading' and current['lease_token']==attempt['id'] and current['lease_until']>now)
             if not own_lease:reason=reason or 'lease_lost'
             if reason:
@@ -583,14 +659,15 @@ class CleanupObserver:
             last_complete=collection['id'] if outcome=='complete' else projection['last_complete_id'] if projection else None
             db.execute('''INSERT INTO ss_cleanup_current_projection
                 (tenant_id,application_id,environment,merchant_id,authorization_generation,config_version,latest_collection_id,last_complete_id,
-                 acknowledged_hwm,diagnostic_epoch,health,reason_codes,context_hash,next_due_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 acknowledged_hwm,diagnostic_epoch,health,reason_codes,context_hash,next_due_at,acknowledged_batch_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(tenant_id,application_id,environment,merchant_id,authorization_generation) DO UPDATE
                 SET config_version=EXCLUDED.config_version,latest_collection_id=EXCLUDED.latest_collection_id,last_complete_id=EXCLUDED.last_complete_id,
                     acknowledged_hwm=EXCLUDED.acknowledged_hwm,diagnostic_epoch=EXCLUDED.diagnostic_epoch,health=EXCLUDED.health,
-                    reason_codes=EXCLUDED.reason_codes,context_hash=EXCLUDED.context_hash,next_due_at=EXCLUDED.next_due_at''',
+                    reason_codes=EXCLUDED.reason_codes,context_hash=EXCLUDED.context_hash,next_due_at=EXCLUDED.next_due_at,
+                    acknowledged_batch_id=EXCLUDED.acknowledged_batch_id''',
                 (*_key(work),work['config_version'],collection['id'],last_complete,work['receipt_hwm'],epoch,outcome,Jsonb(reasons),context_hash,
-                 collection['finished_at']+timedelta(seconds=config['cadence_seconds'])))
+                 collection['finished_at']+timedelta(seconds=config['cadence_seconds']),work['receipt_head_batch_id']))
             saved=db.execute("UPDATE ss_cleanup_collection_work SET state='done',lease_token=NULL,lease_until=NULL,finished_at=clock_timestamp() WHERE id=%s AND state='reading' AND lease_token=%s AND lease_until>clock_timestamp() RETURNING id",(work['id'],attempt['id'])).fetchone()
             if not saved:raise CleanupObserverError('Cleanup lease expired before atomic publication.')
             return {'status':outcome,'processed':True,'duplicate':False,**_FALSE}
@@ -598,7 +675,22 @@ class CleanupObserver:
     def run_once(self,*,work_id=None):
         if not self.enabled:return {'status':'disabled','processed':False,**_FALSE}
         if work_id is None:
-            self.schedule_notifications(); self.schedule_periodic()
+            # Admit at most one new scope without folding, even while other
+            # stores have preparation work. Then spend the sole receipt step on
+            # the oldest due work. A stale claim requeue never recurses here.
+            admitted=self._schedule('notification',1,fold=False,skip_active=True)
+            if not admitted['scheduled']:self._schedule('periodic',1,fold=False,skip_active=True)
+            context=self.square._token_context()
+            with self.database.transaction() as db:
+                self.square._notice_barrier(db,configuration=context)
+                hint=db.execute("SELECT id FROM ss_cleanup_collection_work WHERE (state='queued' AND next_attempt_at<=clock_timestamp()) OR (state='reading' AND lease_until<=clock_timestamp()) ORDER BY next_attempt_at,created_at,id LIMIT 1").fetchone()
+            work_id=hint['id'] if hint else None
+        if work_id is not None:
+            context=self.square._token_context()
+            with self.database.transaction() as db:
+                self.square._notice_barrier(db,configuration=context)
+                hint=db.execute('SELECT work_kind FROM ss_cleanup_collection_work WHERE id=%s',(_uuid(work_id),)).fetchone()
+            if hint and hint['work_kind']=='receipt_prepare':return self.prepare_once(work_id)
         claim=self.claim(work_id)
         if claim is None:return {'status':'idle','processed':False,**_FALSE}
         try:
@@ -622,13 +714,13 @@ class CleanupObserver:
         with self.database.transaction() as db:
             conn,scope,config,projection,_=self._begin(db,context,actor['tenant_id'],actor=actor,roles=('owner','manager','buyer'))
             now=db.execute('SELECT clock_timestamp() AS at').fetchone()['at']
-            work=latest=complete=None; hwm=0; pending=0; reasons=[]
+            work=latest=complete=None; pending=processing=0; pending_exact=processing_exact=True; reasons=[]
             if scope:
                 work=db.execute("SELECT state FROM ss_cleanup_collection_work WHERE "+_WHERE+" AND state IN ('queued','reading')",_key(scope)).fetchone()
                 ack=projection['acknowledged_hwm'] if projection else 0
-                pending=db.execute('''SELECT count(*) AS n,COALESCE(max(receipt_cursor),0) AS hwm FROM ss_cleanup_inventory_receipts
-                    WHERE '''+_WHERE+''' AND binding_status IN ('active','revoked','revocation_pending','token_expired') AND receipt_cursor>%s''',(*_key(scope),ack)).fetchone()
-                hwm=pending['hwm']; pending=pending['n']
+                pending,pending_exact=batches.pending_count(db,scope,ack)
+                processed=batches.progress(db,scope)
+                processing,processing_exact=batches.pending_count(db,scope,processed['processed_hwm'] if processed else 0)
                 latest=self._latest_history(db,scope)
                 if projection and projection['last_complete_id']:
                     complete=db.execute('SELECT * FROM ss_cleanup_collections WHERE id=%s',(projection['last_complete_id'],)).fetchone()
@@ -640,14 +732,16 @@ class CleanupObserver:
             elif blocked:state='authority_blocked'; reasons=[blocked]
             elif not enabled or not self.enabled:
                 state='disabled'; reasons=['worker_disabled' if not self.enabled else 'owner_opt_in_required']
-            elif pending:state='stale'; reasons=['notification_backlog']
+            elif pending or processing:state='stale'; reasons=['notification_backlog']
             elif work:state=work['state']; reasons=['read_in_progress' if state=='reading' else 'read_queued']
             elif latest and latest['outcome']=='fenced':state='stale'; reasons=list(latest['reason_codes'])
             elif stale:state='stale'; reasons=['read_stale']
             elif projection:state=projection['health']; reasons=list(projection['reason_codes'])
             else:state='idle'; reasons=['read_required']
             if projection and state not in ('complete','partial'):reasons+=list(projection['reason_codes'])
-            current=bool(state=='complete' and latest and latest['coverage_complete'] and projection['config_version']==config['config_version'] and not pending and not stale)
+            current=bool(state=='complete' and latest and latest['coverage_complete'] and latest['receipt_basis_version']==2 and
+                projection['config_version']==config['config_version'] and projection['acknowledged_batch_id']==latest['receipt_head_batch_id'] and
+                pending_exact and processing_exact and not pending and not processing and not stale)
             missing=latest['missing'] if latest else None
             interval=lambda row: {'started_at':row['started_at'].isoformat(),'finished_at':row['finished_at'].isoformat()} if row else None
             last_attempt=interval(latest)
@@ -657,6 +751,8 @@ class CleanupObserver:
                 'cadence_seconds':config['cadence_seconds'] if config else 3600,'stale_after_seconds':config['stale_after_seconds'] if config else 7200,
                 'state':state,'reason_codes':sorted(set(reasons))[:32],'coverage_current':current,'last_attempt':last_attempt,
                 'last_complete':interval(complete),'observed_age_seconds':age,'pending_notification_count':pending,
+                'pending_notification_count_exact':pending_exact,'receipt_processing_pending_count':processing,
+                'receipt_processing_pending_count_exact':processing_exact,
                 'missing_count':latest['missing_count'] if latest else None,
                 'missing':[{'object_id':pair[0],'location_id':pair[1]} for pair in missing[:50]] if missing is not None else [],
                 'missing_truncated':bool(missing is not None and len(missing)>50),
