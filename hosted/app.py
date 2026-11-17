@@ -10,7 +10,7 @@ import uuid
 from flask import Flask, g, jsonify, request, make_response, render_template, Response, stream_with_context
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
-from .auth import Auth
+from .auth import Auth,PasswordChangeError
 from .database import Database
 from .ledger import Ledger
 from .security import ServiceError
@@ -105,15 +105,26 @@ def create_app(config=None,*,database=None,square_transport=None):
             result['code']=error.code
             if error.receiving_id:result['receiving_id']=error.receiving_id
         if isinstance(error,(EnrollmentError,CleanupObserverError)):result['code']=error.code
+        if request.path=='/api/auth/password/change':
+            result['code']=getattr(error,'code','PASSWORD_SESSION_CHANGED' if error.status==401 else
+                'PASSWORD_INPUT_INVALID' if error.status<500 else 'PASSWORD_CHANGE_UNCONFIRMED')
+            result['sign_in_required']=getattr(error,'sign_in_required',error.status==401 or error.status>=500)
         return jsonify(result),error.status
 
     @app.errorhandler(HTTPException)
-    def http_error(error):return jsonify(error=error.name),error.code
+    def http_error(error):
+        result={'error':error.name}
+        if request.path=='/api/auth/password/change':
+            result.update(code='PASSWORD_INPUT_INVALID' if error.code<500 else 'PASSWORD_CHANGE_UNCONFIRMED',sign_in_required=error.code>=500)
+        return jsonify(result),error.code
 
     @app.errorhandler(Exception)
     def unexpected(error):
         # Error type only. Never include SQL parameters, credentials or customer payloads.
         app.logger.error('service_operation_failed type=%s path=%s',type(error).__name__,request.path)
+        if request.path=='/api/auth/password/change':
+            return jsonify(error='The password-change result could not be confirmed. Sign in with your new password. If it is not accepted, try your previous password before starting another change.',
+                code='PASSWORD_CHANGE_UNCONFIRMED',sign_in_required=True),500
         return jsonify(error='The service could not complete this operation. Retry with the same request key.'),500
 
     def authenticated(function):
@@ -198,6 +209,26 @@ def create_app(config=None,*,database=None,square_transport=None):
         require_db()
         token,info=auth.login(body(),request.remote_addr or '')
         return session_response(token,info)
+
+    @app.post('/api/auth/password/change')
+    @authenticated
+    def change_password():
+        def invalid(*unused):
+            raise PasswordChangeError('Send a small JSON object with only current_password and new_password.')
+        def pairs(items):
+            value={}
+            for key,item in items:
+                if key in value:invalid()
+                value[key]=item
+            return value
+        if request.content_length is not None and request.content_length>4096:invalid()
+        raw=request.stream.read(4097)
+        if len(raw)>4096:invalid()
+        try:values=json.loads(raw.decode('utf-8'),object_pairs_hook=pairs,parse_constant=invalid,parse_float=invalid)
+        except (ValueError,UnicodeError,RecursionError):invalid()
+        # Deliberately no cookie mutation on any outcome. Revoked cookies fail
+        # normal authentication; a later sign-in may already own a newer cookie.
+        return jsonify(auth.change_password(g.actor,values,request.remote_addr or ''))
 
     def session_response(token,info):
         if token is None:

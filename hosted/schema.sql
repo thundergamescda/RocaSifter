@@ -1289,3 +1289,7 @@ BEGIN
     RETURN NEW;
 END $$;
 INSERT INTO ss_schema_versions(version) VALUES (13) ON CONFLICT DO NOTHING;
+
+-- Schema 14: account-wide credential revocation seeks only this staff member.
+CREATE INDEX IF NOT EXISTS ss_sessions_staff ON ss_sessions(tenant_id,staff_id);
+INSERT INTO ss_schema_versions(version) VALUES (14) ON CONFLICT DO NOTHING;

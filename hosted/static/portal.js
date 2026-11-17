@@ -11,7 +11,11 @@ async function api(path,data){
  catch{throw Error('The service did not respond. Check your connection, then retry. If account creation may have finished, try signing in first.')}
  if(!response.ok){
   if(response.status===401&&portalMe&&requestEpoch===portalEpoch){sessionStorage.setItem('ss-signed-out','1');signedOutView();byId('loginStatus').textContent='Your session ended. Sign in again.'}
-  const error=Error(result.error||'The service could not complete the request.');error.status=response.status;throw error;
+  const detail=result&&typeof result==='object'&&!Array.isArray(result)?result:null;
+  const error=Error(typeof detail?.error==='string'?detail.error:'The service could not complete the request.');error.status=response.status;
+  if(typeof detail?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(detail.code))error.code=detail.code;
+  if(typeof detail?.sign_in_required==='boolean')error.sign_in_required=detail.sign_in_required;
+  throw error;
  }
  return result;
 }
@@ -25,6 +29,7 @@ function squareControls(){
  byId('connectSquare').textContent=portalSquare?.connected?'Reconnect Square':'Connect Square';
  byId('refreshSquare').disabled=!portalMe||byId('workspace').hidden||authTransitionBusy||squareLoading||squareConnectBusy;
  document.dispatchEvent(new CustomEvent('ss-cleanup-observer-context',{detail:{epoch:portalEpoch,active:!!portalMe&&!authTransitionBusy&&!byId('workspace').hidden&&!squareLoading&&!squareConnectBusy}}));
+ document.dispatchEvent(new CustomEvent('ss-portal-auth-context',{detail:{epoch:portalEpoch,active:!!portalMe&&!authTransitionBusy&&!byId('workspace').hidden}}));
 }
 function clearSquareStatus(message='Sign in to check the Square connection.'){
  ++squareStatusRequest;portalSquare=null;squareLoading=false;squareConnectBusy=false;

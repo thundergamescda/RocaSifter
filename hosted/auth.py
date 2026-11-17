@@ -9,6 +9,12 @@ from .database import audit
 from .mfa import MFA, issue_session
 
 
+class PasswordChangeError(ServiceError):
+    def __init__(self,message,status=400,*,code='PASSWORD_INPUT_INVALID',sign_in_required=False):
+        super().__init__(message,status)
+        self.code,self.sign_in_required=code,sign_in_required
+
+
 class Auth:
     def __init__(self,database,bootstrap_token='',*,encryption_keys=''):
         self.database,self.bootstrap_token=database,bootstrap_token
@@ -106,6 +112,85 @@ class Auth:
 
     def logout(self,token):
         with self.database.transaction() as db:db.execute('DELETE FROM ss_sessions WHERE token_hash=%s',(digest(token),))
+
+    def _password_actor(self,db,actor):
+        # Login/challenge issuance and MFA management lock this same staff row
+        # first. Never acquire SHARE first and later upgrade it to UPDATE.
+        from .intake import current_authority
+        try:
+            staff=self.mfa._locked_staff(db,actor['tenant_id'],actor['staff_id'])
+            state=db.execute('SELECT enabled,version FROM ss_staff_mfa WHERE tenant_id=%s AND staff_id=%s FOR UPDATE',
+                (actor['tenant_id'],actor['staff_id'])).fetchone()
+            current_authority(db,actor,allowed_roles=('owner','manager','buyer','cashier'),
+                fresh_mfa=bool(state and state['enabled']))
+        except ServiceError as error:
+            if getattr(error,'code',None)=='MFA_STEP_UP_REQUIRED':
+                raise PasswordChangeError('Sign in again with a fresh second-factor proof before changing your password.',403,
+                    code='MFA_STEP_UP_REQUIRED',sign_in_required=True) from None
+            raise PasswordChangeError('Your account or session changed. Sign in again.',error.status,
+                code='PASSWORD_SESSION_CHANGED',sign_in_required=True) from None
+        return staff,(bool(state and state['enabled']),state['version'] if state else 0)
+
+    def _password_change_budget(self,actor,address):
+        # Every admitted attempt, including a later rollback/CAS loser, consumes
+        # this independently committed budget before either expensive PBKDF2.
+        limited=False
+        keys=((digest('password-change:ip:'+str(address)),30),
+              (digest('password-change:staff:'+str(actor['tenant_id'])+':'+str(actor['staff_id'])),5))
+        with self.database.transaction() as db:
+            db.execute("DELETE FROM ss_login_attempts WHERE window_start<now()-interval '1 day'")
+            for key,maximum in keys:
+                db.execute('INSERT INTO ss_login_attempts(key_hash) VALUES (%s) ON CONFLICT DO NOTHING',(key,))
+                row=db.execute('SELECT *,clock_timestamp() AS checked_at FROM ss_login_attempts WHERE key_hash=%s FOR UPDATE',(key,)).fetchone()
+                if row['window_start']<row['checked_at']-timedelta(minutes=15):
+                    db.execute('UPDATE ss_login_attempts SET failures=1,window_start=clock_timestamp() WHERE key_hash=%s',(key,))
+                elif row['failures']>=maximum:limited=True
+                else:db.execute('UPDATE ss_login_attempts SET failures=failures+1 WHERE key_hash=%s',(key,))
+        if limited:raise PasswordChangeError('Too many password-change attempts. Try again later.',429,code='PASSWORD_CHANGE_RATE_LIMITED')
+
+    def change_password(self,actor,data,address=''):
+        """Change only this authenticated account; no reset or token issuance.
+
+        Hashing is outside SQL. Final publication shares the staff lock with
+        login/MFA issuance, then revokes all sessions in the same transaction.
+        The caller must not send Set-Cookie: a delayed response must not erase
+        a newer sign-in. A lost result is resolved by ordinary sign-in, not replay.
+        """
+        try:
+            if type(data) is not dict or set(data)!={'current_password','new_password'}:raise ValueError()
+            current,new=data['current_password'],data['new_password']
+            if type(current) is not str or not 1<=len(current)<=128 or type(new) is not str or not 15<=len(new)<=128:raise ValueError()
+            current_bytes,new_bytes=current.encode('utf-8'),new.encode('utf-8')
+        except (ValueError,TypeError,UnicodeError):
+            raise PasswordChangeError('Use your current password and a new password of 15 to 128 Unicode characters.') from None
+        if hmac.compare_digest(current_bytes,new_bytes):
+            raise PasswordChangeError('Choose a different new password.',code='PASSWORD_UNCHANGED')
+        with self.database.transaction() as db:
+            staff,security_state=self._password_actor(db,actor)
+            verified_hash=staff['password_hash']
+        self._password_change_budget(actor,address)
+        if not password_valid(current,verified_hash):
+            with self.database.transaction() as db:
+                audit(db,actor['tenant_id'],actor['staff_id'],'staff-password-change-rejected',actor['staff_id'],{'reason':'current_password_invalid'})
+            raise PasswordChangeError('Your current password is incorrect.',403,code='CURRENT_PASSWORD_INVALID')
+        replacement=password_hash(new)
+        with self.database.transaction() as db:
+            staff,current_security=self._password_actor(db,actor)
+            if staff['password_hash']!=verified_hash or current_security!=security_state:
+                raise PasswordChangeError('Your password or account security changed. Sign in again.',401,
+                    code='PASSWORD_STATE_CHANGED',sign_in_required=True)
+            saved=db.execute('''UPDATE ss_staff SET password_hash=%s WHERE tenant_id=%s AND id=%s
+                AND enabled=TRUE AND password_hash=%s RETURNING id''',
+                (replacement,actor['tenant_id'],actor['staff_id'],verified_hash)).fetchone()
+            if not saved:raise PasswordChangeError('Your password changed. Sign in again.',401,code='PASSWORD_STATE_CHANGED',sign_in_required=True)
+            db.execute('''UPDATE ss_staff_mfa SET pending_seed=NULL,pending_token_hash=NULL,pending_session_hash=NULL,
+                pending_password_fingerprint=NULL,pending_expires_at=NULL,pending_attempts=0,updated_at=clock_timestamp()
+                WHERE tenant_id=%s AND staff_id=%s AND pending_seed IS NOT NULL''',(actor['tenant_id'],actor['staff_id']))
+            db.execute('''UPDATE ss_mfa_challenges SET cancelled_at=clock_timestamp() WHERE tenant_id=%s AND staff_id=%s
+                AND used_at IS NULL AND cancelled_at IS NULL''',(actor['tenant_id'],actor['staff_id']))
+            db.execute('DELETE FROM ss_sessions WHERE tenant_id=%s AND staff_id=%s',(actor['tenant_id'],actor['staff_id']))
+            audit(db,actor['tenant_id'],actor['staff_id'],'staff-password-changed',actor['staff_id'],{'all_sessions_revoked':True})
+        return {'password_changed':True,'sign_in_required':True,'all_sessions_revoked':True}
 
     def list_staff(self,actor):
         if actor['role']!='owner':raise ServiceError('Only the store owner can manage staff.',403)
