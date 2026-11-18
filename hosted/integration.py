@@ -11,8 +11,10 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import psycopg
 from psycopg import sql
+from cryptography.fernet import Fernet
 from .database import Database
 from .auth import Auth
+from .mfa import secret_bytes, totp
 from .ledger import Ledger
 from .security import ServiceError, password_hash
 
@@ -42,10 +44,26 @@ class PostgreSQLAcceptance(unittest.TestCase):
         with self.database.transaction() as db:
             db.execute('INSERT INTO ss_tenants(id,slug,name) VALUES (%s,%s,%s)',(self.tenant,self.slug,'Fictional store'))
             db.execute("INSERT INTO ss_staff(id,tenant_id,email,password_hash,role) VALUES (%s,%s,%s,%s,'owner')",(self.staff,self.tenant,'owner@example.invalid',password_hash('fixture-password-1234')))
-        self.auth=Auth(self.database);self.ledger=Ledger(self.database)
+        self.auth=Auth(self.database,encryption_keys=Fernet.generate_key().decode());self.ledger=Ledger(self.database)
+        setup_address='fixture-credit-setup-'+self.tenant.hex
+        token,_=self.auth.login({'store_slug':self.slug,'email':'owner@example.invalid','password':'fixture-password-1234','mfa_supported':True},setup_address)
+        self.actor=self.auth.resolve(token)
+        setup=self.auth.mfa.begin(self.actor,{'password':'fixture-password-1234'},setup_address)
+        confirmed=self.auth.mfa.confirm(self.actor,{'enrollment_token':setup['enrollment_token'],
+            'code':totp(secret_bytes(setup['secret']),datetime.now(timezone.utc).timestamp())},setup_address)
+        self._setup_recovery_code=confirmed['recovery_codes'][0]
+        self.actor=self.auth.resolve(token)
         created=self.ledger.create_customer(self.actor,{'request_key':'customer','display_name':'Fictional customer','permission_confirmed':True,'square_customer_id':'fixture-square-customer'})
         self.customer=created['customer_id']
         self.ledger.adjust(self.actor,self.customer,{'request_key':'opening','amount_cents':5000,'kind':'opening','reference':'FIXTURE OPENING','reason':'Fictional test opening','version':0})
+
+    def _password_only_auth_precondition(self):
+        # These auth cases explicitly begin unenrolled and without sessions;
+        # retire the actual setup proof rather than bypass the credit guard.
+        self.auth.mfa.change(self.actor,{'password':'fixture-password-1234',
+            'code':self._setup_recovery_code},'fixture-credit-setup-'+self.tenant.hex,disable=True)
+        self.actor=None
+        self._setup_recovery_code=None
 
     def test_schema_ready_tls_and_no_public_data_dependency(self):
         self.assertTrue(self.database.ready())
@@ -108,6 +126,7 @@ class PostgreSQLAcceptance(unittest.TestCase):
         self.assertEqual(self.ledger.account(self.actor,self.customer)['customer']['balance_cents'],5000)
 
     def test_login_invite_expiry_replay_and_session_revocation(self):
+        self._password_only_auth_precondition()
         token,info=self.auth.login({'store_slug':self.slug,'email':'owner@example.invalid','password':'fixture-password-1234'},'fixture-address')
         actor=self.auth.resolve(token)
         self.assertEqual(actor['tenant_id'],self.tenant)
@@ -129,6 +148,7 @@ class PostgreSQLAcceptance(unittest.TestCase):
         with self.assertRaises(ServiceError):self.auth.resolve(token)
 
     def test_failed_login_throttles_and_never_creates_sessions(self):
+        self._password_only_auth_precondition()
         for _ in range(5):
             with self.assertRaises(ServiceError):self.auth.login({'store_slug':self.slug,'email':'owner@example.invalid','password':'wrong'},'fixture-address')
         with self.assertRaises(ServiceError) as error:

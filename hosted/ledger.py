@@ -5,6 +5,7 @@ import uuid
 from psycopg.types.json import Jsonb
 from .security import ServiceError, amount, identifier, provider_id
 from .database import audit
+from .credit_authority import require_credit_authority
 
 
 def require_role(actor,*roles):
@@ -76,7 +77,6 @@ class Ledger:
             return self._finish(db,tenant,data['request_key'],hashed,{'customer_id':ident})
 
     def adjust(self,actor,customer_id,data):
-        require_role(actor,'owner','manager')
         value=amount(data.get('amount_cents'));kind=data.get('kind')
         if kind=='trade_credit':raise ServiceError('Trade credit must come from an explicitly accepted hosted trade receipt; it cannot be entered as a manual adjustment.',409)
         if kind not in ('opening','adjust_add','adjust_remove'):raise ServiceError('Select a supported credit entry.')
@@ -85,7 +85,8 @@ class Ledger:
         tenant=actor['tenant_id'];source='trade:'+reference if kind=='trade_credit' else 'request:'+str(data.get('request_key'))
         with self.database.transaction() as db:
             hashed,old=self._begin_request(db,tenant,data.get('request_key'),{'customer':str(customer_id),'amount':value,'kind':kind,'reason':reason,'reference':reference})
-            if old:return old
+            require_credit_authority(db,actor,fresh_mfa=old is None)
+            if old is not None:return old
             c=self._customer(db,tenant,customer_id,lock=True)
             if data.get('version')!=c['version']:raise ServiceError('The balance changed. Refresh before adjusting.',409)
             if kind=='opening' and db.execute('SELECT 1 FROM ss_credit_entries WHERE tenant_id=%s AND customer_id=%s',(tenant,c['id'])).fetchone():
@@ -102,6 +103,7 @@ class Ledger:
             if signed>0:record_credit_lot(db,tenant,c['id'],entry)
             else:debit_available_lots(db,tenant,c['id'],entry)
             audit(db,tenant,actor['staff_id'],'credit-adjusted',c['id'],{'entry_id':entry,'amount_cents':signed,'kind':kind})
+            require_credit_authority(db,actor)
             return self._finish(db,tenant,data['request_key'],hashed,{'entry_id':entry,'balance_cents':balance,'version':c['version']+1})
 
     def reserve(self,actor,customer_id,data,*,checkout_binding=None):

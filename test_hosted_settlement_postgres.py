@@ -17,6 +17,7 @@ from hosted.security import ServiceError
 from hosted.settlement import Settlement
 from hosted.settlement import record_reservation_terms
 from hosted.test_fixtures import approved_checkout_fixture
+from test_intake_fixtures import fresh_mfa_actor
 from test_hosted_settlement import terms, order, returned_order, payment_refunds, catalog_discount
 
 
@@ -265,13 +266,16 @@ class PostgreSQLSettlementAcceptance(_PostgreSQLSettlementFixture):
         self.assertEqual((result['state'], result['code']), ('exception', 'square_connection_binding_changed'))
         self.assertEqual(self.snapshot()[0]['balance_cents'], 5000)
 
-    def owner(self):
+    def owner(self, *, credit=False):
         with self.database.transaction() as db:
             owner = db.execute("SELECT id FROM ss_staff WHERE tenant_id=%s AND role='owner' LIMIT 1", (self.tenant,)).fetchone()
-        return {'tenant_id': self.tenant, 'staff_id': owner['id'], 'role': 'owner'}
+            actor = {'tenant_id': self.tenant, 'staff_id': owner['id'], 'role': 'owner'}
+            # Only the two positive manual-correction cases need a stored proof.
+            # This isolated domain fixture does not claim MFA crypto acceptance.
+            return fresh_mfa_actor(db, actor) if credit else actor
 
     def test_new_unclassified_credit_does_not_cover_insufficient_approved_credit(self):
-        actor = self.owner()
+        actor = self.owner(credit=True)
         Ledger(self.database).adjust(actor, self.customer, {'request_key': 'unknown-add', 'amount_cents': 1000,
              'kind': 'adjust_add', 'reason': 'Fictional unknown-origin correction', 'reference': 'TEST', 'version': 0})
         with self.assertRaises(ServiceError):
@@ -281,7 +285,7 @@ class PostgreSQLSettlementAcceptance(_PostgreSQLSettlementFixture):
         self.assertEqual((account['balance_cents'], account['reserved_cents']), (6000, 2000))
 
     def test_manual_removal_burns_only_available_lots_without_touching_hold(self):
-        actor = self.owner()
+        actor = self.owner(credit=True)
         Ledger(self.database).adjust(actor, self.customer, {'request_key': 'remove', 'amount_cents': 1000,
             'kind': 'adjust_remove', 'reason': 'Fictional correction', 'reference': 'TEST', 'version': 0})
         with self.database.transaction() as db:

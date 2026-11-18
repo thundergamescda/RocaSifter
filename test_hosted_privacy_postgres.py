@@ -392,7 +392,7 @@ class PostgreSQLPrivacyAcceptance(_PostgreSQLSettlementFixture):
     def test_repeatable_read_snapshot_excludes_concurrent_committed_credit(self):
         before=self.business_snapshot();output=self.begin();errors=[]
         def mutate():
-            try:Ledger(self.database).adjust(self.actor,self.customer,{'request_key':'concurrent-export-write','amount_cents':1,'kind':'adjust_add',
+            try:Ledger(self.database).adjust(self.trade_manager,self.customer,{'request_key':'concurrent-export-write','amount_cents':1,'kind':'adjust_add',
                  'reference':'LATER-WRITE','reason':'Fictional concurrent snapshot test','version':before[0]['version']})
             except Exception as error:errors.append(error)
         worker=threading.Thread(target=mutate);worker.start();worker.join(timeout=10)
