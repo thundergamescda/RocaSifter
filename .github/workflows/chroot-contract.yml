@@ -1,0 +1,27 @@
+name: Isolated Linux chroot profile contract
+run-name: Four-case chroot contract ${{ github.sha }}
+'on':
+  push:
+    branches:
+      - 'stock-sleeve-contract-ci-*'
+permissions:
+  contents: read
+concurrency:
+  group: chroot-contract-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  chroot-contract:
+    if: github.repository == 'thundergamescda/RocaSifter'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact contract candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, previously reviewed
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Run four isolated OS contract observations
+        env:
+          SS_CI_SOURCE_SHA: ${{ github.sha }}
+        run: bash tools/run_chroot_contract_ci.sh
