@@ -1,5 +1,21 @@
 # Current commerce development candidate
 
+Manual-credit authority validation, November 18, 2026: hosted commit
+`b677474916426ec9d272f730803ad8e9a783544a` passed all 496 PostgreSQL
+cases across 34 modules and all 85 hosted unit cases, with zero failures,
+errors or skips. All prior 480 database IDs and 85 unit IDs remain; all 16
+new credit authority/HTTP cases pass. New manual entries require a current
+owner/manager session and enrolled second-factor proof from the last 15 minutes.
+Live authority and a final in-transaction clock check protect blocked writes;
+exact committed-result recovery does not issue more credit. The actual 20
+evidence frames, 258 copied public files and 121 runner fingerprints were
+independently reconciled. See private `CREDIT_AUTHORITY_TEST_REPORT_20261118_r1.txt`
+and https://github.com/thundergamescda/RocaSifter/actions/runs/44365035796.
+This is Linux backend and HTTP-fixture evidence. Browser startup/user flows,
+Windows installation, live Square credit funding/redemption, devices and
+legal/tax/privacy acceptance remain open. Preview publication does not activate
+checkout or update installed store PCs.
+
 Authenticated password-change validation, November 17, 2026: hosted commit
 `2aa667d57f2d61cb9e866223a0ba9d095dd5e1a4` passed all 480 PostgreSQL
 cases across 32 modules and all 85 hosted units, with zero failures, errors or

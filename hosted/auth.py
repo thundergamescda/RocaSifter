@@ -7,6 +7,7 @@ import uuid
 from .security import ServiceError, digest, email_address, password_hash, password_valid
 from .database import audit
 from .mfa import MFA, issue_session
+from .staff_authority import StaffAuthorityError, require_staff_authority
 
 
 class PasswordChangeError(ServiceError):
@@ -193,23 +194,26 @@ class Auth:
         return {'password_changed':True,'sign_in_required':True,'all_sessions_revoked':True}
 
     def list_staff(self,actor):
-        if actor['role']!='owner':raise ServiceError('Only the store owner can manage staff.',403)
         with self.database.transaction() as db:
+            require_staff_authority(db,actor)
             rows=db.execute('''SELECT id,email,role,enabled,created_at FROM ss_staff
                                WHERE tenant_id=%s ORDER BY created_at,id''',(actor['tenant_id'],)).fetchall()
-        return [dict(row)|{'id':str(row['id']),'created_at':row['created_at'].isoformat()} for row in rows]
+            result=[dict(row)|{'id':str(row['id']),'created_at':row['created_at'].isoformat()} for row in rows]
+            require_staff_authority(db,actor)
+            return result
 
     def invite(self,actor,data):
-        if actor['role']!='owner':raise ServiceError('Only the store owner can invite staff.',403)
         email=email_address(data.get('email'));role=data.get('role')
         if role not in ('manager','buyer','cashier'):raise ServiceError('Select a staff role.')
         token=secrets.token_urlsafe(32)
         with self.database.transaction() as db:
+            require_staff_authority(db,actor,write=True)
             if db.execute('SELECT 1 FROM ss_staff WHERE tenant_id=%s AND email=%s',(actor['tenant_id'],email)).fetchone():
                 raise ServiceError('This staff account already exists.',409)
             db.execute("INSERT INTO ss_invites(token_hash,tenant_id,email,role,expires_at,created_by) VALUES (%s,%s,%s,%s,now()+interval '24 hours',%s)",
                        (digest(token),actor['tenant_id'],email,role,actor['staff_id']))
             audit(db,actor['tenant_id'],actor['staff_id'],'staff-invited',digest(email),{'role':role})
+            require_staff_authority(db,actor,write=True)
         return {'invite_token':token,'expires_in':86400,'delivery':'Share privately with the intended staff member. Email delivery is not connected.'}
 
     def _invite_attempt(self,client_address):
@@ -258,10 +262,24 @@ class Auth:
         return {'staff_created':True}
 
     def disable_staff(self,actor,staff_id):
-        if actor['role']!='owner':raise ServiceError('Only the owner can disable staff.',403)
         with self.database.transaction() as db:
-            row=db.execute('SELECT * FROM ss_staff WHERE tenant_id=%s AND id=%s FOR UPDATE',(actor['tenant_id'],staff_id)).fetchone()
-            if not row or row['role']=='owner':raise ServiceError('Select a non-owner staff member.')
-            db.execute('UPDATE ss_staff SET enabled=FALSE WHERE tenant_id=%s AND id=%s',(actor['tenant_id'],staff_id))
-            db.execute('DELETE FROM ss_sessions WHERE tenant_id=%s AND staff_id=%s',(actor['tenant_id'],staff_id))
-            audit(db,actor['tenant_id'],actor['staff_id'],'staff-disabled',staff_id)
+            require_staff_authority(db,actor,write=True)
+            try:
+                target=uuid.UUID(str(staff_id))
+            except (ValueError,TypeError,AttributeError):
+                raise StaffAuthorityError('Choose a non-owner staff member in your store.',400,
+                    code='STAFF_TARGET_INVALID',sign_in_required=False) from None
+            if target==uuid.UUID(str(actor['staff_id'])):
+                raise StaffAuthorityError('Your own owner account cannot be disabled here.',400,
+                    code='STAFF_TARGET_INVALID',sign_in_required=False)
+            # Never lock another owner as a target: concurrent owner requests
+            # cannot form owner-A -> owner-B / owner-B -> owner-A lock cycles.
+            row=db.execute("SELECT id FROM ss_staff WHERE tenant_id=%s AND id=%s AND role<>'owner' FOR UPDATE",
+                           (actor['tenant_id'],target)).fetchone()
+            if not row:
+                raise StaffAuthorityError('Choose a non-owner staff member in your store.',400,
+                    code='STAFF_TARGET_INVALID',sign_in_required=False)
+            db.execute('UPDATE ss_staff SET enabled=FALSE WHERE tenant_id=%s AND id=%s',(actor['tenant_id'],target))
+            db.execute('DELETE FROM ss_sessions WHERE tenant_id=%s AND staff_id=%s',(actor['tenant_id'],target))
+            audit(db,actor['tenant_id'],actor['staff_id'],'staff-disabled',target)
+            require_staff_authority(db,actor,write=True)

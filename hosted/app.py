@@ -14,6 +14,7 @@ from .auth import Auth,PasswordChangeError
 from .database import Database
 from .ledger import Ledger
 from .credit_authority import CreditAuthorityError
+from .staff_authority import StaffAuthorityError
 from .security import ServiceError
 from .square import Square
 from .trades import Trades
@@ -105,7 +106,7 @@ def create_app(config=None,*,database=None,square_transport=None):
         if isinstance(error,ReceivingError):
             result['code']=error.code
             if error.receiving_id:result['receiving_id']=error.receiving_id
-        if isinstance(error,CreditAuthorityError):
+        if isinstance(error,(CreditAuthorityError,StaffAuthorityError)):
             result['code']=error.code
             result['sign_in_required']=error.sign_in_required
         if isinstance(error,(EnrollmentError,CleanupObserverError)):result['code']=error.code
