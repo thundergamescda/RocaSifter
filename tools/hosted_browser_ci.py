@@ -46,6 +46,17 @@ EXPECTED_HTTP_ERRORS = {
     'HUI06': {('POST', '/api/auth/password/change', 403)},
     'HUI07': {('POST', '/api/auth/login', 401)},
 }
+SHARED_PRODUCTION_FILES = {
+    'intake_manifest.py', 'catalog_physical_ownership.py', 'intake_physical_identity.py',
+    'scanner_adapters.py', 'intake_label_contract.py',
+}
+BROWSER_TOOL_FILES = {
+    'tools/hosted_browser_ci.py', 'tools/hosted_browser_fixture.py', 'tools/hosted_browser_cases.py',
+    'tools/hosted_browser_constraints.txt', 'tools/hosted_browser_requirements.txt',
+    'tools/playwright-1.64.1-seccomp.json', 'tools/hosted_browser-seccomp.json',
+    'tools/HOSTED_BROWSER_SECCOMP_PROVENANCE.txt', 'tools/PLAYWRIGHT-LICENSE.txt',
+    'tools/hosted_browser.Dockerfile', 'tools/hosted_browser.Dockerfile.dockerignore',
+}
 
 
 def now():
@@ -119,6 +130,14 @@ def source_snapshot():
     return result
 
 
+def verify_source_scope(snapshot):
+    required = SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | {'requirements-hosted.txt'}
+    require(required.issubset(snapshot), 'COPIED_SOURCE_REQUIRED_INPUT_MISSING')
+    require(len(snapshot) == 79 and
+            all(path in required or path.startswith('hosted/') for path in snapshot),
+            'COPIED_SOURCE_SCOPE_MISMATCH')
+
+
 class DiscardOutput(io.TextIOBase):
     """Count diagnostics without retaining or exporting private text."""
     def __init__(self):
@@ -132,6 +151,11 @@ class DiscardOutput(io.TextIOBase):
         return None
 
 
+def safe_error_type(error):
+    name = type(error).__name__
+    return name if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,79}', name) else 'Exception'
+
+
 def safe_error(error):
     if isinstance(error, AssertionError) and SAFE_CODE.fullmatch(str(error)):
         return str(error)
@@ -139,11 +163,19 @@ def safe_error(error):
     if (type(error).__name__ == 'PortalFixtureError' and isinstance(fixture_code, str) and
             re.fullmatch(r'fixture_[a-z0-9_]{1,80}', fixture_code)):
         return fixture_code.upper()
-    kind = type(error).__name__
-    if kind not in ('AssertionError', 'Error', 'TimeoutError', 'RuntimeError',
-                    'ValueError', 'OSError', 'PermissionError', 'FileNotFoundError',
-                    'ImportError', 'ModuleNotFoundError', 'SSLError'):
-        kind = 'Exception'
+    kind = safe_error_type(error)
+    if kind in ('TargetClosedError', 'Error') and type(error).__module__.startswith('playwright.'):
+        # Inspect private exception text only for exact known classifications.
+        # Never retain/export its message, command line, environment or stack.
+        message = str(error)
+        for marker, code in (
+            ('Failed to move to new namespace', 'CHROMIUM_NAMESPACE_SETUP_FAILED'),
+            ('No usable sandbox!', 'CHROMIUM_SANDBOX_UNAVAILABLE'),
+            ('error while loading shared libraries:', 'CHROMIUM_SHARED_LIBRARY_UNAVAILABLE'),
+            ("Executable doesn't exist", 'BUNDLED_CHROMIUM_EXECUTABLE_MISSING'),
+        ):
+            if marker in message:
+                return code
     return 'UNEXPECTED_' + re.sub(r'(?<!^)(?=[A-Z])', '_', kind).upper()
 
 
@@ -456,8 +488,14 @@ def main():
     results = []
     log = []
     errors = []
-    runtime = {'scope': 'Pinned nonroot sandboxed hosted Linux Chromium; UNSTARTED',
-               'started': False, 'explicit_chromium_sandbox': True,
+    error_types = []
+    stage = 'source_scope'
+    failure_stage = None
+    runtime = {'scope': 'Pinned hosted Linux Chromium; sandbox readiness incomplete',
+               'started': False, 'readiness_complete': False,
+               'playwright_driver_started': False, 'launch_attempted': False,
+               'launched': False, 'pid_observation_complete': False,
+               'explicit_chromium_sandbox': True,
                'ignore_https_errors': False, 'uid': os.geteuid()}
     tls = {'scope': 'Owned fixture probe only', 'before': None, 'after': None}
     fixture = browser = playwright = cases_context = None
@@ -465,20 +503,28 @@ def main():
     sandbox_pids = []
     with redirect_stdout(sink), redirect_stderr(sink):
         try:
+            verify_source_scope(before)
+            stage = 'dependency_imports'
             from playwright.sync_api import sync_playwright
             import playwright as playwright_package
             from tools.hosted_browser_fixture import PortalFixture
             from tools.hosted_browser_cases import CASES
+            stage = 'dependency_versions'
             require(tuple(item[0] for item in CASES) == EXPECTED_IDS and
                     len({item[0] for item in CASES}) == len(EXPECTED_IDS),
                     'EXACT_BROWSER_CASE_SELECTION')
             require(importlib.metadata.version('playwright') == '1.64.1' and
                     importlib.metadata.version('pyee') == '14.0.0' and
                     importlib.metadata.version('greenlet') == '3.5.6', 'PINNED_BROWSER_DEPENDENCIES')
+            stage = 'fixture_setup'
             fixture = PortalFixture(EVIDENCE)
             fixture.__enter__()
+            stage = 'verified_https_probe'
             tls['before'] = web_probe(fixture)
+            stage = 'playwright_driver_start'
             playwright = sync_playwright().start()
+            runtime['playwright_driver_started'] = True
+            stage = 'bundled_binary_identity'
             executable = Path(playwright.chromium.executable_path)
             require(executable.is_file() and executable.resolve().is_relative_to('/opt/ss-playwright'),
                     'BUNDLED_CHROMIUM_EXECUTABLE_REQUIRED')
@@ -489,11 +535,19 @@ def main():
             safe_env = {key: os.environ[key] for key in
                         ('PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'PLAYWRIGHT_BROWSERS_PATH')
                         if key in os.environ}
+            runtime.update(binary=binary, bundled_revision=chromium['revision'],
+                           expected_chromium_version=chromium['browserVersion'],
+                           browser_metadata_sha256=digest(read_regular(metadata_path)),
+                           launch_attempted=True, launched=False)
+            stage = 'chromium_launch'
             browser = playwright.chromium.launch(
                 executable_path=str(executable), headless=True, chromium_sandbox=True,
                 timeout=30000, env=safe_env,
             )
+            runtime['launched'] = True
+            stage = 'chromium_version_check'
             require(browser.version == chromium['browserVersion'], 'BUNDLED_CHROMIUM_VERSION_MISMATCH')
+            stage = 'sandbox_probe'
             readiness_context = browser.new_context(ignore_https_errors=False, service_workers='block')
             try:
                 sandbox = sandbox_probe(browser, readiness_context)
@@ -503,6 +557,8 @@ def main():
             runtime = {
                 'scope': 'Actual bundled Chromium and Linux process sandbox readiness',
                 'started': True, 'python': sys.version.split()[0],
+                'readiness_complete': True, 'playwright_driver_started': True,
+                'pid_observation_complete': True,
                 'playwright': importlib.metadata.version('playwright'),
                 'pyee': importlib.metadata.version('pyee'),
                 'greenlet': importlib.metadata.version('greenlet'),
@@ -510,6 +566,7 @@ def main():
                 'browser_metadata_sha256': digest(read_regular(metadata_path)),
                 'binary': binary,
                 'explicit_executable_path': True, 'headless': True,
+                'launch_attempted': True, 'launched': True,
                 'explicit_chromium_sandbox': True, 'ignore_https_errors': False,
                 'no_auth_route_fulfillment': True, 'no_authenticated_cookie_injection': True,
                 'locale': 'en-US', 'timezone': 'America/Boise',
@@ -517,6 +574,7 @@ def main():
                 'sandbox': sandbox,
             }
             cases_context = CaseContext(fixture, browser)
+            stage = 'browser_cases'
             for identifier, function in CASES:
                 cases_context.case_id = identifier
                 case_started = time.monotonic()
@@ -534,11 +592,15 @@ def main():
                 log.append(('PASS ' if outcome['outcome'] == 'pass' else 'FAIL ') + identifier +
                            (' ' + outcome['code'] if outcome['code'] else '') +
                            ' duration_seconds=' + str(outcome['duration_seconds']))
+            stage = 'ledgers_and_final_probe'
             cases_context.verify_ledgers()
             require(fixture.provider_attempts == 0, 'PROVIDER_TRANSPORT_ATTEMPT')
             tls['after'] = web_probe(fixture)
+            stage = 'completed'
         except Exception as error:
+            failure_stage = stage
             errors.append(safe_error(error))
+            error_types.append(safe_error_type(error))
         finally:
             if cases_context is not None:
                 cases_context.close_contexts()
@@ -593,7 +655,7 @@ def main():
     save_bytes('browser-cases.log', ('\n'.join(log) + '\n').encode('utf-8'))
     passed = (
         not errors and stable and browser_cleanup and fixture_cleanup and
-        cases_context is not None and cases_context.cleanup_complete and runtime['started'] and
+        cases_context is not None and cases_context.cleanup_complete and runtime['readiness_complete'] and
         tuple(row['id'] for row in results) == EXPECTED_IDS and
         all(row['started'] and row['outcome'] == 'pass' for row in results) and
         tls['before'] is not None and tls['after'] is not None
@@ -607,8 +669,15 @@ def main():
         'successful_case_ids': [row['id'] for row in results if row['outcome'] == 'pass'],
         'case_results': results, 'failed_count': sum(row['outcome'] == 'fail' for row in results),
         'not_run_count': sum(row['outcome'] == 'not_run' for row in results),
-        'error_codes': errors, 'source_stable': stable, 'copied_source_count': len(before),
+        'error_codes': errors, 'error_types': error_types,
+        'last_stage': stage, 'failure_stage': failure_stage,
+        'source_scope_matches': (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES |
+                                {'requirements-hosted.txt'}).issubset(before) and len(before) == 79 and
+            all(path.startswith('hosted/') or path in SHARED_PRODUCTION_FILES or
+                path in BROWSER_TOOL_FILES or path == 'requirements-hosted.txt' for path in before),
+        'source_stable': stable, 'copied_source_count': len(before),
         'browser_cleanup_complete': browser_cleanup, 'fixture_cleanup_complete': fixture_cleanup,
+        'browser_pid_observation_complete': runtime['pid_observation_complete'],
         'fixture_cleanup_error_codes': [
             value.upper() if isinstance(value, str) and re.fullmatch(r'fixture_[a-z0-9_]{1,80}', value)
             else 'INVALID_FIXTURE_CLEANUP_CODE'

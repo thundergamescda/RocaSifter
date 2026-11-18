@@ -4,6 +4,7 @@
 !hosted/**
 !requirements-hosted.txt
 !tools/
+tools/**
 !tools/hosted_browser_ci.py
 !tools/hosted_browser_fixture.py
 !tools/hosted_browser_cases.py
