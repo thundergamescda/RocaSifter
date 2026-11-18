@@ -138,7 +138,7 @@ def _logout(ctx, page, code):
 
 def _screen(ctx, page, name):
     _observer_ready(ctx, page, 'SCREEN_STATUS')
-    ctx.screenshot(page, name, mask_selectors=EXTRA_MASKS)
+    ctx.screenshot(page, name + '.png', mask_selectors=EXTRA_MASKS)
 
 
 def _password_fields_empty(ctx, page, code):
