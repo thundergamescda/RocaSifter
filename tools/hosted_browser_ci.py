@@ -138,6 +138,41 @@ def verify_source_scope(snapshot):
             'COPIED_SOURCE_SCOPE_MISMATCH')
 
 
+
+def launch_stderr_excerpt(error):
+    """Bounded browser stderr only, before any browser context or sign-in.
+
+    This excludes the SDK exception, stack and launch-wrapper rows. The browser receives
+    only safe_env, no database or merchant credentials, and no target app URL.
+    Actual test-page exceptions never enter this diagnostic channel.
+    """
+    rows = []
+    matched = 0
+    fixture_dsn = os.environ.get('DATABASE_URL', '')
+    for line in str(error).splitlines():
+        found = re.search(r'\[pid=([0-9]{1,10})\]\[err\]\s*(.*)', line)
+        if not found:
+            continue
+        matched += 1
+        if len(rows) >= 40:
+            continue
+        value = found.group(2)
+        if fixture_dsn:
+            value = value.replace(fixture_dsn, '[fixture database redacted]')
+        if re.search(r'(?i)authorization|bearer\s|password|secret|csrf|postgres(?:ql)?://|\btoken\b', value):
+            value = '[sensitive startup line redacted]'
+        value = re.sub(r'https?://\S+', '[url]', value, flags=re.IGNORECASE)
+        value = ''.join(character if character == '\t' or character.isprintable() else ' '
+                        for character in value)
+        rows.append({'pid': int(found.group(1)), 'stderr': value[:512],
+                     'line_truncated': len(value) > 512})
+    return {
+        'scope': 'Selected browser-process stderr before any context/credentials; SDK wrapper and stack excluded',
+        'maximum_rows': 40, 'maximum_characters_per_row': 512,
+        'matching_rows': matched, 'truncated': matched > 40,
+        'rows': rows,
+    }
+
 class DiscardOutput(io.TextIOBase):
     """Count diagnostics without retaining or exporting private text."""
     def __init__(self):
@@ -599,6 +634,8 @@ def main():
             stage = 'completed'
         except Exception as error:
             failure_stage = stage
+            if stage == 'chromium_launch' and browser is None and not runtime['launched']:
+                runtime['launch_stderr'] = launch_stderr_excerpt(error)
             errors.append(safe_error(error))
             error_types.append(safe_error_type(error))
         finally:
