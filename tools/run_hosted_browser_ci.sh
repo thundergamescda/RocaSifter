@@ -23,7 +23,7 @@ source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ "$(git -C "$source_root" rev-parse HEAD)" == "$SS_CI_SOURCE_SHA" ]] || die 'Checkout HEAD differs from SS_CI_SOURCE_SHA.'
 [[ -z "$(git -C "$source_root" status --porcelain --untracked-files=all)" ]] || die 'CI source checkout must be clean.'
 seccomp_path="$source_root/tools/hosted_browser-seccomp.json"
-seccomp_sha256='e56c2f17869890cbd1fed1b44e584af59ffca5f44cb946832b194c5662cc049f'
+seccomp_sha256='95221e255acfee0a4727c3cdfd266bde20b3117d548b0c8a809b3978366c4953'
 [[ -f "$seccomp_path" && ! -L "$seccomp_path" ]] || die 'The pinned derived browser seccomp profile is required.'
 found_profile_hash="$(sha256sum < "$seccomp_path")"
 [[ "${found_profile_hash%% *}" == "$seccomp_sha256" ]] || die 'Browser seccomp profile differs from the reviewed derivative.'

@@ -50,6 +50,7 @@ SHARED_PRODUCTION_FILES = {
     'intake_manifest.py', 'catalog_physical_ownership.py', 'intake_physical_identity.py',
     'scanner_adapters.py', 'intake_label_contract.py',
 }
+HOSTED_AUTHORITY_FILES = {'hosted/credit_authority.py', 'hosted/staff_authority.py'}
 BROWSER_TOOL_FILES = {
     'tools/hosted_browser_ci.py', 'tools/hosted_browser_fixture.py', 'tools/hosted_browser_cases.py',
     'tools/hosted_browser_constraints.txt', 'tools/hosted_browser_requirements.txt',
@@ -131,9 +132,9 @@ def source_snapshot():
 
 
 def verify_source_scope(snapshot):
-    required = SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | {'requirements-hosted.txt'}
+    required = SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES | {'requirements-hosted.txt'}
     require(required.issubset(snapshot), 'COPIED_SOURCE_REQUIRED_INPUT_MISSING')
-    require(len(snapshot) == 79 and
+    require(len(snapshot) == 81 and
             all(path in required or path.startswith('hosted/') for path in snapshot),
             'COPIED_SOURCE_SCOPE_MISMATCH')
 
@@ -708,8 +709,8 @@ def main():
         'not_run_count': sum(row['outcome'] == 'not_run' for row in results),
         'error_codes': errors, 'error_types': error_types,
         'last_stage': stage, 'failure_stage': failure_stage,
-        'source_scope_matches': (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES |
-                                {'requirements-hosted.txt'}).issubset(before) and len(before) == 79 and
+        'source_scope_matches': (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES |
+                                {'requirements-hosted.txt'}).issubset(before) and len(before) == 81 and
             all(path.startswith('hosted/') or path in SHARED_PRODUCTION_FILES or
                 path in BROWSER_TOOL_FILES or path == 'requirements-hosted.txt' for path in before),
         'source_stable': stable, 'copied_source_count': len(before),

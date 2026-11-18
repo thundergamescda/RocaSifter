@@ -51,6 +51,13 @@
 	],
 	"syscalls": [
 		{
+			"names": ["chroot"],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [],
+			"includes": {},
+			"excludes": {}
+		},
+		{
 			"names": ["clone3"],
 			"action": "SCMP_ACT_ERRNO",
 			"errnoRet": 38

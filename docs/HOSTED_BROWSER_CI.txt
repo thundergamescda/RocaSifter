@@ -86,9 +86,14 @@ origins during HUI02. Server provider transport is denied.
 
 Chromium runs as UID10001 with chromium_sandbox=True, private bounded shm, init,
 all host capabilities dropped and a pinned derivative of the upstream seccomp
-profile. The sole derivative rule keeps clone3 denied with ENOSYS so glibc can
-use the existing clone fallback; every upstream allow/default rule is retained.
-The unmodified upstream profile, license and exact provenance are also kept.
+profile. The deferred candidate retains the clone3 ENOSYS compatibility rule
+and adds one unconditional chroot allow; every other upstream rule/default is
+retained. Configured outer capabilities stay fully dropped. Before any browser
+launch, a verified four-case chroot comparison, independent source/security
+review and separate Root admission are required. This document records no
+runtime outcome. Requested/inspected policy equality does not attest installed
+BPF, R3 cause or the full Chromium sandbox. The unmodified upstream profile,
+license and exact provenance are also kept.
 See tools/HOSTED_BROWSER_SECCOMP_PROVENANCE.txt. There is
 no privileged/SYS_ADMIN/hostIPC/host-network/no-sandbox fallback. The runner
 checks the actual bundled executable/version, process UID/no-new-privileges,

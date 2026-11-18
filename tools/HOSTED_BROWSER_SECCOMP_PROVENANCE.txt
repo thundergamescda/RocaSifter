@@ -1,4 +1,4 @@
-UNRUN container-only hosted Linux browser fixture profile derivation.
+DEFERRED container-only hosted Linux browser fixture profile adoption.
 
 Upstream tools/playwright-1.64.1-seccomp.json is preserved byte for byte:
 SHA256 cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849
@@ -6,13 +6,19 @@ https://raw.githubusercontent.com/microsoft/playwright/v1.64.1/utils/docker/secc
 Its Apache-2.0 license is preserved in tools/PLAYWRIGHT-LICENSE.txt.
 The original six-file source foundation remains in the private Planning folder.
 
-tools/hosted_browser-seccomp.json is a separate local derivative:
+Deferred tools/hosted_browser-seccomp.json has this prospective SHA256:
+95221e255acfee0a4727c3cdfd266bde20b3117d548b0c8a809b3978366c4953
+It retains the original clone3-only compatibility derivative:
 SHA256 e56c2f17869890cbd1fed1b44e584af59ffca5f44cb946832b194c5662cc049f
-The sole change inserts this unconditional first syscall rule:
   {"names":["clone3"],"action":"SCMP_ACT_ERRNO","errnoRet":38}
-Removing that inserted rule and its following comma recovers the exact upstream
-bytes. defaultAction, architectures and every existing rule remain unchanged.
-clone3 remains denied. No capability, syscall allow or sandbox bypass is added.
+The sole subsequent change prepends one unconditional chroot allow:
+  {"names":["chroot"],"action":"SCMP_ACT_ALLOW","args":[],"includes":{},"excludes":{}}
+Removing only that chroot rule and comma restores the exact e56c2f derivative;
+removing its clone3 rule then restores the exact upstream bytes. All other
+defaultAction, architectures, rules, arguments, includes and excludes remain.
+clone3 stays denied. This intentionally adds one container syscall permission;
+configured outer capabilities stay fully dropped. Kernel namespace capability
+and LSM checks still apply.
 
 Source rationale, reviewed 2026-11-17; compatibility is inferred, not executed:
 https://raw.githubusercontent.com/bminor/glibc/release/2.41/master/sysdeps/unix/sysv/linux/clone-internal.c
@@ -26,4 +32,7 @@ The shell pins the derivative SHA256 and passes it only through Docker's
 container security-opt seccomp setting. Chromium sandboxing stays explicit,
 UID stays 10001, IPC stays private and no fallback configuration is attempted.
 This source data changes no host policy or Windows application-control setting.
-No profile load, container/browser launch, parser or compatibility test was run.
+Before any browser launch, a verified four-case chroot comparison, independent
+source/security review and separate Root admission are required. This document
+records no runtime outcome. Requested/inspected JSON equality does not attest
+installed BPF, identify R3's cause or prove the full sandbox.
