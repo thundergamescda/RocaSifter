@@ -163,7 +163,7 @@ step 5 jq -e --slurpfile original "$original" '
   . == ($original[0] | .syscalls = ([{names:["chroot"],action:"SCMP_ACT_ALLOW",args:[],includes:{},excludes:{}}] + .syscalls))' "$experimental" > /dev/null
 profile_delta=true
 stage=record_direct_docker_server
-( ulimit -f 32; step 5 docker version --format '{"Version":{{json .Server.Version}},"GitCommit":{{json .Server.GitCommit}},"ApiVersion":{{json .Server.APIVersion}},"Os":{{json .Server.Os}},"Arch":{{json .Server.Arch}}' > "$run_dir/docker-server.json" )
+( ulimit -f 32; step 5 docker version --format '{"Version":{{json .Server.Version}},"GitCommit":{{json .Server.GitCommit}},"ApiVersion":{{json .Server.APIVersion}},"Os":{{json .Server.Os}},"Arch":{{json .Server.Arch}}}' > "$run_dir/docker-server.json" )
 step 5 jq -e 'type=="object" and keys==["ApiVersion","Arch","GitCommit","Os","Version"] and .Os=="linux" and .Arch=="amd64" and all(.[]; type=="string" and length>0 and length<=128)' "$run_dir/docker-server.json" > /dev/null
 stage=compile_one_static_fixture
 compiler_path="$(realpath /usr/bin/gcc)"; readelf_path="$(realpath /usr/bin/readelf)"
