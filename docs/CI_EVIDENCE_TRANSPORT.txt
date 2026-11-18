@@ -1,0 +1,69 @@
+STOCK & SLEEVE | CI EVIDENCE TRANSPORT
+Source candidate, November 18, 2026 — runtime contract not yet verified
+
+Purpose
+Preserve diagnostic bytes through provider-decoded GitHub job logs. Three saved
+browser attempts each lost 478 bytes from diagnostics/build.log reconstruction.
+That historical mismatch remains unrecovered. This source change does not prove
+a cause for that loss or repair original evidence.
+
+Protocol
+tools/ci_evidence_transport.sh supplies the existing emit_problem/emit_file API.
+The caller supplies its owned run_dir and sanitize() function. Sanitization runs
+before encoding. Base64 is a byte transport, never a credential-redaction policy.
+
+Core evidence and harness-summary framing retain their UTF-8 payloads, markers
+and hash convention. Diagnostics/* use GNU base64 with 76-character wrapping.
+Both BEGIN and END carry the original name plus:
+- bytes and sha256: the exact ASCII encoded payload, including encoded-file LF.
+- encoding: base64.
+- decoded_bytes and decoded_sha256: the sanitized original bytes.
+The separator LF before END is outside the payload. Both identities must match.
+
+Raw/sanitized diagnostics are bounded at 48 MiB, and wrapped output at 64 MiB.
+Actual wrapping overhead can make an input below 48 MiB exceed the output limit;
+that delivery fails. Legacy/core payloads retain their 64 MiB bound.
+Nonregular/symlink inputs are refused. Only owned helper temporary files are
+removed. Workflow command parsing is suspended with a fresh unpredictable token.
+
+Decoder
+tools/reconstruct_ci_evidence.ps1 reads the provider-decoded UTF-8 job log.
+It executes no payload, application, browser or network action. It requires
+PowerShell7.2 or later and an empty/new output directory.
+It strips exactly one optional-BOM provider UTC prefix per physical LF record.
+Payload BOM, timestamps and CR bytes are preserved. Legacy mismatches fail;
+the reader never silently normalizes or repairs them.
+
+Metadata is strict: no duplicate/unknown keys, unsafe paths, duplicate output
+names, mismatched markers, oversized payloads or false delivery claims.
+Base64 is admitted only for diagnostics/* and must pass both outer and decoded
+hash/length checks before an authoritative decoded file is written.
+Encoded or invalid outer bytes are retained in transport-raw/. Unverified
+content never appears as an authoritative decoded evidence file.
+Existing nonempty outputs are refused, and all new files use CreateNew.
+transport-reconstruction.json reports integrity only, not workload success.
+
+Default input-log bound is 16 MiB. MaxLogBytes can be set explicitly up to 256 MiB
+for larger received logs; MaxPayloadBytes remains at most 64 MiB.
+Example (metadata reconstruction only):
+pwsh -NoProfile -File tools/reconstruct_ci_evidence.ps1 -LogPath RECEIVED_LOG -OutputDirectory NEW_EMPTY_DIRECTORY -ExpectedFrameCount 10
+
+Finite real-channel contract
+The evidence-transport workflow runs only on stock-sleeve-evidence-ci-* branches.
+It checks out the exact SHA with read-only repository access and runs the Bash
+byte fixture. It installs nothing and invokes no app, browser, Docker or provider.
+The eight encoded vectors cover empty/LF/CRLF/CR, ANSI+NUL controls, Unicode+BOM,
+embedded fake command/frame/timestamp records, and bounded multiline content.
+Two unchanged plaintext metadata frames describe expected sanitized identities.
+
+A terminal successful emission is not sufficient. Reconstruct the actual fetched
+provider log, verify all ten frames and every decoded vector against independent
+expected bytes and the manifest, and exercise refusal/corruption boundaries.
+Do not add these transport checks to application acceptance counts.
+
+Integration
+The hosted backend and browser harnesses source the shared checkout helper.
+No app code, case selection, browser security option, provider consent or hosted
+deployment changes here. Browser retries remain stopped. The full product,
+native Windows and live Square release gates retain their separate requirements.
+

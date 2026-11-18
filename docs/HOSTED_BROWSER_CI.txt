@@ -1,5 +1,22 @@
 STOCK & SLEEVE | REAL HTTPS HOSTED PORTAL BROWSER FIXTURE
-Source candidate — UNRUN, November 17, 2026
+Current result — READINESS FAILED, November 18, 2026
+
+Three isolated attempts are preserved; all nine flows remain NOT_RUN. Current
+public commit cfa8e77a52aa8fe93578f2d08734224f3347c728 uses the exact stable
+79-file image. Chromium exits during launch before any context or case begins.
+The bounded stderr records a zygote premature-exit fatal; root cause is unknown.
+No browser usability, cookie, MFA or two-tab acceptance is established. Further
+browser retries are stopped pending meaningful read-only diagnosis; security
+settings and case scope remain intact.
+
+Latest actual run:
+https://github.com/thundergamescda/RocaSifter/actions/runs/44207945865
+Private consolidated report: HOSTED_BROWSER_TEST_REPORT_20261118_r1.txt
+Primary-source note: HOSTED_BROWSER_UPSTREAM_DIAGNOSIS_20261118_r1.txt
+Thirty of 31 frames per attempt verify. The build-log reconstruction is 478 bytes
+short and remains unrecovered; original logs and all failures are retained.
+The prior 480 PostgreSQL and 85 unit pass is separate backend evidence. No application
+source/deployment/native Windows/provider/customer-release gate is cleared here.
 
 Purpose
 Exercise the actual hosted portal forms and Auth/MFA/session/CSRF handlers in

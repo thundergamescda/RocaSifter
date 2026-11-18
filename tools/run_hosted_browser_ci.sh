@@ -7,7 +7,7 @@ umask 077
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 [[ "$(uname -s)" == Linux ]] || die 'This harness requires the reviewed Linux CI host.'
-for command in docker openssl timeout git realpath mktemp sha256sum sed date wc cat rm chmod mkdir; do
+for command in docker openssl timeout git realpath mktemp sha256sum sed base64 date wc cat rm chmod mkdir; do
   command -v "$command" >/dev/null || die "Missing required CI tool: $command"
 done
 [[ -z "${DATABASE_URL+x}" ]] || die 'An external DATABASE_URL is not accepted.'
@@ -75,70 +75,10 @@ sanitize() {
   fi
 }
 
-emit_problem() {
-  local written=true
-  printf '::group::Evidence %s\n' "$1" || written=false
-  printf 'SS_CI_EVIDENCE_MISSING {"name":"%s","reason":"%s"}\n' "$1" "$2" || written=false
-  printf '::endgroup::\n' || written=false
-  [[ "$written" == true ]]
-}
-
-emit_file() {
-  local name="$1" source="$2" raw_bytes delivered bytes checksum stop_token delivered_ok=true
-  [[ "$name" =~ ^[-A-Za-z0-9._/]+$ ]] || return 1
-  if [[ ! -f "$source" || -L "$source" || ! -r "$source" ]]; then
-    emit_problem "$name" unavailable_or_nonregular
-    return 1
-  fi
-  raw_bytes="$(wc -c < "$source")" || return 1
-  if [[ ! "$raw_bytes" =~ ^[0-9]+$ ]] || ((raw_bytes > 67108864)); then
-    emit_problem "$name" exceeds_64MiB_delivery_bound
-    return 1
-  fi
-  delivered="$(mktemp "$run_dir/delivered-XXXXXXXXXXXX")" || return 1
-  if ! sanitize "$source" > "$delivered"; then
-    rm -f -- "$delivered"
-    emit_problem "$name" sanitization_failed
-    return 1
-  fi
-  if ! bytes="$(wc -c < "$delivered")" ||
-     ! checksum="$(sha256sum < "$delivered")" ||
-     ! stop_token="$(openssl rand -hex 16)"; then
-    rm -f -- "$delivered"
-    emit_problem "$name" delivery_framing_failed
-    return 1
-  fi
-  checksum="${checksum%% *}"
-  if [[ ! "$bytes" =~ ^[0-9]+$ || ! "$checksum" =~ ^[0-9a-f]{64}$ ||
-        ! "$stop_token" =~ ^[0-9a-f]{32}$ ]] || ((bytes > 67108864)); then
-    rm -f -- "$delivered"
-    emit_problem "$name" delivery_framing_failed
-    return 1
-  fi
-  if ! printf '::group::Evidence %s\n' "$name"; then
-    rm -f -- "$delivered"
-    return 1
-  fi
-  # Fixture output must not issue GitHub workflow commands. The fresh resume
-  # token is chosen only after the untrusted output has already been captured.
-  if ! printf '::stop-commands::%s\n' "$stop_token"; then
-    printf '::endgroup::\n'
-    rm -f -- "$delivered"
-    return 1
-  fi
-  printf 'SS_CI_EVIDENCE_BEGIN {"name":"%s","bytes":%s,"sha256":"%s","convention":"SHA256 of sanitized payload; length excludes separator LF"}\n' \
-    "$name" "$bytes" "$checksum" || delivered_ok=false
-  if [[ "$delivered_ok" == true ]]; then
-    cat -- "$delivered" || delivered_ok=false
-  fi
-  # This separator newline is outside the length-delimited payload.
-  printf '\nSS_CI_EVIDENCE_END {"name":"%s","bytes":%s,"sha256":"%s","delivered":%s}\n' \
-    "$name" "$bytes" "$checksum" "$delivered_ok" || delivered_ok=false
-  printf '::%s::\n' "$stop_token" || delivered_ok=false
-  printf '::endgroup::\n' || delivered_ok=false
-  rm -f -- "$delivered" || delivered_ok=false
-  [[ "$delivered_ok" == true ]]
-}
+transport_path="$source_root/tools/ci_evidence_transport.sh"
+[[ -f "$transport_path" && ! -L "$transport_path" && -r "$transport_path" ]] ||
+  die 'The exact checkout evidence transport helper is required.'
+source "$transport_path"
 
 owned_container() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]] || return 1
