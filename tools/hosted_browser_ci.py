@@ -530,9 +530,17 @@ class CaseContext:
         require(origin_of(page.url) == self.fixture.origin, 'SCREENSHOT_ORIGIN')
         defaults = ('input', 'textarea', '#mfaRecoveryCodes', '#mfaSetupKey',
                     '#staffInvitationResult', '#staffList', '#storeName')
-        masks = [page.locator(selector) for selector in defaults + tuple(mask_selectors)]
+        selectors = defaults + tuple(mask_selectors)
+        require(all(type(selector) is str and selector in defaults for selector in selectors),
+                'SCREENSHOT_MASK_SELECTOR')
+        masks = [page.locator(selector) for selector in selectors]
+        # Hide the sensitive render too; full-page mask coordinates can drift.
+        # Screenshot-only style preserves geometry and is restored by Playwright.
+        privacy_style = ','.join(part for selector in selectors
+                                 for part in (selector, selector + ' *')) + '{visibility:hidden!important}'
         payload = page.screenshot(type='png', full_page=True, animations='disabled',
-                                  mask=masks, mask_color='#27272A', timeout=15000)
+                                  mask=masks, mask_color='#27272A', timeout=15000,
+                                  style=privacy_style)
         require(len(payload) <= MAX_SCREENSHOT_BYTES and
                 self.screenshot_bytes + len(payload) <= MAX_SCREENSHOTS_TOTAL,
                 'SCREENSHOT_BYTES_EXCEED_BOUND')
