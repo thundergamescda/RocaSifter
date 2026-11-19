@@ -35,7 +35,8 @@ MAX_SCREENSHOT_BYTES = 1536 * 1024
 MAX_SCREENSHOTS_TOTAL = 6 * 1024 * 1024
 SAFE_CODE = re.compile(r'[A-Z][A-Z0-9_]{0,95}\Z')
 RESTORE_INVARIANTS = ('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
-                      'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok')
+                      'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok',
+                      'new_style_attributes_empty', 'new_style_declarations_empty')
 RESTORE_FAILURE_CODES = frozenset('SCREENSHOT_PRIVACY_RESTORE_' + phase for phase in (
     'HANDLE_EXCEPTION', 'HANDLE_FALSE', 'HANDLE_INVALID',
     'PAGE_EXCEPTION', 'PAGE_FALSE', 'PAGE_INVALID', 'DISPOSE_FAILURE'))
@@ -617,7 +618,10 @@ class CaseContext:
                             connected_ok:checked(()=>rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected)),
                             visibility_value_ok:checked(()=>rows.every(row=>row.node.style.getPropertyValue('visibility')===row.value)),
                             visibility_priority_ok:checked(()=>rows.every(row=>row.node.style.getPropertyPriority('visibility')===row.priority)),
-                            style_presence_ok:checked(()=>rows.every(row=>row.hadStyle||!row.node.hasAttribute('style')))
+                            style_presence_ok:checked(()=>rows.every(row=>row.hadStyle||!row.node.hasAttribute('style'))),
+                            new_style_attributes_empty:checked(()=>rows.every(row=>row.hadStyle||
+                                !row.node.hasAttribute('style')||row.node.getAttribute('style').trim()==='')),
+                            new_style_declarations_empty:checked(()=>rows.every(row=>row.hadStyle||row.node.style.length===0))
                         };
                     };
                     try{
