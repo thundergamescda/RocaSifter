@@ -8,6 +8,7 @@
 !tools/
 !tools/test_hosted_postgres.py
 !tools/hosted_ci_evidence.py
+!tools/hosted_browser_ci.py
 !tools/hosted_ci.Dockerfile
 !tools/hosted_ci.Dockerfile.dockerignore
 !tools/run_hosted_ci.sh

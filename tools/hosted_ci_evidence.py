@@ -1,9 +1,10 @@
 """Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Five
-companion hosted unit modules run all 85 approved cases with fictional database
-responses and transports, not real SQL or provider acceptance.
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Seven
+companion unit modules run all 92 approved cases, including no-database Flask
+startup and fictional capture orchestration; these are not SQL, browser, printer
+or provider acceptance.
 This helper adds copied-source preservation and an actual test-client TLS probe.
 """
 from collections import Counter
@@ -25,7 +26,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 509
+POSTGRES_EXPECTED_COUNT = 532
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
@@ -126,6 +127,19 @@ CLEANUP_UNIT_IDS = (
     'test_hosted_cleanup_square.CleanupReadCollectionTests.test_transport_is_fixed_read_shapes_no_redirects_and_closes_every_response',
     'test_hosted_cleanup_square.CleanupReadCollectionTests.test_unrequested_count_ids_locations_states_and_types_are_rejected',
 )
+RECOVERY_STARTUP_UNIT_MODULE = 'test_hosted_staff_password_recovery'
+RECOVERY_STARTUP_UNIT_IDS = (
+    RECOVERY_STARTUP_UNIT_MODULE + '.UnconfiguredStaffRecoveryStartup.test_unconfigured_app_keeps_public_pages_health_and_explicit_not_ready_apis',
+)
+CAPTURE_PRIVACY_UNIT_MODULE = 'test_hosted_browser_capture_privacy'
+CAPTURE_PRIVACY_UNIT_IDS = (
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_capture_error_propagates_without_retry_or_publishing_image',
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_exact_sensitive_subtrees_hidden_only_during_existing_masked_capture',
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_failed_hidden_check_restores_before_refusing_capture',
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_prepare_bounds_or_context_failure_is_fixed_and_never_captures',
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_restore_document_or_dispose_failure_discards_captured_image',
+    CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_unknown_or_css_injecting_extra_selector_refused_before_capture',
+)
 UNIT_GROUPS = (
     ('unit_identity', IDENTITY_UNIT_MODULE, IDENTITY_UNIT_IDS, 'unit-identity',
      'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.'),
@@ -137,6 +151,10 @@ UNIT_GROUPS = (
      'Twenty-one hosted revocation and reconciliation method-guard units with recording SQL and fictional signatures; not real SQL or provider acceptance.'),
     ('unit_cleanup_square', CLEANUP_UNIT_MODULE, CLEANUP_UNIT_IDS, 'unit-cleanup-square',
      'Forty-four hosted read-facade, pagination, bracket and partial-evidence units with fictional streamed responses; not live Square, SQL, continuity or deletion acceptance.'),
+    ('unit_staff_recovery_startup', RECOVERY_STARTUP_UNIT_MODULE, RECOVERY_STARTUP_UNIT_IDS, 'unit-staff-recovery-startup',
+     'One real Flask public-page, health, readiness and API startup unit with no configured database; not PostgreSQL or account-recovery acceptance.'),
+    ('unit_capture_privacy', CAPTURE_PRIVACY_UNIT_MODULE, CAPTURE_PRIVACY_UNIT_IDS, 'unit-capture-privacy',
+     'Six CaseContext capture-orchestration units using fictional page/handle objects and the real runner module; not browser, DOM, CSP, pixel or hardware acceptance.'),
 )
 
 

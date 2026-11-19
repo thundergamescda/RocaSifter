@@ -15,6 +15,7 @@ from .database import Database
 from .ledger import Ledger
 from .credit_authority import CreditAuthorityError
 from .staff_authority import StaffAuthorityError
+from .staff_password_recovery import register_staff_password_recovery
 from .security import ServiceError
 from .square import Square
 from .trades import Trades
@@ -299,6 +300,8 @@ def create_app(config=None,*,database=None,square_transport=None):
                            mfa_fresh=bool(g.actor.get('mfa_fresh')),
                            capabilities={'physical_intake_claims':1,'trade_claim_required':True,
                                          'new_trade_acceptance_requires_fresh_mfa':True,'hosted_receiving':False,'receiving_plans':1})
+
+    register_staff_password_recovery(app,auth,authenticated,body,require_db)
 
     @app.get('/api/staff')
     @authenticated

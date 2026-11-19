@@ -530,17 +530,89 @@ class CaseContext:
         require(origin_of(page.url) == self.fixture.origin, 'SCREENSHOT_ORIGIN')
         defaults = ('input', 'textarea', '#mfaRecoveryCodes', '#mfaSetupKey',
                     '#staffInvitationResult', '#staffList', '#storeName')
+        require(type(mask_selectors) in (tuple, list) and len(mask_selectors) <= len(defaults),
+                'SCREENSHOT_MASK_SELECTOR')
         selectors = defaults + tuple(mask_selectors)
         require(all(type(selector) is str and selector in defaults for selector in selectors),
                 'SCREENSHOT_MASK_SELECTOR')
         masks = [page.locator(selector) for selector in selectors]
-        # Hide the sensitive render too; full-page mask coordinates can drift.
-        # Screenshot-only style preserves geometry and is restored by Playwright.
-        privacy_style = ','.join(part for selector in selectors
-                                 for part in (selector, selector + ' *')) + '{visibility:hidden!important}'
-        payload = page.screenshot(type='png', full_page=True, animations='disabled',
-                                  mask=masks, mask_color='#27272A', timeout=15000,
-                                  style=privacy_style)
+        privacy = None
+        try:
+            try:
+                privacy = page.evaluate_handle('''selectors=>{
+                    const originalDocument=document,originalURL=location.href;
+                    const query=selectors.map(selector=>selector+','+selector+' *').join(',');
+                    const selected=()=>{
+                        const nodes=[],walker=document.createTreeWalker(document.documentElement,NodeFilter.SHOW_ELEMENT);
+                        let node=document.documentElement,visited=0;
+                        while(node){
+                            if(++visited>1000||node.tagName==='IFRAME'||node.tagName==='FRAME')
+                                throw new Error('SCREENSHOT_PRIVACY_BOUNDS');
+                            if(node.matches(query))nodes.push(node);
+                            node=walker.nextNode();
+                        }
+                        return nodes;
+                    };
+                    const rows=selected().map(node=>({node,value:node.style.getPropertyValue('visibility'),
+                        priority:node.style.getPropertyPriority('visibility'),hadStyle:node.hasAttribute('style')}));
+                    const state={document:originalDocument,url:originalURL,rows};
+                    state.check=hidden=>{
+                        if(document!==originalDocument||location.href!==originalURL)return false;
+                        const current=selected();
+                        if(current.length!==rows.length||current.some((node,index)=>node!==rows[index].node))return false;
+                        return rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected&&
+                            row.node.style.getPropertyValue('visibility')===(hidden?'hidden':row.value)&&
+                            row.node.style.getPropertyPriority('visibility')===(hidden?'important':row.priority)&&
+                            (hidden?getComputedStyle(row.node).visibility==='hidden':
+                                (row.hadStyle||!row.node.hasAttribute('style'))));
+                    };
+                    state.restore=()=>{
+                        let restored=true;
+                        for(const row of rows){
+                            try{
+                                if(row.value)row.node.style.setProperty('visibility',row.value,row.priority);
+                                else row.node.style.removeProperty('visibility');
+                                if(!row.hadStyle&&row.node.style.length===0)row.node.removeAttribute('style');
+                            }catch{restored=false}
+                        }
+                        return restored&&state.check(false);
+                    };
+                    try{
+                        for(const row of rows)row.node.style.setProperty('visibility','hidden','important');
+                        if(!state.check(true))throw new Error('SCREENSHOT_PRIVACY_HIDDEN');
+                    }catch{
+                        state.restore();
+                        throw new Error('SCREENSHOT_PRIVACY_PREPARE');
+                    }
+                    return state;
+                }''', list(dict.fromkeys(selectors)))
+            except Exception:
+                raise AssertionError('SCREENSHOT_PRIVACY_PREPARE') from None
+            try:
+                hidden = page.evaluate('state=>state.check(true)', privacy)
+            except Exception:
+                raise AssertionError('SCREENSHOT_PRIVACY_CONTEXT') from None
+            require(hidden is True, 'SCREENSHOT_PRIVACY_HIDDEN')
+            payload = page.screenshot(type='png', full_page=True, animations='disabled',
+                                      mask=masks, mask_color='#27272A', timeout=15000)
+            try:
+                hidden = page.evaluate('state=>state.check(true)', privacy)
+            except Exception:
+                raise AssertionError('SCREENSHOT_PRIVACY_CONTEXT') from None
+            require(hidden is True, 'SCREENSHOT_PRIVACY_HIDDEN')
+        finally:
+            if privacy is not None:
+                restored = False
+                try:
+                    restored = (privacy.evaluate('state=>state.restore()') is True and
+                                page.evaluate('state=>state.check(false)', privacy) is True)
+                except Exception:
+                    restored = False
+                try:
+                    privacy.dispose()
+                except Exception:
+                    restored = False
+                require(restored, 'SCREENSHOT_PRIVACY_RESTORE')
         require(len(payload) <= MAX_SCREENSHOT_BYTES and
                 self.screenshot_bytes + len(payload) <= MAX_SCREENSHOTS_TOTAL,
                 'SCREENSHOT_BYTES_EXCEED_BOUND')

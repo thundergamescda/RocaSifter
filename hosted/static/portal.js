@@ -1,6 +1,7 @@
 'use strict';
 let csrfToken='',portalEpoch=0,portalMe=null,authTransitionBusy=false;
 let portalSquare=null,squareStatusRequest=0,squareLoading=false,squareConnectBusy=false;
+let staffRecoveryGeneration=0;
 const byId=id=>document.getElementById(id);
 async function api(path,data){
  const requestEpoch=portalEpoch;
@@ -19,7 +20,8 @@ async function api(path,data){
  }
  return result;
 }
-function clearInvitation(){byId('staffInvitationLink').value='';byId('staffInvitationResult').hidden=true}
+function clearStaffRecovery(){++staffRecoveryGeneration;byId('staffRecoveryLink').value='';byId('staffRecoveryResult').hidden=true}
+function clearInvitation(){byId('staffInvitationLink').value='';byId('staffInvitationResult').hidden=true;clearStaffRecovery()}
 function canConnectSquare(){
  return !authTransitionBusy&&!byId('workspace').hidden&&portalMe?.role==='owner'&&!squareLoading&&!squareConnectBusy&&
   portalSquare?.oauth_configured===true&&portalSquare.connection_status!=='environment_mismatch';
@@ -96,6 +98,7 @@ function notifyAuthTransition(){
 function beginAuthTransition(){
  if(authTransitionBusy)return false;
  authTransitionBusy=true;
+ clearStaffRecovery();
  clearSquareStatus('Check again to confirm your Square connection.');
  notifyAuthTransition();
  for(const id of ['signin','workspace','invitation','pilotSetup','mfaSignin','accountSecurity'])byId(id).inert=true;
@@ -154,6 +157,22 @@ async function refreshStaff(epoch=portalEpoch){
      try{await api('/api/staff/'+encodeURIComponent(staff.id)+'/disable',{});if(epoch===portalEpoch){await refreshStaff(epoch);byId('staffStatus').textContent='Access disabled. Their active sessions have been revoked.'}}
      catch(error){if(epoch===portalEpoch){byId('staffStatus').textContent=error.message;button.disabled=false}}
     };row.append(button);
+    const recover=document.createElement('button');recover.type='button';recover.className='quiet';recover.textContent='Reset password';
+    recover.onclick=async()=>{
+     if(epoch!==portalEpoch||authTransitionBusy||!confirm('Confirm you have privately verified '+staff.email+'’s identity. Create a one-use password recovery link? Their existing authenticator is still required.'))return;
+     recover.disabled=true;clearStaffRecovery();byId('staffStatus').textContent='';
+     const recoveryTicket=staffRecoveryGeneration,recoveryPrincipal=portalMe,recoveryCSRF=csrfToken;
+     const currentRecovery=()=>epoch===portalEpoch&&recoveryTicket===staffRecoveryGeneration&&portalMe===recoveryPrincipal&&csrfToken===recoveryCSRF&&!authTransitionBusy&&portalMe?.role==='owner';
+     try{
+      const result=await api('/api/staff/'+encodeURIComponent(staff.id)+'/password-recovery',{staff_identity_confirmed:true});
+      if(!currentRecovery())return;
+      if(!result||typeof result.recovery_token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(result.recovery_token)||result.expires_in!==900)throw Error('Recovery link could not be confirmed. Check before issuing another.');
+      const link=new URL('/staff-password-recovery',location.origin);link.hash=new URLSearchParams({recovery:result.recovery_token}).toString();
+      byId('staffRecoveryLink').value=link.href;byId('staffRecoveryResult').hidden=false;
+      byId('staffStatus').textContent='Recovery link for '+staff.email+'. Share it privately. Stay signed in with fresh two-step verification until they finish. No email was sent.';
+     }catch(error){if(currentRecovery())byId('staffStatus').textContent=error.message}
+     finally{if(epoch===portalEpoch)recover.disabled=false}
+    };row.append(recover);
    }
    byId('staffList').append(row);
   }
@@ -228,6 +247,9 @@ byId('copyStaffInvitation').onclick=async()=>{
  try{await navigator.clipboard.writeText(byId('staffInvitationLink').value);byId('staffStatus').textContent='Invitation link copied. Share it privately with the intended person.'}
  catch{byId('staffInvitationLink').select();byId('staffStatus').textContent='Select and copy the invitation link above.'}
 };
+byId('dismissStaffRecovery').onclick=clearStaffRecovery;
+document.addEventListener('ss-portal-auth-context',event=>{if(!event.detail?.active)clearStaffRecovery()});
+window.addEventListener('pagehide',clearStaffRecovery);
 function openAccountFragment(){
  const fragment=new URLSearchParams(location.hash.slice(1)),token=fragment.get('invite'),setup=location.hash==='#pilot-setup';
  if(!token&&!setup)return false;

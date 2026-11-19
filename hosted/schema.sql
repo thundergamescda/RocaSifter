@@ -1293,3 +1293,20 @@ INSERT INTO ss_schema_versions(version) VALUES (13) ON CONFLICT DO NOTHING;
 -- Schema 14: account-wide credential revocation seeks only this staff member.
 CREATE INDEX IF NOT EXISTS ss_sessions_staff ON ss_sessions(tenant_id,staff_id);
 INSERT INTO ss_schema_versions(version) VALUES (14) ON CONFLICT DO NOTHING;
+
+-- Version 15: owner-mediated non-owner password recovery. No existing staff,
+-- factors, sessions or invitations are changed/backfilled by this migration.
+CREATE TABLE IF NOT EXISTS ss_staff_password_recoveries (
+    token_hash TEXT PRIMARY KEY CHECK(token_hash ~ '^[0-9a-f]{64}$'),
+    tenant_id UUID NOT NULL, staff_id UUID NOT NULL,
+    security_binding TEXT NOT NULL CHECK(security_binding ~ '^[0-9a-f]{64}$'),
+    created_by UUID NOT NULL, issuer_session_hash TEXT NOT NULL CHECK(issuer_session_hash ~ '^[0-9a-f]{64}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(), expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ, cancelled_at TIMESTAMPTZ,
+    FOREIGN KEY(tenant_id,staff_id) REFERENCES ss_staff(tenant_id,id),
+    FOREIGN KEY(tenant_id,created_by) REFERENCES ss_staff(tenant_id,id),
+    CHECK(staff_id<>created_by),
+    CHECK(expires_at>created_at AND expires_at<=created_at+interval '15 minutes')
+);
+CREATE INDEX IF NOT EXISTS ss_staff_password_recovery_target ON ss_staff_password_recoveries(tenant_id,staff_id);
+INSERT INTO ss_schema_versions(version) VALUES (15) ON CONFLICT DO NOTHING;

@@ -60,6 +60,8 @@ required_evidence=(
   unit-square-status-summary.json unit-square-status-tests.log
   unit-revocation-guards-summary.json unit-revocation-guards-tests.log
   unit-cleanup-square-summary.json unit-cleanup-square-tests.log
+  unit-staff-recovery-startup-summary.json unit-staff-recovery-startup-tests.log
+  unit-capture-privacy-summary.json unit-capture-privacy-tests.log
   copied-source-before.json copied-source-after.json tls-client-probe.json
   pip-freeze.txt pip-bootstrap-report.json pip-install-report.json
 )
