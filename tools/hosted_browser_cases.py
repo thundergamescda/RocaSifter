@@ -270,8 +270,11 @@ def desktop_mobile_keyboard_layout(ctx):
         ctx.require(page.evaluate('document.activeElement.id') == 'passwordChangeConfirm', 'HUI04_REVERSE_FOCUS')
         ctx.require(page.evaluate("getComputedStyle(document.activeElement).outlineStyle!=='none'"),
                     'HUI04_VISIBLE_FOCUS')
-        ctx.require(page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'HUI04_NO_PAGE_OVERFLOW')
+        no_overflow = page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
+        if not no_overflow:
+            ctx.record_layout_overflow(page)
         _screen(ctx, page, 'hui04-' + label)
+        ctx.require(no_overflow, 'HUI04_NO_PAGE_OVERFLOW')
         _logout(ctx, page, 'HUI04_LOGOUT')
     return {'viewports': [[1440, 1000], [390, 844]], 'labels_and_keyboard': True, 'no_overflow': True}
 

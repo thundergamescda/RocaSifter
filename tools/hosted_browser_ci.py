@@ -309,6 +309,7 @@ class CaseContext:
         self.js_errors = []
         self.console_events = []
         self.screenshots = []
+        self.layout_overflow = None
         self.screenshot_bytes = 0
         self.ledger_overflow = False
         self.cleanup_complete = True
@@ -419,6 +420,106 @@ class CaseContext:
         context.route_web_socket('**/*', websocket)
         self.contexts.append(context)
         return context
+
+    def record_layout_overflow(self, page):
+        if self.layout_overflow is not None:
+            return
+        allowed = {
+            'tags': ('HTML', 'BODY', 'MAIN', 'HEADER', 'IMG', 'DIV', 'STRONG', 'SPAN', 'B',
+                     'SECTION', 'P', 'H1', 'H2', 'H3', 'FORM', 'LABEL', 'INPUT', 'SELECT',
+                     'OPTION', 'BUTTON', 'DL', 'DT', 'DD', 'UL', 'LI', 'FIELDSET', 'LEGEND',
+                     'A', 'FOOTER', 'PRE'),
+            'ids': ('signin', 'invitation', 'pilotSetup', 'workspace', 'storeName', 'signOut',
+                    'connectSquare', 'refreshSquare', 'squareStatus', 'squareRenewalStatus',
+                    'staffPanel', 'staffList', 'refreshStaff', 'inviteStaffForm', 'staffInviteEmail',
+                    'staffInviteRole', 'staffInvitationResult', 'staffInvitationLink', 'staffStatus',
+                    'cleanupObserver', 'cleanupObserverConfig', 'cleanupObserverTitle',
+                    'cleanupObserverGate', 'cleanupObserverCoverage', 'cleanupObserverReasons',
+                    'cleanupObserverCadence', 'cleanupObserverStale', 'cleanupObserverSave',
+                    'cleanupObserverCheck', 'cleanupObserverRequest', 'accountSecurity',
+                    'mfaEnrollForm', 'mfaEnrollment', 'mfaManageForm', 'mfaRecoveryResult',
+                    'mfaSecuritySummary', 'passwordChangeSection', 'passwordChangeForm',
+                    'passwordChangeNotice', 'passwordChangeCurrent', 'passwordChangeNew',
+                    'passwordChangeConfirm', 'passwordChangeSubmit', 'passwordChangeStatus'),
+            'classes': ('shell', 'mark', 'badge', 'intro', 'eyebrow', 'panel', 'panel-heading',
+                        'status-card', 'status', 'help', 'quiet', 'setup-links', 'staff-row',
+                        'cleanup-observer', 'cleanup-state', 'cleanup-facts', 'cleanup-reasons',
+                        'cleanup-actions', 'cleanup-check', 'cleanup-timing', 'cleanup-boundary'),
+        }
+        try:
+            require(self.case_id == 'HUI04' and origin_of(page.url) == self.fixture.origin,
+                    'LAYOUT_DIAGNOSTIC_CONTEXT')
+            value = page.evaluate('''allowed=>{
+                const tags=new Set(allowed.tags),ids=new Set(allowed.ids),classes=new Set(allowed.classes);
+                let numbersBounded=false;
+                const metric=value=>{
+                    if(!Number.isFinite(value)){numbersBounded=true;return 0}
+                    if(Math.abs(value)>1048576){numbersBounded=true;return Math.sign(value)*1048576}
+                    return Math.round(value*100)/100;
+                };
+                const viewport=metric(window.innerWidth),root=document.documentElement,body=document.body;
+                const rows=[],walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT);
+                let node=root,visited=0,offenders=0;
+                while(node&&visited<1000){
+                    const index=visited++;
+                    if(node.getClientRects().length){
+                        const rect=node.getBoundingClientRect(),style=getComputedStyle(node);
+                        if(rect.width>0&&rect.height>0&&style.visibility!=='hidden'&&
+                           style.visibility!=='collapse'&&Number(style.opacity)!==0){
+                            const left=metric(rect.left),right=metric(rect.right),width=metric(rect.width),
+                                  client=metric(node.clientWidth),scroll=metric(node.scrollWidth);
+                            if(right>viewport||left<0||scroll>client){
+                                offenders++;
+                                const tokens=[];
+                                for(let tokenIndex=0;tokenIndex<Math.min(node.classList.length,16);tokenIndex++){
+                                    const token=node.classList[tokenIndex];
+                                    if(classes.has(token)&&tokens.length<4&&!tokens.includes(token))tokens.push(token);
+                                }
+                                rows.push({index,tag:tags.has(node.tagName)?node.tagName:null,
+                                    id:ids.has(node.id)?node.id:null,classes:tokens,left,right,width,
+                                    client_width:client,scroll_width:scroll,
+                                    score:Math.max(right-viewport,-left,scroll-client)});
+                                rows.sort((a,b)=>b.score-a.score||a.index-b.index);
+                                if(rows.length>32)rows.pop();
+                            }
+                        }
+                    }
+                    node=walker.nextNode();
+                }
+                return {viewport_width:viewport,document_client_width:metric(root.clientWidth),
+                    document_scroll_width:metric(root.scrollWidth),body_client_width:metric(body?body.clientWidth:0),
+                    body_scroll_width:metric(body?body.scrollWidth:0),visited_nodes:visited,offender_count:offenders,
+                    scan_truncated:!!node,records_truncated:offenders>32,numbers_bounded:numbersBounded,
+                    nodes:rows.map(({score,...row})=>row)};
+            }''', allowed)
+            number = lambda item: type(item) in (int, float) and item == item and abs(item) <= 1048576
+            metrics = ('viewport_width', 'document_client_width', 'document_scroll_width',
+                       'body_client_width', 'body_scroll_width')
+            require(type(value) is dict and set(value) == set(metrics) |
+                    {'visited_nodes', 'offender_count', 'scan_truncated', 'records_truncated',
+                     'numbers_bounded', 'nodes'}, 'LAYOUT_DIAGNOSTIC_SHAPE')
+            require(all(number(value[key]) for key in metrics) and
+                    type(value['visited_nodes']) is int and 0 <= value['visited_nodes'] <= 1000 and
+                    type(value['offender_count']) is int and 0 <= value['offender_count'] <= value['visited_nodes'] and
+                    all(type(value[key]) is bool for key in ('scan_truncated', 'records_truncated', 'numbers_bounded')) and
+                    type(value['nodes']) is list and len(value['nodes']) <= 32, 'LAYOUT_DIAGNOSTIC_BOUNDS')
+            for row in value['nodes']:
+                require(type(row) is dict and set(row) ==
+                        {'index', 'tag', 'id', 'classes', 'left', 'right', 'width', 'client_width', 'scroll_width'} and
+                        type(row['index']) is int and 0 <= row['index'] < value['visited_nodes'] and
+                        (row['tag'] is None or row['tag'] in allowed['tags']) and
+                        (row['id'] is None or row['id'] in allowed['ids']) and
+                        type(row['classes']) is list and len(row['classes']) <= 4 and
+                        all(type(item) is str and item in allowed['classes'] for item in row['classes']) and
+                        all(number(row[key]) for key in ('left', 'right', 'width', 'client_width', 'scroll_width')),
+                        'LAYOUT_DIAGNOSTIC_NODE')
+            require(len(json.dumps(value, allow_nan=False).encode('utf-8')) <= 32768,
+                    'LAYOUT_DIAGNOSTIC_BYTES')
+            self.layout_overflow = {'case': 'HUI04', 'status': 'captured', 'snapshot': value}
+        except Exception:
+            # Never export browser exceptions or replace the original failing width assertion.
+            self.layout_overflow = {'case': 'HUI04', 'status': 'not_captured',
+                                    'code': 'LAYOUT_DIAGNOSTIC_UNAVAILABLE'}
 
     def screenshot(self, page, name, mask_selectors=()):
         require(isinstance(name, str) and bool(re.fullmatch(r'hui[0-9]{2}-[a-z0-9-]{1,48}\.png', name)),
@@ -722,6 +823,7 @@ def main():
             for value in (fixture.cleanup_errors if fixture else [])
         ],
         'contexts_cleanup_complete': cases_context.cleanup_complete if cases_context else False,
+        'layout_overflow': cases_context.layout_overflow if cases_context else None,
         'suppressed_private_diagnostic_characters': sink.characters,
         'provider_attempts': fixture.provider_attempts if fixture else 0,
         'screenshots_manifest_sha256': digest(read_regular(EVIDENCE / 'screenshots-manifest.json')),
