@@ -10,6 +10,11 @@ class _PrivacyHandle:
         self.page = page
 
     def evaluate(self, expression):
+        if expression == 'state=>state.restoreInvariants()':
+            self.page.events.append('restore_invariants')
+            if self.page.invariants_raises:
+                raise RuntimeError('PRIVATE_DIAGNOSTIC_CANARY')
+            return self.page.invariants
         self.page.events.append('restore')
         if self.page.restore_raises:
             raise RuntimeError('FIXTURE_RESTORE_FAILED')
@@ -27,13 +32,16 @@ class _CapturePage:
 
     def __init__(self, *, fail=False, prepare_raises=False, hidden=True,
                  restore_ok=True, restore_raises=False, current=True, hidden_after=True,
-                 current_raises=False, dispose_raises=False):
+                 current_raises=False, dispose_raises=False, invariants=None, invariants_raises=False):
         self.calls, self.events, self.prepared_selectors = [], [], None
         self.fail, self.prepare_raises, self.hidden = fail, prepare_raises, hidden
         self.restore_ok, self.restore_raises = restore_ok, restore_raises
         self.current, self.current_raises = current, current_raises
         self.hidden_after = hidden_after
         self.dispose_raises = dispose_raises
+        self.invariants = dict.fromkeys(('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
+            'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok'), True) if invariants is None else invariants
+        self.invariants_raises = invariants_raises
         self.handle = _PrivacyHandle(self)
         self.evaluations = 0
 
@@ -84,6 +92,7 @@ class HostedBrowserCapturePrivacyTests(unittest.TestCase):
                            mask_selectors=('#staffList', '#storeName'))
         self.assertEqual(page.events, ['prepare', 'hidden_check', 'capture', 'captured_hidden_check',
                                        'restore', 'current_restore_check', 'dispose'])
+        self.assertEqual(context.restore_diagnostics, [])
         expected = ('input', 'textarea', '#mfaRecoveryCodes', '#mfaSetupKey',
                     '#staffInvitationResult', '#staffList', '#storeName')
         self.assertEqual(page.prepared_selectors, list(expected))
@@ -121,6 +130,7 @@ class HostedBrowserCapturePrivacyTests(unittest.TestCase):
                                        'current_restore_check', 'dispose'])
         self.assertEqual(len(page.calls), 1)
         self.assertNotIn('style', page.calls[0])
+        self.assertEqual(context.restore_diagnostics, [])
         self._unpublished(context)
 
     def test_prepare_bounds_or_context_failure_is_fixed_and_never_captures(self):
@@ -143,15 +153,67 @@ class HostedBrowserCapturePrivacyTests(unittest.TestCase):
                 self._unpublished(context)
 
     def test_restore_document_or_dispose_failure_discards_captured_image(self):
-        for options in ({'restore_ok': False}, {'restore_raises': True},
-                        {'current': False}, {'current_raises': True}, {'dispose_raises': True}):
+        failures = (({'restore_ok': False}, 'HANDLE_FALSE'), ({'restore_raises': True}, 'HANDLE_EXCEPTION'),
+                    ({'restore_ok': 1}, 'HANDLE_INVALID'), ({'current': False}, 'PAGE_FALSE'),
+                    ({'current_raises': True}, 'PAGE_EXCEPTION'), ({'current': 1}, 'PAGE_INVALID'),
+                    ({'dispose_raises': True}, 'DISPOSE_FAILURE'))
+        for options, suffix in failures:
             with self.subTest(failure=next(iter(options))):
                 context, page = self._context(), _CapturePage(**options)
-                with self.assertRaisesRegex(AssertionError, '^SCREENSHOT_PRIVACY_RESTORE$'):
+                expected = 'SCREENSHOT_PRIVACY_RESTORE_' + suffix
+                with self.assertRaisesRegex(AssertionError, '^' + expected + '$'):
                     context.screenshot(page, 'hui04-mobile390.png')
                 self.assertEqual(len(page.calls), 1)
-                self.assertEqual(page.events[-1], 'dispose')
+                self.assertEqual(page.events.count('dispose'), 1)
+                self.assertEqual(page.events.count('restore'), 1)
+                self.assertEqual(page.events.count('restore_invariants'), 1)
+                if suffix.startswith('HANDLE_'):
+                    self.assertNotIn('current_restore_check', page.events)
+                self.assertEqual(context.restore_diagnostics, [{'case': 'HUI04', 'name': 'hui04-mobile390.png',
+                    'failure_codes': [expected], 'prior_phase': 'NONE', 'invariant_code': 'RESTORE_INVARIANTS_AVAILABLE',
+                    'invariants': page.invariants}])
+                if suffix == 'DISPOSE_FAILURE':
+                    self.assertEqual(page.events[-2:], ['dispose', 'restore_invariants'])
+                else:
+                    self.assertEqual(page.events[-2:], ['restore_invariants', 'dispose'])
                 self._unpublished(context)
+
+        for key in ('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
+                    'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok'):
+            context, page = self._context(), _CapturePage(restore_ok=False)
+            page.invariants[key] = False
+            with self.assertRaisesRegex(AssertionError, '^SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE$'):
+                context.screenshot(page, 'hui04-mobile390.png')
+            self.assertIs(context.restore_diagnostics[0]['invariants'][key], False)
+            self._unpublished(context)
+
+        for snapshot, raises, code in (({'private': 'PRIVATE_DIAGNOSTIC_CANARY'}, False, 'INVALID'),
+                                       (['PRIVATE_DIAGNOSTIC_CANARY'], False, 'INVALID'),
+                                       (dict.fromkeys(page.invariants, 1), False, 'INVALID'),
+                                       ({}, True, 'EXCEPTION')):
+            context, page = self._context(), _CapturePage(restore_ok=False, invariants=snapshot,
+                                                        invariants_raises=raises)
+            with self.assertRaisesRegex(AssertionError, '^SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE$'):
+                context.screenshot(page, 'hui04-mobile390.png')
+            row = context.restore_diagnostics[0]
+            self.assertEqual(row['invariant_code'], 'RESTORE_INVARIANTS_' + code)
+            self.assertIsNone(row['invariants'])
+            self.assertNotIn('PRIVATE_DIAGNOSTIC_CANARY', repr(context.restore_diagnostics))
+            self.assertEqual(page.events.count('dispose'), 1)
+            self._unpublished(context)
+
+        for options, phase in (({'fail': True}, 'CAPTURE_EXCEPTION'),
+                               ({'hidden_after': False}, 'SCREENSHOT_PRIVACY_HIDDEN')):
+            context, page = self._context(), _CapturePage(restore_ok=False, dispose_raises=True, **options)
+            with self.assertRaisesRegex(AssertionError, '^SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE$'):
+                context.screenshot(page, 'hui04-mobile390.png')
+            row = context.restore_diagnostics[0]
+            self.assertEqual(row['prior_phase'], phase)
+            self.assertEqual(row['failure_codes'], ['SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE',
+                                                    'SCREENSHOT_PRIVACY_RESTORE_DISPOSE_FAILURE'])
+            self.assertEqual(page.events.count('restore'), 1)
+            self.assertEqual(page.events.count('dispose'), 1)
+            self._unpublished(context)
 
 
 if __name__ == '__main__':

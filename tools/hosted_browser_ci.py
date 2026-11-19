@@ -34,6 +34,11 @@ MAX_LEDGER_ROWS = 5000
 MAX_SCREENSHOT_BYTES = 1536 * 1024
 MAX_SCREENSHOTS_TOTAL = 6 * 1024 * 1024
 SAFE_CODE = re.compile(r'[A-Z][A-Z0-9_]{0,95}\Z')
+RESTORE_INVARIANTS = ('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
+                      'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok')
+RESTORE_FAILURE_CODES = frozenset('SCREENSHOT_PRIVACY_RESTORE_' + phase for phase in (
+    'HANDLE_EXCEPTION', 'HANDLE_FALSE', 'HANDLE_INVALID',
+    'PAGE_EXCEPTION', 'PAGE_FALSE', 'PAGE_INVALID', 'DISPOSE_FAILURE'))
 NEGATIVE_TLS_CODES = {
     'net::ERR_CERT_AUTHORITY_INVALID', 'net::ERR_CERT_COMMON_NAME_INVALID',
 }
@@ -315,6 +320,7 @@ class CaseContext:
         self.js_errors = []
         self.console_events = []
         self.screenshots = []
+        self.restore_diagnostics = []
         self.layout_overflow = None
         self.screenshot_bytes = 0
         self.ledger_overflow = False
@@ -527,6 +533,17 @@ class CaseContext:
             self.layout_overflow = {'case': 'HUI04', 'status': 'not_captured',
                                     'code': 'LAYOUT_DIAGNOSTIC_UNAVAILABLE'}
 
+    @staticmethod
+    def _restore_snapshot(privacy):
+        try:
+            value = privacy.evaluate('state=>state.restoreInvariants()')
+        except Exception:
+            return 'RESTORE_INVARIANTS_EXCEPTION', None
+        if (type(value) is not dict or set(value) != set(RESTORE_INVARIANTS) or
+                not all(type(value[key]) is bool for key in RESTORE_INVARIANTS)):
+            return 'RESTORE_INVARIANTS_INVALID', None
+        return 'RESTORE_INVARIANTS_AVAILABLE', {key: value[key] for key in RESTORE_INVARIANTS}
+
     def screenshot(self, page, name, mask_selectors=()):
         require(isinstance(name, str) and bool(re.fullmatch(r'hui[0-9]{2}-[a-z0-9-]{1,48}\.png', name)),
                 'INVALID_SCREENSHOT_NAME')
@@ -562,6 +579,7 @@ class CaseContext:
                     const rows=selected().map(node=>({node,value:node.style.getPropertyValue('visibility'),
                         priority:node.style.getPropertyPriority('visibility'),hadStyle:node.hasAttribute('style')}));
                     const state={document:originalDocument,url:originalURL,rows};
+                    let restoreWriteOK=false;
                     state.check=hidden=>{
                         if(document!==originalDocument||location.href!==originalURL)return false;
                         const current=selected();
@@ -581,7 +599,23 @@ class CaseContext:
                                 if(!row.hadStyle&&row.node.style.length===0)row.node.removeAttribute('style');
                             }catch{restored=false}
                         }
+                        restoreWriteOK=restored;
                         return restored&&state.check(false);
+                    };
+                    state.restoreInvariants=()=>{
+                        const checked=operation=>{try{return operation()===true}catch{return false}};
+                        return {
+                            write_ok:restoreWriteOK,
+                            document_url_ok:checked(()=>document===originalDocument&&location.href===originalURL),
+                            same_nodes:checked(()=>{
+                                const current=selected();
+                                return current.length===rows.length&&current.every((node,index)=>node===rows[index].node);
+                            }),
+                            connected_ok:checked(()=>rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected)),
+                            visibility_value_ok:checked(()=>rows.every(row=>row.node.style.getPropertyValue('visibility')===row.value)),
+                            visibility_priority_ok:checked(()=>rows.every(row=>row.node.style.getPropertyPriority('visibility')===row.priority)),
+                            style_presence_ok:checked(()=>rows.every(row=>row.hadStyle||!row.node.hasAttribute('style')))
+                        };
                     };
                     try{
                         for(const row of rows)row.node.style.setProperty('visibility','hidden','important');
@@ -608,17 +642,55 @@ class CaseContext:
             require(hidden is True, 'SCREENSHOT_PRIVACY_HIDDEN')
         finally:
             if privacy is not None:
-                restored = False
+                earlier = sys.exc_info()[1]
+                prior_phase = 'NONE' if earlier is None else 'CAPTURE_EXCEPTION'
+                if (type(earlier) is AssertionError and len(earlier.args) == 1 and
+                        type(earlier.args[0]) is str and earlier.args[0] in
+                        ('SCREENSHOT_PRIVACY_PREPARE', 'SCREENSHOT_PRIVACY_CONTEXT', 'SCREENSHOT_PRIVACY_HIDDEN')):
+                    prior_phase = earlier.args[0]
+                failures, invariant_code, invariants = [], 'NOT_REQUESTED', None
                 try:
-                    restored = (privacy.evaluate('state=>state.restore()') is True and
-                                page.evaluate('state=>state.check(false)', privacy) is True)
-                except Exception:
-                    restored = False
-                try:
-                    privacy.dispose()
-                except Exception:
-                    restored = False
-                require(restored, 'SCREENSHOT_PRIVACY_RESTORE')
+                    try:
+                        restored = privacy.evaluate('state=>state.restore()')
+                    except Exception:
+                        failures.append('SCREENSHOT_PRIVACY_RESTORE_HANDLE_EXCEPTION')
+                    else:
+                        if restored is not True:
+                            failures.append('SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE' if type(restored) is bool else
+                                            'SCREENSHOT_PRIVACY_RESTORE_HANDLE_INVALID')
+                        else:
+                            try:
+                                current = page.evaluate('state=>state.check(false)', privacy)
+                            except Exception:
+                                failures.append('SCREENSHOT_PRIVACY_RESTORE_PAGE_EXCEPTION')
+                            else:
+                                if current is not True:
+                                    failures.append('SCREENSHOT_PRIVACY_RESTORE_PAGE_FALSE' if type(current) is bool else
+                                                    'SCREENSHOT_PRIVACY_RESTORE_PAGE_INVALID')
+                    if failures:
+                        invariant_code, invariants = self._restore_snapshot(privacy)
+                finally:
+                    try:
+                        privacy.dispose()
+                    except Exception:
+                        failures.append('SCREENSHOT_PRIVACY_RESTORE_DISPOSE_FAILURE')
+                if failures:
+                    if invariant_code == 'NOT_REQUESTED':
+                        invariant_code, invariants = self._restore_snapshot(privacy)
+                    # Only allowlisted codes/booleans leave private DOM handles.
+                    row = {'case': self.case_id, 'name': name, 'failure_codes': failures,
+                           'prior_phase': prior_phase, 'invariant_code': invariant_code, 'invariants': invariants}
+                    require(self.case_id in EXPECTED_IDS and len(failures) <= 2 and
+                            all(code in RESTORE_FAILURE_CODES for code in failures) and
+                            prior_phase in ('NONE', 'CAPTURE_EXCEPTION', 'SCREENSHOT_PRIVACY_PREPARE',
+                                            'SCREENSHOT_PRIVACY_CONTEXT', 'SCREENSHOT_PRIVACY_HIDDEN') and
+                            invariant_code in ('RESTORE_INVARIANTS_AVAILABLE', 'RESTORE_INVARIANTS_EXCEPTION',
+                                               'RESTORE_INVARIANTS_INVALID') and
+                            len(self.restore_diagnostics) < 16 and
+                            len(json.dumps(row, allow_nan=False).encode('utf-8')) <= 1024,
+                            'SCREENSHOT_PRIVACY_RESTORE_DIAGNOSTIC_BOUNDS')
+                    self.restore_diagnostics.append(row)
+                    raise AssertionError(failures[0]) from None
         require(len(payload) <= MAX_SCREENSHOT_BYTES and
                 self.screenshot_bytes + len(payload) <= MAX_SCREENSHOTS_TOTAL,
                 'SCREENSHOT_BYTES_EXCEED_BOUND')
@@ -876,7 +948,8 @@ def main():
         'events': network,
     })
     save_json('js-errors.json', {'scope': 'Fixed codes only; no raw JS/console text',
-                                'page_errors': js_errors, 'console_errors': console})
+                                'page_errors': js_errors, 'console_errors': console,
+                                'restore_diagnostics': cases_context.restore_diagnostics if cases_context else []})
     save_bytes('browser-cases.log', ('\n'.join(log) + '\n').encode('utf-8'))
     passed = (
         not errors and stable and browser_cleanup and fixture_cleanup and
