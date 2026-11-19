@@ -98,12 +98,13 @@ class HostedBrowserCapturePrivacyTests(unittest.TestCase):
         self.assertEqual(page.prepared_selectors, list(expected))
         self.assertEqual(len(page.calls), 1)
         options = page.calls[0]
-        self.assertEqual(set(options), {'type', 'full_page', 'animations', 'mask',
+        self.assertEqual(set(options), {'type', 'full_page', 'animations', 'caret', 'mask',
                                         'mask_color', 'timeout'})
         self.assertEqual(options['mask'], list(expected + ('#staffList', '#storeName')))
         self.assertEqual(options['type'], 'png')
         self.assertIs(options['full_page'], True)
         self.assertEqual(options['animations'], 'disabled')
+        self.assertEqual(options['caret'], 'initial')
         self.assertEqual(options['mask_color'], '#27272A')
         self.assertEqual(options['timeout'], 15000)
         self.assertEqual(len(context.screenshots), 1)

@@ -633,7 +633,7 @@ class CaseContext:
             except Exception:
                 raise AssertionError('SCREENSHOT_PRIVACY_CONTEXT') from None
             require(hidden is True, 'SCREENSHOT_PRIVACY_HIDDEN')
-            payload = page.screenshot(type='png', full_page=True, animations='disabled',
+            payload = page.screenshot(type='png', full_page=True, animations='disabled', caret='initial',
                                       mask=masks, mask_color='#27272A', timeout=15000)
             try:
                 hidden = page.evaluate('state=>state.check(true)', privacy)
