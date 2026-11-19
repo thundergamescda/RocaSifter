@@ -584,11 +584,14 @@ class CaseContext:
                         if(document!==originalDocument||location.href!==originalURL)return false;
                         const current=selected();
                         if(current.length!==rows.length||current.some((node,index)=>node!==rows[index].node))return false;
-                        return rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected&&
-                            row.node.style.getPropertyValue('visibility')===(hidden?'hidden':row.value)&&
-                            row.node.style.getPropertyPriority('visibility')===(hidden?'important':row.priority)&&
-                            (hidden?getComputedStyle(row.node).visibility==='hidden':
-                                (row.hadStyle||!row.node.hasAttribute('style'))));
+                        return rows.every(row=>{
+                            if(row.node.ownerDocument!==originalDocument||!row.node.isConnected)return false;
+                            if(!hidden&&!row.hadStyle)
+                                return !row.node.hasAttribute('style')&&row.value===''&&row.priority==='';
+                            return row.node.style.getPropertyValue('visibility')===(hidden?'hidden':row.value)&&
+                                row.node.style.getPropertyPriority('visibility')===(hidden?'important':row.priority)&&
+                                (!hidden||getComputedStyle(row.node).visibility==='hidden');
+                        });
                     };
                     state.restore=()=>{
                         let restored=true;
