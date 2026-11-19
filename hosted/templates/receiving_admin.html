@@ -19,7 +19,13 @@
 <button type="submit" id="receivingAdminOAuthButton">Review receiving access in Square</button></form><p class="status" id="receivingAdminOAuthStatus" role="status"></p>
 <p><a href="/receiving/price-templates">Review owner price-family templates</a></p></section>
 <section class="card" id="receivingAdminWorkspace" hidden><div class="heading"><h2>Match one catalog variation</h2><span class="pill" id="receivingAdminStore"></span></div>
-<form id="receivingAdminForm"><div class="columns"><label>Square variation reference<input name="variation_id" maxlength="150" required autocomplete="off" placeholder="Existing variation ID"></label>
+<form id="receivingAdminForm"><section class="selection" aria-labelledby="receivingAdminLookupTitle"><h3 id="receivingAdminLookupTitle">Find an existing Square variation</h3>
+<p class="help">Choose a receiving location below, then enter or scan an exact Square SKU. Keep leading zeros, capitalization and spaces. TCGplayer IDs and other scanner references are separate.</p>
+<label>Exact Square SKU<input id="receivingAdminLookupSku" maxlength="100" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+<button type="button" id="receivingAdminLookupButton" class="quiet" disabled>Find existing variation</button>
+<p id="receivingAdminLookupStatus" class="status" role="status" aria-live="polite"></p><div id="receivingAdminLookupResults"></div>
+<p class="help">Selection fills only the variation reference. Review the complete physical card details and current Square target before separately approving a mapping.</p></section>
+<div class="columns"><label>Square variation reference<input name="variation_id" maxlength="255" required autocomplete="off" placeholder="Existing variation ID"></label>
 <label>Receiving location<select name="location_id" required><option value="">Choose a Square location</option></select></label></div>
 <div class="columns"><label>Card or player name<input name="name" maxlength="200" required autocomplete="off"></label><label>Game or sport category<select name="game" required><option value="">Loading supported games…</option></select></label></div>
 <div class="columns"><label>Item type<select name="kind"><option value="card">Raw card</option><option value="slab">Graded slab</option></select></label><label>Game label from intake<input name="game_label" maxlength="100" autocomplete="off" aria-describedby="receivingAdminGameHelp"></label></div>

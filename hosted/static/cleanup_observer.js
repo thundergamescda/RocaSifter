@@ -4,8 +4,8 @@
   if (!panel || panel.dataset.bound==='true') return;
   panel.dataset.bound='true';
   const el=id=>document.getElementById(id);
-  const states={not_connected:'Not connected',disabled:'Disabled',idle:'No read yet',queued:'Queued',
-    reading:'Reading',complete:'Read complete',partial:'Partial read',stale:'Stale',authority_blocked:'Authority blocked'};
+  const states={not_connected:'Not connected',disabled:'Checks not enabled',idle:'No completed check',queued:'Check requested',
+    reading:'Checking catalog',complete:'Check complete',partial:'Incomplete check',stale:'History out of date',authority_blocked:'Access needs review'};
   let context=null,snapshot=null,serial=0,busy=false,pending=null,configBlocked=false;
   const integer=value=>Number.isSafeInteger(value)&&value>=0;
   const boundedCount=(count,exact)=>integer(count)&&typeof exact==='boolean'&&
@@ -29,8 +29,9 @@
   function emptyDisplay(message) {
     snapshot=null;
     el('cleanupObserverState').textContent='Status unavailable';
+    el('cleanupObserverSummary').textContent='Catalog check status is unavailable. Check again before relying on saved history.';
     el('cleanupObserverGate').textContent='Worker gate unknown.';
-    el('cleanupObserverCoverage').textContent='No current read evidence is displayed.';
+    el('cleanupObserverCoverage').textContent='No current catalog check is available.';
     el('cleanupObserverAttempt').textContent='Unavailable';
     el('cleanupObserverComplete').textContent='Unavailable';
     el('cleanupObserverMissing').textContent='Unknown';
@@ -93,14 +94,22 @@
     if (changed) pending=null;
     snapshot=value;
     el('cleanupObserverState').textContent=states[value.state];
+    el('cleanupObserverSummary').textContent=value.state==='not_connected'?
+      'Your store needs a Square connection before catalog checks can run.':
+      value.state==='authority_blocked'?'Your access changed. Review your sign-in before requesting another catalog check.':
+      !value.worker_enabled?'Catalog checks are paused by the service. Saved history can still be reviewed in details.':
+      !value.enabled?'The owner must allow catalog checks for this store before checks can run.':
+      value.state==='queued'?'A catalog check has been requested. It has not finished yet.':
+      value.state==='reading'?'A catalog check is in progress. Wait for its result before relying on it.':
+      'Review the coverage note and saved history before relying on these catalog checks.';
     el('cleanupObserverGate').textContent=(value.worker_enabled?'Global worker gate: enabled.':'Global worker gate: off; no background worker is activated here.')+
       ' Store consent: '+(value.enabled?'enabled':'off')+'. Background consent: '+(value.background_enabled?'enabled':'off')+'.';
     const current=value.coverage_current&&value.pending_notification_count_exact&&value.pending_notification_count===0&&
       value.receipt_processing_pending_count_exact&&value.receipt_processing_pending_count===0&&
       value.state==='complete'&&value.missing_count===0;
     el('cleanupObserverCoverage').textContent=current?
-      'At this status check, the latest bounded read met the service checks. Separate reads are not an atomic snapshot.':
-      'Current complete coverage is not established. Queued notices, missing evidence or changed authority may require another read.';
+      'The latest completed check met the coverage checks at this status update. Separate checks do not establish continuously zero stock.':
+      'A complete, current catalog check is not established. Pending updates, missing counts or changed access may require another check.';
     el('cleanupObserverAttempt').textContent=showInterval(value.last_attempt)+(value.last_attempt?' · '+value.last_attempt.outcome+' · '+value.last_attempt.count_rows+' count rows':'');
     el('cleanupObserverComplete').textContent=showInterval(value.last_complete);
     el('cleanupObserverMissing').textContent=value.missing_count===null?'Unknown':String(value.missing_count)+(value.missing_truncated?' (detail list capped)':'');
@@ -119,7 +128,7 @@
     if (!context) return;
     if (currentContext()?.key!==context.key) {synchronize();return;}
     const key=context.key,ticket=++serial;
-    busy=true;emptyDisplay('Checking current read status…');controls();
+    busy=true;emptyDisplay('Checking catalog status…');controls();
     try {
       const value=await api('/api/catalog-cleanup/status');
       if (!stillCurrent(key,ticket)) return;
@@ -135,7 +144,7 @@
     const next=currentContext();
     if (!next) {
       ++serial;context=null;pending=null;busy=false;configBlocked=false;
-      emptyDisplay('Sign in to the current store to check read status.');panel.hidden=true;controls();return;
+      emptyDisplay('Sign in to your store to check catalog history.');panel.hidden=true;controls();return;
     }
     if (context?.key===next.key) return;
     ++serial;context=next;pending=null;busy=false;configBlocked=false;
@@ -149,13 +158,13 @@
     const identity=kind+'|'+JSON.stringify(intent);
     if (!pending||pending.identity!==identity) pending={identity,body:{request_key:crypto.randomUUID(),...intent}};
     const body=pending.body,ticket=++serial;
-    busy=true;emptyDisplay(kind==='config'?'Saving owner consent…':'Requesting a read…');controls();
+    busy=true;emptyDisplay(kind==='config'?'Saving owner consent…':'Requesting a catalog check…');controls();
     try {
       const result=await api('/api/catalog-cleanup/'+kind,body);
       if (!stillCurrent(key,ticket)) return;
       if (!result||result.accepted!==true||typeof result.duplicate!=='boolean') throw new Error('The request acknowledgement was incomplete.');
       pending=null;
-      await refreshStatus(kind==='config'?'Consent acknowledged. Current status reloaded.':'Read request acknowledged. Current status reloaded; no provider read was performed by this request.');
+      await refreshStatus(kind==='config'?'Catalog settings saved. Status refreshed.':'Catalog check requested. Status refreshed; this request does not mean a check has completed.');
     } catch (error) {
       if (!stillCurrent(key,ticket)) return;
       if (kind==='config'&&error.status===403) configBlocked=true;

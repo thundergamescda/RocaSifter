@@ -66,6 +66,41 @@ records and uncertain provider work. A late catalog acknowledgement cannot
 recreate active delegated authority after revocation. A new independent mapping
 requires another explicit owner review.
 
+## Find an existing Square variation by exact SKU
+
+The owner mapping page can read existing variations using
+`GET /api/receiving/catalog-lookup?sku=...&location_id=...`. Supply each parameter
+once. The SKU is raw text: leading zeros, case and spaces are retained. A
+TCGplayer identifier or generic scanner reference is not automatically a Square
+SKU. The route checks the current owner/session and existing provider read
+authorization around the request; it does not request additional permissions or
+change receiving consent or rollout gates.
+
+Square's [set query](https://developer.squareup.com/reference/square/objects/CatalogQuerySet)
+matches values without case sensitivity. Discovery therefore compares returned
+SKUs to the original raw value separately. One exact candidate is selectable
+only after complete pagination, no case-insensitive collision, a fresh catalog
+read and current active USD location checks. Selecting it fills the variation
+reference. The existing full-identity preview, current provider/uniqueness checks
+and separate fresh-MFA owner approval still follow; selection grants no authority.
+
+Responses distinguish `match`, `no_match`, `ambiguous`, `unavailable` settings
+and `incomplete` reads. Only `match` contains a candidate. A complete case-only
+match is still `no_match`; the DTO reports a case-variant count. Search is bounded
+to ten pages, 1,000 rows per page, twenty distinct variations, 2 MiB aggregate
+response content and thirty seconds; the limit is enforced independently of
+Square's advisory page limit. Any incomplete or inconsistent search discards
+all candidates. A later changed variation also requires another lookup.
+
+The fixed [SearchCatalogObjects endpoint](https://developer.squareup.com/reference/square/catalog-api/search-catalog-objects)
+uses `ITEM_VARIATION`, `include_deleted_objects=false`, the SKU set query and
+existing read access. The subsequent
+[BatchRetrieveCatalogObjects read](https://developer.squareup.com/reference/square/catalog-api/batch-retrieve-catalog-objects)
+uses server-discovered variation/parent IDs. Existing API-version, transport,
+token verification, response-close and Sandbox-proof policies are preserved.
+No token, raw provider object, mapping write, catalog mutation or inventory call
+is returned or performed by this lookup. New parent creation remains unsupported.
+
 ## Catalog then stock
 
 Existing approved, tracked, same-price variations use one inventory step and no

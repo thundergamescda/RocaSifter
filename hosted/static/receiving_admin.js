@@ -3,6 +3,7 @@
   const $ = id => document.getElementById(id), form = $("receivingAdminForm"), approveForm = $("receivingAdminApproveForm");
   let generation = 0, controller = new AbortController(), session = null, preview = null, busy = false;
   let previewRevision = 0, reviewRequest = 0, review = null, previewDeadline = 0, expiryTimer = null;
+  let lookupRequest = 0, lookupResult = null, selectedLookup = null;
   const reviewPages = new Set(), reviewBindings = new Set(), uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, hash = /^[0-9a-f]{64}$/;
   const gameChoices = new Map(), retirementControls = new Set();
   const fields = [["set", "Set", 200], ["number", "Card number", 100], ["language", "Language", 50], ["condition", "Condition", 100], ["printing", "Printing / finish", 100]];
@@ -43,6 +44,8 @@
   }
   form.elements.game.addEventListener("change", selectGame);
   function controls() {
+    $("receivingAdminLookupButton").disabled = busy || !session || !form.elements.location_id.value;
+    for (const button of $("receivingAdminLookupResults").querySelectorAll("button")) button.disabled = busy || !lookupResult;
     $("receivingAdminApprove").disabled = busy || !approvalReady();
     $("receivingAdminOAuthButton").disabled = busy || !freshMfa();
     $("receivingAdminReviewRefresh").disabled = busy || !preview || Date.now() >= previewDeadline;
@@ -66,6 +69,7 @@
   }
   function reset(message = "Session changed. Refresh your owner session to continue.") {
     generation++; controller.abort(); controller = new AbortController(); session = null; busy = false;
+    discardLookup(); selectedLookup = null;
     discardPreview(); form.reset(); $("receivingAdminWorkspace").hidden = true; $("receivingAdminOAuth").hidden = true;
     $("receivingAdminOAuthForm").reset(); $("receivingAdminOAuthStatus").textContent = ""; $("receivingAdminSession").textContent = message;
     $("receivingAdminRefresh").disabled = false;
@@ -75,7 +79,8 @@
     const response = await fetch("/api/me", {credentials: "same-origin", signal: controller.signal});
     const current = await response.json();
     if (epoch !== generation) return false;
-    if (!response.ok || current.role !== "owner" || !session || current.csrf_token !== session.csrf_token) { reset(); return false; }
+    if (!response.ok || current.role !== "owner" || !session || current.csrf_token !== session.csrf_token
+      || current.tenant_id !== session.tenant_id || current.store !== session.store) { reset(); return false; }
     session = current; controls();
     return true;
   }
@@ -96,6 +101,76 @@
   }
   function setBusy(value) { busy = value; form.inert = value; approveForm.inert = value; $("receivingAdminOAuthForm").inert = value; $("receivingAdminRefresh").disabled = value; controls(); }
   function fact(dl, label, value) { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = label; dd.textContent = String(value); dl.append(dt, dd); }
+  function discardLookup() {
+    lookupRequest++; lookupResult = null;
+    $("receivingAdminLookupResults").replaceChildren(); $("receivingAdminLookupStatus").textContent = "";
+  }
+  function lookupCurrent(epoch, request, sku, location) {
+    return epoch === generation && request === lookupRequest && !!session
+      && $("receivingAdminLookupSku").value === sku && form.elements.location_id.value === location;
+  }
+  function validLookup(value, sku, location) {
+    const keys = ["lookup_version", "requested_sku", "location_id", "state", "lookup_complete", "exact_match_count", "case_variant_count", "candidates"];
+    const object = item => !!item && typeof item === "object" && !Array.isArray(item);
+    const count = item => Number.isSafeInteger(item) && item >= 0 && item <= 20;
+    const text = (item, limit) => typeof item === "string" && item.length <= limit && !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(item);
+    if (!object(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))
+      || value.lookup_version !== 1 || value.requested_sku !== sku || value.location_id !== location
+      || !count(value.exact_match_count) || !count(value.case_variant_count) || value.exact_match_count + value.case_variant_count > 20
+      || !Array.isArray(value.candidates) || value.candidates.length > 1) return false;
+    if (value.state === "incomplete") return value.lookup_complete === false && !value.exact_match_count && !value.case_variant_count && !value.candidates.length;
+    if (value.lookup_complete !== true) return false;
+    if (value.state === "no_match") return value.exact_match_count === 0 && value.candidates.length === 0;
+    if (value.state === "ambiguous") return value.exact_match_count >= 1 && value.exact_match_count + value.case_variant_count > 1 && !value.candidates.length;
+    if (value.exact_match_count !== 1 || value.case_variant_count !== 0) return false;
+    if (value.state === "unavailable") return value.candidates.length === 0;
+    if (value.state !== "match" || value.candidates.length !== 1) return false;
+    const row = value.candidates[0], fields = ["variation_id", "parent_id", "sku", "item_name", "variation_name", "selling_cents", "currency"];
+    return object(row) && Object.keys(row).length === fields.length && fields.every(key => Object.hasOwn(row, key))
+      && text(row.variation_id, 255) && !!row.variation_id && row.variation_id === row.variation_id.trim()
+      && text(row.parent_id, 255) && !!row.parent_id && row.parent_id === row.parent_id.trim()
+      && row.sku === sku && text(row.item_name, 512) && text(row.variation_name, 512)
+      && Number.isSafeInteger(row.selling_cents) && row.selling_cents >= 0 && row.selling_cents <= 100000000 && row.currency === "USD";
+  }
+  async function findSku() {
+    if (busy || !session) return;
+    discardLookup(); discardPreview(); const epoch = generation, request = lookupRequest;
+    const sku = $("receivingAdminLookupSku").value, location = form.elements.location_id.value;
+    const status = $("receivingAdminLookupStatus");
+    if (!location || !sku.trim() || sku.length > 100 || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(sku)) { status.textContent = "Choose a location and enter an exact Square SKU."; return; }
+    selectedLookup = null; form.elements.variation_id.value = "";
+    setBusy(true); status.textContent = "Reading existing Square variations…";
+    try {
+      if (!(await sameOwner(epoch)) || !lookupCurrent(epoch, request, sku, location)) return;
+      const result = await api(`/api/receiving/catalog-lookup?${new URLSearchParams({sku, location_id:location})}`, undefined, epoch);
+      if (!result || !lookupCurrent(epoch, request, sku, location)) return;
+      if (!validLookup(result, sku, location)) throw new Error("The lookup response could not be verified. Repeat the lookup.");
+      const messages = {no_match:"No exact Square SKU was found. Check capitalization and spaces or create the item in Square before reviewing it here.",
+        ambiguous:"This SKU has multiple exact or case-insensitive matches. Resolve the catalog ambiguity in Square before selecting a variation.",
+        incomplete:"The catalog read was incomplete. Repeat the lookup; no candidate is available from this result.",
+        unavailable:"This exact SKU exists, but its current item, location, tracking or USD price settings cannot be used for receiving."};
+      if (result.state !== "match") { status.textContent = messages[result.state] + (result.state === "no_match" && result.case_variant_count ? " A different capitalization exists in Square." : ""); return; }
+      lookupResult = result; const row = result.candidates[0], dl = document.createElement("dl"), button = document.createElement("button");
+      fact(dl, "Item", row.item_name); fact(dl, "Variation", row.variation_name); fact(dl, "Exact SKU", `“${row.sku}”`);
+      const exactSku = document.createElement("input"); exactSku.value = row.sku; exactSku.readOnly = true;
+      exactSku.autocomplete = "off"; exactSku.spellcheck = false; exactSku.setAttribute("aria-label", "Exact Square SKU");
+      dl.lastElementChild.replaceChildren(exactSku);
+      fact(dl, "Current USD price", new Intl.NumberFormat("en-US", {style:"currency", currency:"USD"}).format(row.selling_cents / 100));
+      fact(dl, "Variation reference", row.variation_id); button.type = "button"; button.className = "quiet"; button.textContent = "Use this variation reference";
+      button.addEventListener("click", async () => {
+        if (busy || lookupResult !== result || !lookupCurrent(epoch, request, sku, location)) return;
+        setBusy(true);
+        try {
+          if (!(await sameOwner(epoch)) || lookupResult !== result || !lookupCurrent(epoch, request, sku, location)) return;
+          form.elements.variation_id.value = row.variation_id; selectedLookup = {sku, location};
+          discardLookup(); discardPreview(); setBusy(false); progress("Variation reference selected. Review the full physical card details, then read the current Square target.");
+        } catch (_) { if (lookupCurrent(epoch, request, sku, location)) status.textContent = "The owner session could not be verified. Refresh before selecting a reference."; }
+        finally { if (lookupCurrent(epoch, request, sku, location)) setBusy(false); }
+      });
+      $("receivingAdminLookupResults").append(dl, button); status.textContent = "One exact current candidate found. Selecting it does not approve a mapping or change stock.";
+    } catch (error) { if (lookupCurrent(epoch, request, sku, location)) { lookupResult = null; status.textContent = error.message; } }
+    finally { if (lookupCurrent(epoch, request, sku, location)) setBusy(false); }
+  }
   function validConflict(row) {
     const text = (value, limit) => typeof value === "string" && value.length > 0 && value.length <= limit;
     const identityKeys = new Set(["name", "game", "kind", "game_label", ...fields.map(field => field[0]), ...slabFields.map(field => field[0])]);
@@ -217,7 +292,15 @@
       if (!freshMfa()) progress("You may preview a mapping. " + mfaGuidance());
     } catch (error) { if (epoch === generation) { reset("Owner review is unavailable. Check your session and Square authorization, then refresh."); progress(error.message, true); } }
   }
-  form.addEventListener("input", () => { discardPreview(); setBusy(false); });
+  form.addEventListener("input", event => {
+    if (selectedLookup && (event.target === $("receivingAdminLookupSku") || event.target === form.elements.location_id)) {
+      form.elements.variation_id.value = ""; selectedLookup = null;
+    }
+    if (event.target === form.elements.variation_id) selectedLookup = null;
+    discardLookup(); discardPreview(); setBusy(false);
+  });
+  $("receivingAdminLookupButton").addEventListener("click", findSku);
+  $("receivingAdminLookupSku").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); findSku(); } });
   form.addEventListener("submit", async event => {
     event.preventDefault(); if (busy || !session) return; discardPreview(); const epoch = generation, revision = previewRevision, requestedAt = Date.now(); setBusy(true);
     const identity = {};
@@ -300,5 +383,6 @@
   window.addEventListener("storage", event => { if (event.key === "ss-auth-epoch") reset(); });
   try { const channel = new BroadcastChannel("ss-auth-transition"); channel.onmessage = () => reset(); } catch (_) { /* Unsupported browser: explicit same-session verification remains. */ }
   window.addEventListener("pageshow", event => { if (event.persisted) reset(); });
+  window.addEventListener("pagehide", () => reset());
   refresh();
 })();

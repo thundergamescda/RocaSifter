@@ -1,8 +1,8 @@
 """Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Seven
-companion unit modules run all 92 approved cases, including no-database Flask
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Eight
+companion unit modules run all 99 approved cases, including no-database Flask
 startup and fictional capture orchestration; these are not SQL, browser, printer
 or provider acceptance.
 This helper adds copied-source preservation and an actual test-client TLS probe.
@@ -26,7 +26,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 532
+POSTGRES_EXPECTED_COUNT = 540
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
@@ -140,6 +140,16 @@ CAPTURE_PRIVACY_UNIT_IDS = (
     CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_restore_document_or_dispose_failure_discards_captured_image',
     CAPTURE_PRIVACY_UNIT_MODULE + '.HostedBrowserCapturePrivacyTests.test_unknown_or_css_injecting_extra_selector_refused_before_capture',
 )
+SQUARE_SKU_LOOKUP_UNIT_MODULE = 'test_hosted_square_sku_lookup'
+SQUARE_SKU_LOOKUP_UNIT_IDS = (
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_case_variants_are_retained_for_service_collision_checks_without_normalizing_skus',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_empty_complete_pages_are_no_matches_only_after_a_valid_terminal_cursor',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_exact_raw_query_and_complete_pagination_preserve_ids_case_spaces_and_zeroes',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_fixed_read_transport_pins_version_forbids_redirects_and_closes_every_response',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_invalid_sku_input_never_calls_provider_or_coerces_values',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_later_malformed_conflicting_unrelated_or_deleted_rows_never_return_a_partial_match',
+    SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_page_row_distinct_byte_and_total_deadline_bounds_never_return_partial_candidates',
+)
 UNIT_GROUPS = (
     ('unit_identity', IDENTITY_UNIT_MODULE, IDENTITY_UNIT_IDS, 'unit-identity',
      'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.'),
@@ -155,6 +165,8 @@ UNIT_GROUPS = (
      'One real Flask public-page, health, readiness and API startup unit with no configured database; not PostgreSQL or account-recovery acceptance.'),
     ('unit_capture_privacy', CAPTURE_PRIVACY_UNIT_MODULE, CAPTURE_PRIVACY_UNIT_IDS, 'unit-capture-privacy',
      'Six CaseContext capture-orchestration units using fictional page/handle objects and the real runner module; not browser, DOM, CSP, pixel or hardware acceptance.'),
+    ('unit_square_sku_lookup', SQUARE_SKU_LOOKUP_UNIT_MODULE, SQUARE_SKU_LOOKUP_UNIT_IDS, 'unit-square-sku-lookup',
+     'Seven exact-SKU read-adapter units with fictional provider responses; not PostgreSQL, browser, live Square or hardware acceptance.'),
 )
 
 

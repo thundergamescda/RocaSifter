@@ -8,7 +8,7 @@ import json
 import threading
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import psycopg
 from cryptography.fernet import Fernet
 from intake_manifest import capture_manifest, source_line_id
@@ -17,6 +17,7 @@ from intake_physical_identity import physical_facts_v2
 from hosted.app import create_app
 from hosted.intake import IntakeClaims
 from hosted.receiving import Receiving
+from hosted.receiving_square import ReceivingSquare
 from hosted.receiving_plan import ReceivingError, fingerprint
 from hosted.security import ServiceError, digest
 from hosted.trades import Trades
@@ -543,6 +544,169 @@ class PostgreSQLReceivingAcceptance(_PostgreSQLSettlementFixture):
                 self.service.binding_preview(self.actor,body)
             self.assertEqual(caught.exception.code,'CATALOG_PHYSICAL_OWNERSHIP_REVIEW_REQUIRED')
         self.assertEqual(len(self.provider.access_calls),before);self.assertEqual(self.provider.calls,[])
+
+    def _lookup_fixture(self,sku=' 000Ab^>~7 '):
+        self.provider.objects['fixture-variation']['item_variation_data']['sku']=sku
+        self.provider.objects['fixture-parent']['item_data']['variations'][0]['item_variation_data']['sku']=sku
+        self.lookup_adapter=ReceivingSquare(None)
+        self.lookup_adapter._call=Mock(return_value={'objects':[deepcopy(self.provider.objects['fixture-variation'])]})
+        self.provider.lookup_sku=lambda access,value:self.lookup_adapter.lookup_sku(access,value)
+        return sku
+
+    def _lookup_records(self):
+        with self.database.transaction() as db:
+            return {name:db.execute('SELECT to_jsonb(t) AS value FROM '+name+' t WHERE tenant_id=%s ORDER BY to_jsonb(t)::text',
+                (self.tenant,)).fetchall() for name in ('ss_receiving_bindings','ss_receiving_binding_previews',
+                    'ss_receiving_requests','ss_receiving_operations','ss_receiving_steps','ss_intake_claims','ss_audit','ss_credit_entries')}
+
+    def _lookup_http(self):
+        token='fictional-lookup-owner-'+uuid.uuid4().hex
+        with self.database.transaction() as db:
+            db.execute('''INSERT INTO ss_sessions(token_hash,tenant_id,staff_id,expires_at,mfa_version,mfa_authenticated_at)
+                SELECT %s,tenant_id,staff_id,expires_at,mfa_version,mfa_authenticated_at
+                FROM ss_sessions WHERE tenant_id=%s AND token_hash=%s''',(digest(token),self.tenant,self.actor['session_hash']))
+        base='https://sku-lookup.fixture.invalid'
+        app=create_app({'TESTING':True,'PUBLIC_BASE_URL':base,'APP_ENCRYPTION_KEYS':Fernet.generate_key().decode()},database=self.database)
+        app.extensions['ss_receiving'].provider=self.provider
+        return app.test_client(),base,{'Authorization':'Bearer '+token},digest(token)
+
+    def test_sku_lookup_exact_raw_candidate_is_bounded_and_never_changes_catalog_stock_or_registry(self):
+        sku=self._lookup_fixture()
+        self.provider.objects['fixture-variation']['private-fixture-field']='FICTIONAL_RAW_BODY_NEVER_RETURN'
+        self.lookup_adapter._call.return_value={'objects':[deepcopy(self.provider.objects['fixture-variation'])]}
+        before=self._lookup_records();catalog=deepcopy(self.provider.objects)
+        result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+        self.assertEqual(set(result),{'lookup_version','requested_sku','location_id','state','lookup_complete','exact_match_count','case_variant_count','candidates'})
+        self.assertEqual((result['state'],result['lookup_complete'],result['requested_sku']),('match',True,sku))
+        self.assertEqual(result['candidates'],[{'variation_id':'fixture-variation','parent_id':'fixture-parent','sku':sku,
+            'item_name':'Fictional parent','variation_name':'Retained old stock','selling_cents':1000,'currency':'USD'}])
+        self.assertNotIn('FICTIONAL_RAW_BODY_NEVER_RETURN',json.dumps(result));self.assertNotIn('fictional-server-token',json.dumps(result))
+        self.assertLess(len(json.dumps(result).encode()),4096)
+        self.assertEqual(self._lookup_records(),before);self.assertEqual(self.provider.objects,catalog)
+        self.assertEqual((self.provider.calls,self.provider.catalog_calls,self.wallet()),([],[],(0,0)))
+
+    def test_sku_lookup_raw_case_spaces_and_leading_zeroes_never_become_normalized_matches(self):
+        sku=self._lookup_fixture('Ab007')
+        result=self.service.catalog_lookup(self.actor,'ab007','fixture-location')
+        self.assertEqual((result['state'],result['exact_match_count'],result['case_variant_count'],result['candidates']),('no_match',0,1,[]))
+        for query in (' Ab007','Ab007 ','007','000Ab007'):
+            with self.subTest(query=query):
+                self.lookup_adapter._call.return_value={'objects':[]}
+                result=self.service.catalog_lookup(self.actor,query,'fixture-location')
+                self.assertEqual((result['state'],result['lookup_complete'],result['requested_sku']),('no_match',True,query))
+                self.assertEqual(self.lookup_adapter._call.call_args.args[2]['query']['set_query']['attribute_values'],[query])
+        self.assertEqual(self.provider.calls,[])
+
+    def test_sku_lookup_exact_duplicates_and_case_collisions_offer_no_selectable_candidate(self):
+        sku=self._lookup_fixture();row=deepcopy(self.provider.objects['fixture-variation'])
+        for other_sku in (sku,sku.swapcase()):
+            with self.subTest(other_sku=other_sku):
+                other=deepcopy(row);other['id']='other-variation';other['item_variation_data']['sku']=other_sku
+                self.lookup_adapter._call.return_value={'objects':[row,other]}
+                result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+                self.assertEqual((result['state'],result['lookup_complete'],result['candidates']),('ambiguous',True,[]))
+                self.assertEqual(result['exact_match_count']+result['case_variant_count'],2)
+        self.assertEqual((self.provider.calls,self.provider.catalog_calls),([],[]))
+
+    def test_sku_lookup_incomplete_later_page_and_advisory_limit_never_publish_partial_match(self):
+        sku=self._lookup_fixture();row=deepcopy(self.provider.objects['fixture-variation']);before=self._lookup_records()
+        for pages in ([{'objects':[row],'cursor':'last'},{'objects':[],'cursor':False}],
+                      [{'objects':[row],'cursor':'last'},ReceivingError('Fictional provider failure',502)],
+                      [{'objects':[row]*1001}]):
+            with self.subTest(pages=len(pages)):
+                self.lookup_adapter._call=Mock(side_effect=pages)
+                result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+                self.assertEqual(result,{'lookup_version':1,'requested_sku':sku,'location_id':'fixture-location',
+                    'state':'incomplete','lookup_complete':False,'exact_match_count':0,'case_variant_count':0,'candidates':[]})
+        self.assertEqual(self._lookup_records(),before);self.assertEqual(self.provider.calls,[])
+
+    def test_sku_lookup_current_catalog_settings_and_changed_search_version_prevent_selection(self):
+        sku=self._lookup_fixture();original=deepcopy(self.provider.objects)
+        changes=(('fixture-parent','item_data','is_archived',True),('fixture-variation','item_variation_data','track_inventory',False))
+        for ident,field,key,value in changes:
+            with self.subTest(key=key):
+                self.provider.objects=deepcopy(original);self.provider.objects[ident][field][key]=value
+                self.lookup_adapter._call.return_value={'objects':[deepcopy(self.provider.objects['fixture-variation'])]}
+                result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+                self.assertEqual((result['state'],result['lookup_complete'],result['candidates']),('unavailable',True,[]))
+        self.provider.objects=deepcopy(original)
+        self.lookup_adapter._call.return_value={'objects':[deepcopy(original['fixture-variation'])]}
+        self.provider.objects['fixture-variation']['version']+=1
+        result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+        self.assertEqual((result['state'],result['lookup_complete'],result['candidates']),('incomplete',False,[]))
+
+    def test_sku_lookup_revalidates_role_session_merchant_and_location_after_blocking_reads(self):
+        sku=self._lookup_fixture();row=deepcopy(self.provider.objects['fixture-variation'])
+        with self.database.transaction() as db:
+            expiry=db.execute('SELECT expires_at FROM ss_sessions WHERE token_hash=%s',(self.actor['session_hash'],)).fetchone()['expires_at']
+        location=self.provider.location;merchant=self.provider.proof['merchant_id']
+        for change in ('role','session','merchant','provider_revoked','location'):
+            with self.subTest(change=change):
+                def read(*args,**kwargs):
+                    if change in ('role','session'):
+                        with self.database.transaction() as db:
+                            if change=='role':db.execute("UPDATE ss_staff SET role='manager' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+                            else:db.execute("UPDATE ss_sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE token_hash=%s",(self.actor['session_hash'],))
+                    elif change=='merchant':self.provider.proof['merchant_id']='different-merchant'
+                    elif change=='provider_revoked':self.provider.revoked=True
+                    else:self.provider.location=lambda *args:(_ for _ in ()).throw(ReceivingError('Fictional location no longer active'))
+                    return {'objects':[row]}
+                self.lookup_adapter._call=Mock(side_effect=read)
+                try:
+                    if change=='location':
+                        result=self.service.catalog_lookup(self.actor,sku,'fixture-location')
+                        self.assertEqual((result['state'],result['lookup_complete'],result['candidates']),('incomplete',False,[]))
+                    else:
+                        with self.assertRaises(ServiceError):self.service.catalog_lookup(self.actor,sku,'fixture-location')
+                finally:
+                    with self.database.transaction() as db:
+                        db.execute("UPDATE ss_staff SET role='owner' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+                        db.execute('UPDATE ss_sessions SET expires_at=%s WHERE token_hash=%s',(expiry,self.actor['session_hash']))
+                    self.provider.location=location;self.provider.proof['merchant_id']=merchant;self.provider.revoked=False
+        access=self.provider.access
+        def changed_before_search(*args,**kwargs):
+            value=access(*args,**kwargs)
+            with self.database.transaction() as db:db.execute("UPDATE ss_staff SET role='manager' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+            return value
+        self.lookup_adapter._call.reset_mock()
+        with patch.object(self.provider,'access',side_effect=changed_before_search):
+            with self.assertRaises(ServiceError):self.service.catalog_lookup(self.actor,sku,'fixture-location')
+        self.lookup_adapter._call.assert_not_called()
+        with self.database.transaction() as db:db.execute("UPDATE ss_staff SET role='owner' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+        self.assertEqual((self.provider.calls,self.provider.catalog_calls),([],[]))
+
+    def test_sku_lookup_http_actual_auth_exact_query_scope_and_no_store_override(self):
+        sku=self._lookup_fixture();client,base,headers,session=self._lookup_http();before=self._lookup_records()
+        path='/api/receiving/catalog-lookup';query={'sku':sku,'location_id':'fixture-location'}
+        response=client.get(path,query_string=query,base_url=base,headers=headers)
+        self.assertEqual(response.status_code,200);self.assertEqual(response.json['requested_sku'],sku)
+        self.assertEqual(response.json['state'],'match');self.assertEqual(response.headers['Cache-Control'],'no-store')
+        calls=self.lookup_adapter._call.call_count
+        for bad in ([('sku',sku),('sku',sku),('location_id','fixture-location')],
+                    [('sku',sku),('location_id','fixture-location'),('tenant_id',str(uuid.uuid4()))],
+                    [('sku',sku)], [('sku',sku),('location_id','fixture-location'),('cursor','forged')],
+                    [('sku',''),('location_id','fixture-location')], [('sku',' '),('location_id','fixture-location')],
+                    [('sku','x'*101),('location_id','fixture-location')], [('sku','A\nB'),('location_id','fixture-location')],
+                    [('sku',sku),('location_id','.')]):
+            with self.subTest(query=bad):self.assertEqual(client.get(path,query_string=bad,base_url=base,headers=headers).status_code,400)
+        self.assertEqual(client.get(path,query_string=query,base_url=base).status_code,401)
+        self.assertEqual(self.lookup_adapter._call.call_count,calls)
+        self.assertEqual(self._lookup_records(),before)
+
+    def test_sku_lookup_http_denies_nonowner_foreign_location_and_session_revoked_during_read(self):
+        sku=self._lookup_fixture();client,base,headers,session=self._lookup_http();path='/api/receiving/catalog-lookup'
+        self.assertEqual(client.get(path,query_string={'sku':sku,'location_id':'foreign-location'},base_url=base,headers=headers).status_code,409)
+        self.lookup_adapter._call.assert_not_called()
+        with self.database.transaction() as db:db.execute("UPDATE ss_staff SET role='manager' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+        self.assertEqual(client.get(path,query_string={'sku':sku,'location_id':'fixture-location'},base_url=base,headers=headers).status_code,403)
+        with self.database.transaction() as db:db.execute("UPDATE ss_staff SET role='owner' WHERE tenant_id=%s AND id=%s",(self.tenant,self.actor['staff_id']))
+        def revoke(*args,**kwargs):
+            with self.database.transaction() as db:db.execute('DELETE FROM ss_sessions WHERE token_hash=%s',(session,))
+            return {'objects':[deepcopy(self.provider.objects['fixture-variation'])]}
+        self.lookup_adapter._call=Mock(side_effect=revoke)
+        response=client.get(path,query_string={'sku':sku,'location_id':'fixture-location'},base_url=base,headers=headers)
+        self.assertEqual(response.status_code,401);self.assertNotIn('candidates',response.json)
+        self.assertEqual((self.provider.calls,self.provider.catalog_calls),([],[]))
 
     def test_physical_ownership_legacy_mapping_is_not_silently_upgraded(self):
         _,preview,body=self._physical_mapping()

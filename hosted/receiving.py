@@ -760,6 +760,61 @@ class Receiving:
             result['resolved']={'game':game,'game_label':label}
         return result
 
+    def catalog_lookup(self, actor, sku, location_id):
+        """Owner-only discovery. A result cannot approve a mapping or stock."""
+        if (type(sku) is not str or not 1<=len(sku)<=100 or not sku.strip()
+            or any(unicodedata.category(char) in ('Cc','Cf','Cs') for char in sku)):
+            raise ServiceError('Enter an exact Square SKU of 1 to 100 supported characters.')
+        location=provider_id(location_id,'Location ID');tenant=actor['tenant_id']
+        with self.database.transaction() as db:current_authority(db,actor,allowed_roles=('owner',))
+        access=self.provider.access(tenant)
+        bound=principal(access,location)
+        def live():
+            with self.database.transaction() as db:
+                current_authority(db,actor,allowed_roles=('owner',));self.provider.assert_current(db,tenant,access)
+                if principal(access,location)!=bound:raise ReceivingError('Square authorization changed. Repeat this lookup.',code='OAUTH_RECONSENT_REQUIRED')
+        live()
+        # Location validation is outside the lookup failure conversion: an
+        # unavailable/foreign location is not an authoritative empty SKU result.
+        self.provider.location(access,location)
+        live()
+        base={'lookup_version':1,'requested_sku':sku,'location_id':location,
+              'state':'incomplete','lookup_complete':False,'exact_match_count':0,
+              'case_variant_count':0,'candidates':[]}
+        result=dict(base)
+        try:
+            rows=self.provider.lookup_sku(access,sku)
+            live()
+            if type(rows) is not list or len(rows)>20:raise ValueError()
+            exact=[row for row in rows if row['item_variation_data']['sku']==sku]
+            if len({row['id'] for row in rows})!=len(rows):raise ValueError()
+            variants=len(rows)-len(exact)
+            result.update(lookup_complete=True,exact_match_count=len(exact),case_variant_count=variants,
+                          state='no_match' if not exact else 'ambiguous' if len(rows)>1 else 'unavailable')
+            if len(exact)==1 and len(rows)==1:
+                searched=exact[0];ident=provider_id(searched['id'],'Variation ID')
+                parent_id=provider_id(searched['item_variation_data']['item_id'],'Parent ID')
+                objects=self.provider.catalog(access,[ident,parent_id])
+                live()
+                if objects[ident]!=searched:raise ValueError()
+                variation,parent=objects[ident],objects[parent_id]
+                try:effective=effective_variation(variation,parent,location)
+                except ReceivingError:effective=None
+                if effective is not None:
+                    if effective['sku']!=sku:raise ValueError()
+                    item_name=parent['item_data'].get('name','');variation_name=variation['item_variation_data'].get('name','')
+                    for value in (item_name,variation_name):
+                        if (type(value) is not str or len(value)>512
+                            or any(unicodedata.category(char) in ('Cc','Cf','Cs') for char in value)):raise ValueError()
+                    result.update(state='match',candidates=[{'variation_id':ident,'parent_id':parent_id,'sku':sku,
+                        'item_name':item_name,'variation_name':variation_name,
+                        'selling_cents':effective['selling_cents'],'currency':'USD'}])
+            self.provider.location(access,location)
+        except (ServiceError,ValueError,TypeError,KeyError,AttributeError):
+            result=dict(base)  # Never publish a partial candidate or raw provider error.
+        live()
+        return result
+
     def binding_preview(self, actor, data):
         keys(data,('variation_id','location_id','identity','physical_ownership_version','physical_facts'))
         with self.database.transaction() as db:current_authority(db,actor,allowed_roles=('owner',))

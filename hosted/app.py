@@ -482,6 +482,14 @@ def create_app(config=None,*,database=None,square_transport=None):
     @authenticated
     def receiving_binding_preview():return jsonify(receiving.binding_preview(g.actor,body())),201
 
+    @app.get('/api/receiving/catalog-lookup')
+    @authenticated
+    def receiving_catalog_lookup():
+        if (set(request.args)!={'sku','location_id'}
+            or any(len(request.args.getlist(key))!=1 for key in ('sku','location_id'))):
+            raise ServiceError('Supply one exact Square SKU and one receiving location.')
+        return jsonify(receiving.catalog_lookup(g.actor,request.args['sku'],request.args['location_id']))
+
     @app.get('/api/receiving/catalog-bindings/previews/<uuid:preview_id>/review')
     @authenticated
     def receiving_binding_review(preview_id):

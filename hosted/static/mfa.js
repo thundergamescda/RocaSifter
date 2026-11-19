@@ -1,7 +1,12 @@
 'use strict';
 let mfaChallenge=null,mfaEnrollmentToken=null,mfaActionBusy=false;
+function mfaStatus(message,tone='error'){
+ const status=byId('mfaSecurityStatus');status.textContent=message;
+ if(message)status.dataset.tone=tone;else delete status.dataset.tone;
+}
 function hasMfaChallenge(){return mfaChallenge!==null}
 function clearMfaSecrets(){
+ mfaStatus('');
  mfaChallenge=null;mfaEnrollmentToken=null;
  for(const id of ['mfaSigninCode','mfaSetupKey','mfaConfirmCode','mfaEnrollPassword','mfaManagePassword','mfaManageCode'])byId(id).value='';
  byId('mfaRecoveryCodes').textContent='';byId('mfaRecoveryResult').hidden=true;byId('mfaEnrollment').hidden=true;
@@ -9,7 +14,7 @@ function clearMfaSecrets(){
 function updateMfaView(me){
  byId('mfaSignin').hidden=true;byId('accountSecurity').hidden=false;
  byId('mfaEnrollForm').hidden=!!me.mfa_enabled;byId('mfaManageForm').hidden=!me.mfa_enabled;
- byId('mfaSecuritySummary').textContent=me.mfa_enabled?'An authenticator protects this account. Keep unused recovery codes in a private place.':'You can add an authenticator to protect this account. Setup is optional in this development pilot.';
+ byId('mfaSecuritySummary').textContent=me.mfa_enabled?'An authenticator protects this account. Keep unused recovery codes in a private place.':'Set up an authenticator to protect this account. Some store actions require an enrolled authenticator and a recent verified sign-in.';
 }
 function beginMfaChallenge(result){
  clearMfaSecrets();mfaChallenge={token:result.challenge_token,deadline:Date.now()+result.expires_in*1000};
@@ -36,7 +41,7 @@ byId('cancelMfaSignin').onclick=async()=>{
  finally{endAuthTransition()}
 };
 function finishMfaAction(){mfaActionBusy=false;endAuthTransition()}
-function startMfaAction(){if(mfaActionBusy||!portalMe||!beginAuthTransition())return false;mfaActionBusy=true;byId('mfaSecurityStatus').textContent='';return true}
+function startMfaAction(){if(mfaActionBusy||!portalMe||!beginAuthTransition())return false;mfaActionBusy=true;mfaStatus('');return true}
 function showRecoveryCodes(result){
  mfaEnrollmentToken=null;byId('mfaSetupKey').value='';byId('mfaEnrollment').hidden=true;
  byId('mfaRecoveryCodes').textContent=result.recovery_codes.join('\n');byId('mfaRecoveryResult').hidden=false;
@@ -45,19 +50,19 @@ function showRecoveryCodes(result){
 byId('mfaEnrollForm').onsubmit=async event=>{
  event.preventDefault();if(!startMfaAction())return;const epoch=portalEpoch;
  try{const result=await api('/api/auth/mfa/enroll',{password:byId('mfaEnrollPassword').value});if(epoch!==portalEpoch)return;mfaEnrollmentToken=result.enrollment_token;byId('mfaSetupKey').value=result.secret;byId('mfaEnrollment').hidden=false;byId('mfaConfirmCode').focus()}
- catch(error){if(epoch===portalEpoch)byId('mfaSecurityStatus').textContent=error.message}
+ catch(error){if(epoch===portalEpoch)mfaStatus(error.message)}
  finally{byId('mfaEnrollPassword').value='';finishMfaAction()}
 };
 byId('mfaConfirmForm').onsubmit=async event=>{
  event.preventDefault();if(!mfaEnrollmentToken||!startMfaAction())return;const epoch=portalEpoch;
- try{const result=await api('/api/auth/mfa/confirm',{enrollment_token:mfaEnrollmentToken,code:byId('mfaConfirmCode').value});if(epoch!==portalEpoch)return;showRecoveryCodes(result);byId('mfaSecurityStatus').textContent='Authenticator enabled. Other sessions have been signed out.';notifyAuthTransition()}
- catch(error){if(epoch===portalEpoch)byId('mfaSecurityStatus').textContent=error.message}
+ try{const result=await api('/api/auth/mfa/confirm',{enrollment_token:mfaEnrollmentToken,code:byId('mfaConfirmCode').value});if(epoch!==portalEpoch)return;showRecoveryCodes(result);mfaStatus('Authenticator enabled. Other sessions have been signed out.','success');notifyAuthTransition()}
+ catch(error){if(epoch===portalEpoch)mfaStatus(error.message)}
  finally{byId('mfaConfirmCode').value='';finishMfaAction()}
 };
 byId('cancelMfaEnrollment').onclick=async()=>{
  if(!startMfaAction())return;
- try{await api('/api/auth/mfa/enroll/cancel',{});byId('mfaSecurityStatus').textContent='Pending authenticator setup cancelled.'}
- catch{byId('mfaSecurityStatus').textContent='Pending setup cancellation was not confirmed. It expires after ten minutes; starting setup again replaces it.'}
+ try{await api('/api/auth/mfa/enroll/cancel',{});mfaStatus('Pending authenticator setup cancelled.','info')}
+ catch{mfaStatus('Pending setup cancellation was not confirmed. It expires after ten minutes; starting setup again replaces it.')}
  finally{mfaEnrollmentToken=null;byId('mfaSetupKey').value='';byId('mfaConfirmCode').value='';byId('mfaEnrollment').hidden=true;finishMfaAction()}
 };
 byId('dismissMfaRecovery').onclick=()=>{byId('mfaRecoveryCodes').textContent='';byId('mfaRecoveryResult').hidden=true};
@@ -67,8 +72,8 @@ async function changeMfa(disable){
   const result=await api('/api/auth/mfa/'+(disable?'disable':'recovery-codes'),{password:byId('mfaManagePassword').value,code:byId('mfaManageCode').value});
   if(epoch!==portalEpoch)return;
   if(disable){notifyAuthTransition();sessionStorage.setItem('ss-signed-out','1');signedOutView();byId('loginStatus').textContent='Authenticator disabled. All sessions were revoked. Sign in again.'}
-  else{showRecoveryCodes(result);byId('mfaSecurityStatus').textContent='Previous recovery codes are no longer valid.'}
- }catch(error){if(epoch===portalEpoch)byId('mfaSecurityStatus').textContent=error.message}
+  else{showRecoveryCodes(result);mfaStatus('New recovery codes are ready. Previous recovery codes are no longer valid.','success')}
+ }catch(error){if(epoch===portalEpoch)mfaStatus(error.message)}
  finally{byId('mfaManagePassword').value=byId('mfaManageCode').value='';finishMfaAction()}
 }
 byId('mfaManageForm').onsubmit=event=>{event.preventDefault();changeMfa(false)};

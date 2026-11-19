@@ -3,9 +3,10 @@ from datetime import datetime, timezone, timedelta
 import hmac
 import json
 import time
+import unicodedata
 from .receiving_plan import (API_VERSION, READ_SCOPES, WRITE_SCOPES, ReceivingError,
                              canonical, fingerprint, validate_inventory_ack)
-from .security import ServiceError
+from .security import ServiceError, provider_id
 
 
 class ReceivingSquare:
@@ -106,6 +107,47 @@ class ReceivingSquare:
             if not isinstance(cursor,str) or not 1<=len(cursor)<=4096 or cursor in cursors:raise ReceivingError('SKU pagination is incomplete or inconsistent.')
             cursors.add(cursor);query=dict(query,cursor=cursor)
         raise ReceivingError('Complete SKU uniqueness proof exceeds the page bound.',code='SKU_COLLISION_REVIEW_REQUIRED')
+
+    def lookup_sku(self, access, sku):
+        """Private complete case-insensitive discovery; never mapping authority.
+
+        Square's set_query is case insensitive. The service separately compares
+        the untouched raw SKU before offering a candidate for physical review.
+        """
+        if (type(sku) is not str or not 1<=len(sku)<=100 or not sku.strip()
+            or any(unicodedata.category(char) in ('Cc','Cf','Cs') for char in sku)):
+            raise ServiceError('Enter an exact Square SKU of 1 to 100 supported characters.')
+        query={'object_types':['ITEM_VARIATION'],'include_deleted_objects':False,
+               'include_related_objects':False,'limit':20,
+               'query':{'set_query':{'attribute_name':'sku','attribute_values':[sku]}}}
+        found={};cursors=set();size=0;deadline=time.monotonic()+30
+        def incomplete():
+            raise ReceivingError('The complete Square SKU lookup is unavailable. Try the same lookup again.',
+                                 502,code='CATALOG_LOOKUP_INCOMPLETE')
+        for _ in range(10):
+            result=self._call(access,'/v2/catalog/search',query,deadline=deadline)
+            if type(result) is not dict or result.get('errors'):incomplete()
+            size+=len(canonical(result))
+            if size>2*1024*1024 or time.monotonic()>=deadline:incomplete()
+            rows=result.get('objects',[])
+            # Square's limit is advisory; enforce an independent page bound.
+            if type(rows) is not list or len(rows)>1000:incomplete()
+            for row in rows:
+                if (type(row) is not dict or row.get('type')!='ITEM_VARIATION'
+                    or 'is_deleted' in row and row['is_deleted'] is not False):incomplete()
+                data=row.get('item_variation_data');ident=row.get('id')
+                if (type(data) is not dict or type(data.get('sku')) is not str
+                    or data['sku'].casefold()!=sku.casefold()):incomplete()
+                try:provider_id(ident,'Variation ID');provider_id(data.get('item_id'),'Parent ID')
+                except ServiceError:incomplete()
+                if ident in found and found[ident]!=row:incomplete()
+                found[ident]=row
+                if len(found)>20:incomplete()
+            cursor=result.get('cursor')
+            if cursor is None or type(cursor) is str and cursor=='':return list(found.values())
+            if type(cursor) is not str or not 1<=len(cursor)<=4096 or cursor in cursors:incomplete()
+            cursors.add(cursor);query=dict(query,cursor=cursor)
+        incomplete()
 
     def location(self, access, location_id):
         result=self._call(access,'/v2/locations',method='GET');values=result.get('locations')
