@@ -595,13 +595,30 @@ class CaseContext:
                         });
                     };
                     state.restore=()=>{
-                        let restored=true;
+                        let restored=true,cleanup=[];
                         for(const row of rows){
                             try{
                                 if(row.value)row.node.style.setProperty('visibility',row.value,row.priority);
                                 else row.node.style.removeProperty('visibility');
-                                if(!row.hadStyle&&row.node.style.length===0)row.node.removeAttribute('style');
                             }catch{restored=false}
+                        }
+                        try{
+                            const current=selected();
+                            if(document!==originalDocument||location.href!==originalURL||
+                               current.length!==rows.length||current.some((node,index)=>node!==rows[index].node)||
+                               rows.some(row=>row.node.ownerDocument!==originalDocument||!row.node.isConnected))
+                                restored=false;
+                            cleanup=rows.filter(row=>!row.hadStyle);
+                            const eligible=cleanup.map(row=>{
+                                const count=row.node.style.length,attribute=row.node.getAttribute('style');
+                                return count===0&&(attribute===null||attribute.trim()==='');
+                            });
+                            if(eligible.some(value=>value!==true))restored=false;
+                        }catch{restored=false}
+                        if(restored){
+                            for(const row of cleanup){
+                                try{row.node.removeAttribute('style')}catch{restored=false}
+                            }
                         }
                         restoreWriteOK=restored;
                         return restored&&state.check(false);
