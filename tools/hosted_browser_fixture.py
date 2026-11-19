@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
 from hosted.app import create_app
 from hosted.database import Database
 from hosted.security import password_hash
+from hosted.mfa import secret_bytes, totp
 
 
 ROLES=('owner','manager','buyer','cashier')
@@ -342,6 +343,32 @@ class PortalFixture:
     def next_password(self,role):
         if role not in self.accounts:raise PortalFixtureError('fixture_role_invalid')
         return ' '+role+' e\u0301 🃏 new password '+secrets.token_hex(12)+' '
+
+    def current_mfa_code(self,role):
+        """Private actual TOTP for an already-enrolled owned fictional account.
+
+        HUI05 deliberately clears its displayed recovery material. Later cases
+        may prove the same real MFA through this read-only fixture helper; it
+        creates no session, changes no SQL/clock/counter and exposes no endpoint.
+        If this real time step was used, wait at most 35 seconds for the next real step.
+        """
+        if role not in self.accounts or not self._entered:
+            raise PortalFixtureError('fixture_role_invalid')
+        account=self.accounts[role]
+        if account.tenant_id!=self._tenant:raise PortalFixtureError('fixture_role_invalid')
+        deadline=time.monotonic()+35
+        while True:
+            with self.database.transaction() as db:
+                state=db.execute('''SELECT enabled,version,encrypted_seed,last_totp_step,clock_timestamp() AS checked_at
+                    FROM ss_staff_mfa WHERE tenant_id=%s AND staff_id=%s''',
+                    (account.tenant_id,account.staff_id)).fetchone()
+            if not state or not state['enabled']:raise PortalFixtureError('fixture_mfa_not_enrolled')
+            if int(state['checked_at'].timestamp()//30)>state['last_totp_step']:
+                seed=self.auth.mfa.cipher.decrypt(state['encrypted_seed'],account.tenant_id,account.staff_id,'active',state['version'])
+                try:return totp(secret_bytes(seed),state['checked_at'].timestamp())
+                finally:seed=''
+            if time.monotonic()>=deadline:raise PortalFixtureError('fixture_mfa_real_step_deadline')
+            time.sleep(0.2)
 
     def read_auth_state(self,role):
         if role not in self.accounts:raise PortalFixtureError('fixture_role_invalid')

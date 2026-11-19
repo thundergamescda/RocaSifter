@@ -25,7 +25,7 @@ from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
-EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 10))
+EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 11))
 REPORT_NAMES = ('pip-freeze.txt', 'pip-bootstrap-report.json',
                 'pip-install-report.json', 'os-packages.txt')
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -45,12 +45,17 @@ EXPECTED_HTTP_ERRORS = {
     'HUI01': {('POST', '/api/auth/password/change', 403)},
     'HUI06': {('POST', '/api/auth/password/change', 403)},
     'HUI07': {('POST', '/api/auth/login', 401)},
+    'HUI10': {('POST', '/api/auth/login', 401)},
 }
 SHARED_PRODUCTION_FILES = {
     'intake_manifest.py', 'catalog_physical_ownership.py', 'intake_physical_identity.py',
     'scanner_adapters.py', 'intake_label_contract.py',
 }
 HOSTED_AUTHORITY_FILES = {'hosted/credit_authority.py', 'hosted/staff_authority.py'}
+HOSTED_RECOVERY_FILES = {
+    'hosted/staff_password_recovery.py', 'hosted/static/staff_password_recovery.js',
+    'hosted/templates/staff_password_recovery.html',
+}
 BROWSER_TOOL_FILES = {
     'tools/hosted_browser_ci.py', 'tools/hosted_browser_fixture.py', 'tools/hosted_browser_cases.py',
     'tools/hosted_browser_constraints.txt', 'tools/hosted_browser_requirements.txt',
@@ -132,9 +137,10 @@ def source_snapshot():
 
 
 def verify_source_scope(snapshot):
-    required = SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES | {'requirements-hosted.txt'}
+    required = (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES |
+                HOSTED_RECOVERY_FILES | {'requirements-hosted.txt'})
     require(required.issubset(snapshot), 'COPIED_SOURCE_REQUIRED_INPUT_MISSING')
-    require(len(snapshot) == 81 and
+    require(len(snapshot) == 84 and
             all(path in required or path.startswith('hosted/') for path in snapshot),
             'COPIED_SOURCE_SCOPE_MISMATCH')
 
@@ -880,7 +886,7 @@ def main():
         tls['before'] is not None and tls['after'] is not None
     )
     save_json('browser-summary.json', {
-        'scope': 'Nine finite real-HTTPS hosted portal browser flows; not desktop/provider/production acceptance',
+        'scope': 'Ten finite real-HTTPS hosted portal browser flows; not desktop/provider/production acceptance',
         'started_utc': started, 'finished_utc': now(), 'source_sha': os.environ['SS_CI_SOURCE_SHA'],
         'passed': passed, 'exit_code': 0 if passed else 1,
         'expected_case_ids': list(EXPECTED_IDS), 'expected_count': len(EXPECTED_IDS),
@@ -891,7 +897,7 @@ def main():
         'error_codes': errors, 'error_types': error_types,
         'last_stage': stage, 'failure_stage': failure_stage,
         'source_scope_matches': (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES |
-                                {'requirements-hosted.txt'}).issubset(before) and len(before) == 81 and
+                                HOSTED_RECOVERY_FILES | {'requirements-hosted.txt'}).issubset(before) and len(before) == 84 and
             all(path.startswith('hosted/') or path in SHARED_PRODUCTION_FILES or
                 path in BROWSER_TOOL_FILES or path == 'requirements-hosted.txt' for path in before),
         'source_stable': stable, 'copied_source_count': len(before),

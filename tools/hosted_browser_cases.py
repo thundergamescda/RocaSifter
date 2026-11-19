@@ -1,4 +1,4 @@
-"""Nine source-authored real hosted-HTTPS browser flows; UNRUN until admitted.
+"""Ten source-authored real hosted-HTTPS browser flows; UNRUN until admitted.
 
 Root owns the browser, private trust store, service fixture and evidence capture.
 No auth/me fulfilment, cookie injection, traces, secret logging or desktop imports.
@@ -6,6 +6,7 @@ Only sanitized booleans/counts/labels leave these cases. Playwright and server
 exceptions are converted by the runner to fixed safe failure codes, never reprs.
 """
 import time
+from urllib.parse import urlsplit
 
 from hosted.mfa import secret_bytes, totp
 
@@ -459,6 +460,132 @@ def delayed_reply_preserves_newer_login_cookie(ctx):
     return {'submissions': 1, 'newer_identity_preserved': True, 'newer_cookie_preserved': True, 'ambient_logouts': 0}
 
 
+def owner_mediated_staff_password_recovery(ctx):
+    # The shared fixture owner was enrolled by HUI05. Every session and proof
+    # below goes through the real HTTPS UI/Auth/MFA boundary; none is seeded.
+    cashier_context = ctx.new_context(viewport=DESKTOP.copy())
+    cashier = cashier_context.new_page()
+    _sign_in(ctx, cashier, 'cashier', code='HUI10_CASHIER_INITIAL')
+    cashier.locator('#mfaEnrollPassword').fill(ctx.passwords['cashier'])
+    cashier.locator('#mfaEnrollForm button[type="submit"]').click()
+    _visible(ctx, cashier, '#mfaEnrollment', 'HUI10_CASHIER_REAL_ENROLLMENT')
+    seed = cashier.locator('#mfaSetupKey').input_value()
+    ctx.require(bool(seed), 'HUI10_CASHIER_SEED_ISSUED')
+    proof = totp(secret_bytes(seed), time.time())
+    cashier.locator('#mfaConfirmCode').fill(proof)
+    cashier.locator('#mfaConfirmForm button[type="submit"]').click()
+    seed = proof = ''
+    _visible(ctx, cashier, '#mfaRecoveryResult', 'HUI10_CASHIER_ENROLLED')
+    _enabled(ctx, cashier, '#passwordChangeSubmit', 'HUI10_CASHIER_TRANSITION_ENDED')
+    codes = cashier.locator('#mfaRecoveryCodes').inner_text().splitlines()
+    ctx.require(len(codes) == 10 and len(set(codes)) == 10, 'HUI10_CASHIER_REAL_CODES')
+    cashier.locator('#dismissMfaRecovery').click()
+    ctx.require(cashier.locator('#mfaRecoveryCodes').text_content() == '', 'HUI10_CASHIER_CODES_CLEARED')
+    cashier_before = ctx.fixture.read_auth_state('cashier')
+    ctx.require(cashier_before['staff_enabled'] is True and cashier_before['mfa_enabled'] is True and
+                cashier_before['sessions'] >= 1 and cashier_before['recovery_codes_remaining'] == 10,
+                'HUI10_ENROLLED_ENABLED_TARGET')
+
+    owner_context = ctx.new_context(viewport=DESKTOP.copy())
+    owner = owner_context.new_page()
+    owner_proof = ctx.fixture.current_mfa_code('owner')
+    owner_me = _sign_in(ctx, owner, 'owner', recovery_code=owner_proof, code='HUI10_OWNER_REAL_MFA')
+    owner_proof = ''
+    ctx.require(owner_me['mfa_enabled'] is True and owner_me['mfa_authenticated'] is True and
+                owner_me['mfa_fresh'] is True, 'HUI10_OWNER_FRESH_ENROLLED_MFA')
+    owner_cookie = _cookie(ctx, owner, 'HUI10_OWNER_BEFORE')
+    owner_before = ctx.fixture.read_auth_state('owner')
+    target = ctx.fixture.accounts['cashier']
+    row = owner.locator('#staffList .staff-row').filter(has_text=target.email)
+    ctx.require(row.count() == 1, 'HUI10_OWNER_SAME_STORE_TARGET_ROW')
+    issue_url = ctx.fixture.origin + '/api/staff/' + str(target.staff_id) + '/password-recovery'
+    owner.once('dialog', lambda dialog: dialog.accept())
+    with owner.expect_response(lambda response: response.url == issue_url and response.request.method == 'POST',
+                               timeout=15000) as issued:
+        row.get_by_role('button', name='Reset password', exact=True).click()
+    ctx.require(issued.value.status == 201 and 'set-cookie' not in issued.value.all_headers(),
+                'HUI10_REAL_OWNER_ISSUANCE_NO_COOKIE')
+    issued.value.finished()
+    _visible(ctx, owner, '#staffRecoveryResult', 'HUI10_PRIVATE_LINK_READY')
+    ctx.require(owner.locator('#staffRecoveryLink').get_attribute('readonly') is not None,
+                'HUI10_PRIVATE_LINK_READONLY')
+    private_link = owner.locator('#staffRecoveryLink').input_value()
+    parsed = urlsplit(private_link)
+    ctx.require(parsed.scheme + '://' + parsed.netloc == ctx.fixture.origin and
+                parsed.path == '/staff-password-recovery' and not parsed.query and
+                parsed.fragment.startswith('recovery=') and len(parsed.fragment) == 52,
+                'HUI10_PRIVATE_FRAGMENT_LINK')
+    owner.locator('#dismissStaffRecovery').click()
+    ctx.require(owner.locator('#staffRecoveryLink').input_value() == '' and
+                owner.locator('#staffRecoveryResult').is_hidden(), 'HUI10_OWNER_LINK_CLEARED')
+
+    recovery_context = ctx.new_context(viewport=DESKTOP.copy())
+    recovery = recovery_context.new_page()
+    old = ctx.passwords['cashier']; replacement = ctx.fixture.next_password('cashier')
+    try:
+        ctx.require(not _session_cookies(recovery_context, ctx.fixture.origin), 'HUI10_GENUINELY_SIGNED_OUT_CONTEXT')
+        response = recovery.goto(private_link, wait_until='load', timeout=15000)
+        private_link = ''; parsed = None
+        ctx.require(response is not None and response.status == 200 and
+                    'set-cookie' not in response.all_headers(), 'HUI10_REAL_RECOVERY_PAGE')
+        _visible(ctx, recovery, '#staffRecoveryForm', 'HUI10_SIGNED_OUT_RECOVERY_READY')
+        ctx.require(recovery.url == ctx.fixture.origin + '/staff-password-recovery', 'HUI10_FRAGMENT_REMOVED')
+        ctx.require(bool(recovery.locator('#recoveryCode').input_value()), 'HUI10_FRAGMENT_IN_PRIVATE_INPUT_ONLY')
+        recovery.locator('#recoveryEmail').fill(target.email)
+        recovery.locator('#recoveryPassword').fill(replacement)
+        recovery.locator('#recoveryConfirm').fill(replacement)
+        ctx.screenshot(recovery, 'hui10-private-recovery-form.png', mask_selectors=EXTRA_MASKS)
+        with recovery.expect_response(lambda response: response.url == ctx.fixture.origin + '/api/staff/password-recovery/redeem'
+                                      and response.request.method == 'POST', timeout=15000) as redeemed:
+            recovery.locator('#recoverySubmit').click()
+        result = _password_response(ctx, redeemed.value, 200, 'HUI10_REDEEM')
+        keys = {'password_changed', 'sign_in_required', 'all_sessions_revoked', 'mfa_preserved'}
+        ctx.require(type(result) is dict and set(result) == keys and all(result[key] is True for key in keys),
+                    'HUI10_EXACT_PASSWORD_ONLY_ACK')
+        _text(ctx, recovery, '#recoveryStatus', 'Password reset. Sign in normally', 'HUI10_REAL_RESET_CONFIRMED')
+        for field in ('recoveryCode', 'recoveryEmail', 'recoveryPassword', 'recoveryConfirm'):
+            ctx.require(recovery.locator('#' + field).input_value() == '', 'HUI10_' + field.upper() + '_CLEARED')
+        ctx.require(recovery.locator('#staffRecoveryForm').is_hidden() and
+                    not _session_cookies(recovery_context, ctx.fixture.origin) and _me(recovery)['status'] == 401,
+                    'HUI10_REDEEM_ISSUED_NO_SESSION')
+        after = ctx.fixture.read_auth_state('cashier')
+        ctx.require(after['sessions'] == 0 and _me(cashier)['status'] == 401, 'HUI10_TARGET_SESSIONS_REVOKED')
+        ctx.require(after['mfa_enabled'] is True and after['mfa_version'] == cashier_before['mfa_version'] and
+                    after['recovery_codes_remaining'] == cashier_before['recovery_codes_remaining'],
+                    'HUI10_EXISTING_FACTOR_AND_CODES_PRESERVED')
+        ctx.require(ctx.fixture.read_auth_state('owner') == owner_before and _me(owner)['role'] == 'owner' and
+                    _cookie(ctx, owner, 'HUI10_OWNER_AFTER_RESET') == owner_cookie,
+                    'HUI10_LIVE_OWNER_UNCHANGED')
+        ctx.screenshot(recovery, 'hui10-password-reset-confirmed.png', mask_selectors=EXTRA_MASKS)
+
+        _open_trusted(ctx, recovery, 'HUI10_RETURN_SIGNIN')
+        with recovery.expect_response(lambda response: response.url == ctx.fixture.origin + '/api/auth/login'
+                                      and response.request.method == 'POST', timeout=15000) as rejected:
+            _fill_login(ctx, recovery, 'cashier', old)
+        ctx.require(rejected.value.status == 401, 'HUI10_OLD_PASSWORD_HTTP_REJECTED')
+        rejected.value.finished()
+        _text(ctx, recovery, '#loginStatus', 'Store, email or password is incorrect.', 'HUI10_OLD_PASSWORD_REJECTED')
+        ctx.require(not _session_cookies(recovery_context, ctx.fixture.origin), 'HUI10_REJECTED_LOGIN_NO_SESSION')
+        value = _sign_in(ctx, recovery, 'cashier', password=replacement, recovery_code=codes.pop(0),
+                         code='HUI10_NEW_PASSWORD_EXISTING_MFA')
+        ctx.require(value['mfa_authenticated'] is True and value['mfa_fresh'] is True and
+                    ctx.fixture.read_auth_state('cashier')['recovery_codes_remaining'] == 9,
+                    'HUI10_NEW_PASSWORD_REQUIRES_PRESERVED_MFA')
+        ctx.passwords['cashier'] = replacement
+        ctx.require(_me(owner)['status'] == 200 and _cookie(ctx, owner, 'HUI10_OWNER_FINAL') == owner_cookie,
+                    'HUI10_OWNER_SESSION_HELD_THROUGH_STAFF_SIGNIN')
+        ctx.require(ctx.fixture.provider_attempts == 0, 'HUI10_NO_PROVIDER_REQUESTS')
+        _logout(ctx, recovery, 'HUI10_STAFF_LOGOUT')
+        _logout(ctx, owner, 'HUI10_OWNER_LOGOUT')
+    finally:
+        private_link = old = replacement = owner_cookie = owner_proof = ''
+        parsed = None
+        codes.clear()
+    return {'owner_actual_mfa': True, 'password_only_recovery': True, 'signed_out_redemption': True,
+            'no_redemption_session_or_cookie': True, 'target_sessions_revoked': True,
+            'existing_mfa_preserved': True, 'new_password_real_mfa_signin': True, 'owner_session_preserved': True}
+
+
 CASE_LABELS = {
     'HUI01': 'Trusted HTTPS, session-cookie protections and real CSRF rejection',
     'HUI02': 'Untrusted CA and hostname mismatch are rejected',
@@ -469,6 +596,7 @@ CASE_LABELS = {
     'HUI07': 'Password change revokes every owned session',
     'HUI08': 'Lost committed reply recovers through manual sign-in',
     'HUI09': 'Delayed reply preserves a newer real login cookie and identity',
+    'HUI10': 'Owner-mediated staff password recovery preserves MFA and owner session',
 }
 
 CASES = (
@@ -481,4 +609,5 @@ CASES = (
     ('HUI07', password_change_revokes_owned_sessions),
     ('HUI08', lost_committed_reply_manual_recovery),
     ('HUI09', delayed_reply_preserves_newer_login_cookie),
+    ('HUI10', owner_mediated_staff_password_recovery),
 )
