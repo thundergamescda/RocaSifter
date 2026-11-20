@@ -1,0 +1,6 @@
+# Complete fixed CPython3.12/Linuxamd64 wheel closure; no extras or dependency omissions.
+charset-normalizer==3.5.2 --hash=sha256:b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685
+pillow==13.0.0 --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca
+pypdfium2==5.15.2 --hash=sha256:dc31aea5b0fb9fefc9b537a65f4113980b2c40798445736a7e6565bc85161e37
+reportlab==5.1.0 --hash=sha256:59fdbaec5efe437095ad1d7292ec9a271c8ca2d3ec75e889c6e61400929b90df
+zxing-cpp==3.1.1 --hash=sha256:9cf67341949946307d086b302cefd453fb47bc6d6ddc7d088839e9481982757b

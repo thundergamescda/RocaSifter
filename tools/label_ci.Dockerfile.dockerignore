@@ -1,0 +1,18 @@
+# Deny data, credentials, private variants and every unselected source by default.
+**
+!hosted_labels.py
+!station_receiving_label_plan.py
+!station_receiving_label_render.py
+!station_receiving_label_worker.py
+!test_receiving_label_plan.py
+!test_receiving_label_render.py
+!test_receiving_label_worker.py
+!tools/
+!tools/label_ci_evidence.py
+!tools/label_ci_admission.json
+!tools/label_ci_provenance.py
+!tools/test_label_ci_provenance.py
+!tools/label_ci_wheel_urls.txt
+!tools/label_ci_requirements.txt
+!tools/label_ci.Dockerfile
+!tools/label_ci.Dockerfile.dockerignore
