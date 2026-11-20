@@ -55,6 +55,6 @@
   .stock-page .intro{margin:32px 0 24px}
   .stock-page .stock-workbench{padding:22px}
   .stock-page .stock-report-fields{grid-template-columns:minmax(0,1fr)}
-  .stock-page .stock-quantity input{font-size:18px}
+  .stock-page .stock-quantity input{font-size:16px}
   .stock-page .stock-empty h2{font-size:21px}
 }
