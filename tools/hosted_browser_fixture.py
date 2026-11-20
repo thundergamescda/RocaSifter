@@ -4,9 +4,13 @@ The caller owns the sandboxed nonroot browser and must close it before exiting
 this context. Credentials remain private fixture memory. Cases use the real UI,
 Auth/MFA and production cookie/CSRF boundary; no session/cookie is seeded here.
 Private control methods are Python-only, never HTTP routes. Gate PASS on zero
-provider_attempts, successful cases and cleanup_complete. Source authored UNRUN.
+denied provider_attempts, closed owned fictional read responses, successful cases
+and cleanup_complete. Only SKU cases construct the separate production-protocol
+child; the original Sandbox application and default deny remain. Source UNRUN.
 """
 from dataclasses import dataclass, field
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -38,6 +42,8 @@ from hosted.app import create_app
 from hosted.database import Database
 from hosted.security import password_hash
 from hosted.mfa import secret_bytes, totp
+from hosted.square import Square
+from hosted.receiving_plan import READ_SCOPES
 
 
 ROLES=('owner','manager','buyer','cashier')
@@ -173,6 +179,7 @@ class PortalFixture:
         self._initial_hashes={}; self._tenant=None; self._application=None
         self._lock=threading.Lock(); self._active=threading.Condition(); self._active_requests=0
         self._gate=None; self._gates=[]; self._provider_attempts=0
+        self._sku_fixture=None;self._sku_fixture_attempted=False
 
     @property
     def provider_attempts(self):
@@ -181,6 +188,23 @@ class PortalFixture:
     def _deny_provider(self,*unused,**ignored):
         with self._lock:self._provider_attempts+=1
         raise PortalFixtureError('fixture_provider_request_denied')
+
+    def square_sku_fixture(self):
+        """Python-only child; the original Sandbox app/config remains intact."""
+        if not self._entered or self._application is None or self._private is None:
+            raise PortalFixtureError('fixture_sku_parent_not_ready')
+        if self._sku_fixture is None:
+            if self._sku_fixture_attempted:raise PortalFixtureError('fixture_sku_setup_not_retried')
+            self._sku_fixture_attempted=True;self._sku_fixture=_SquareSkuFixture(self)
+        return self._sku_fixture
+
+    def sku_read_summary(self):
+        if self._sku_fixture is None:return {'started':False}
+        child=self._sku_fixture;summary=child.transport.summary()
+        return dict(summary,started=True,parent_sandbox_unchanged=self._application.config['SQUARE_ENVIRONMENT']=='sandbox',
+            child_production_configured=child._application.config['SQUARE_ENVIRONMENT']=='production',
+            distinct_owned_origin=child.origin!=self.origin,distinct_owned_tenant=child._tenant!=self._tenant,
+            actual_square_class=type(child._application.extensions['ss_square']) is Square)
 
     def _contract(self):
         if sys.platform!='linux' or ROOT!=Path('/workspace') or os.getuid()!=10001 or os.getgid()!=10001:
@@ -523,3 +547,226 @@ class PortalFixture:
             try:self._guard.stop(); self._guard=None
             except Exception:self._cleanup_error('fixture_transport_guard_cleanup_failed')
         self.cleanup_complete=not self.cleanup_errors and not self._schema_touched and self._guard is None
+
+
+class _SquareSkuResponse:
+    def __init__(self,transport,value):
+        self._transport=transport;self._closed=False
+        self._body=json.dumps(value,ensure_ascii=False,separators=(',',':')).encode('utf-8')
+        if len(self._body)>65536:raise PortalFixtureError('fixture_sku_response_bound')
+        self.status_code=200;self.headers={'Content-Length':str(len(self._body))}
+    def iter_content(self,chunk_size=8192):
+        for offset in range(0,len(self._body),chunk_size):yield self._body[offset:offset+chunk_size]
+    def close(self):
+        with self._transport._lock:
+            if not self._closed:self._transport.closed+=1;self._closed=True
+
+
+class _SquareSkuReadTransport:
+    """No network implementation. Only four fixed fictional read endpoints."""
+    trust_env=False
+    MODES=frozenset(('match','empty','case_variant','ambiguous','incomplete','unavailable'))
+    def __init__(self,fixture,token,merchant,expiry,application):
+        self.fixture=fixture;self._token=token;self._merchant=merchant
+        self._expiry=expiry;self._application=application;self._lock=threading.Lock()
+        self.mode='match';self.created=self.closed=self.writes=0
+        self.counts={key:0 for key in ('token_status','locations','search','catalog')}
+    def _deny(self,method='OTHER',url=''):
+        with self._lock:
+            if method not in ('GET','POST') or method=='POST' and url not in (
+                'https://connect.squareup.com/oauth2/token/status','https://connect.squareup.com/v2/catalog/search',
+                'https://connect.squareup.com/v2/catalog/batch-retrieve'):self.writes+=1
+        return self.fixture.parent._deny_provider()
+    def request(self,*unused,**ignored):return self._deny()
+    def get(self,url,**options):return self._read('GET',url,options)
+    def post(self,url,**options):return self._read('POST',url,options)
+    def put(self,url,**options):return self._deny('PUT',url)
+    def patch(self,url,**options):return self._deny('PATCH',url)
+    def delete(self,url,**options):return self._deny('DELETE',url)
+    def head(self,url,**options):return self._deny('HEAD',url)
+    def options(self,url,**options):return self._deny('OPTIONS',url)
+    def set_mode(self,mode):
+        with self._lock:
+            if mode not in self.MODES or self.created!=self.closed:raise PortalFixtureError('fixture_sku_mode_boundary')
+            self.mode=mode
+    def _objects(self,mode):
+        f=self.fixture
+        variation={'id':f.variation_id,'type':'ITEM_VARIATION','version':17,'is_deleted':False,'present_at_all_locations':True,
+            'item_variation_data':{'item_id':f.parent_id,'name':f.literal_variation,'sku':f.sku,
+                'pricing_type':'FIXED_PRICING','price_money':{'amount':1000,'currency':'USD'},
+                'track_inventory':mode!='unavailable','stockable':True,'sellable':True}}
+        parent={'id':f.parent_id,'type':'ITEM','version':17,'is_deleted':False,'present_at_all_locations':True,
+            'item_data':{'name':f.literal_name,'product_type':'REGULAR','tax_ids':[], 'variations':[deepcopy(variation)]}}
+        return variation,parent
+    def _read(self,method,url,options):
+        allowed={('POST','https://connect.squareup.com/oauth2/token/status'):'token_status',
+            ('GET','https://connect.squareup.com/v2/locations'):'locations',
+            ('POST','https://connect.squareup.com/v2/catalog/search'):'search',
+            ('POST','https://connect.squareup.com/v2/catalog/batch-retrieve'):'catalog'}
+        kind=allowed.get((method,url));headers=options.get('headers')
+        if (kind is None or set(options)-{'headers','timeout','allow_redirects','stream','data'}
+            or type(headers) is not dict or set(headers)!={'Authorization','Square-Version','Content-Type'}
+            or headers.get('Authorization')!='Bearer '+self._token or headers.get('Square-Version')!=Square.API_VERSION
+            or headers.get('Content-Type')!='application/json' or options.get('allow_redirects') is not False
+            or options.get('stream') is not True or type(options.get('timeout')) not in (int,float)
+            or not 0<options['timeout']<=20):return self._deny(method,url)
+        with self._lock:
+            mode=self.mode;self.counts[kind]+=1
+            if sum(self.counts.values())>500:raise PortalFixtureError('fixture_sku_request_bound')
+        variation,parent=self._objects(mode)
+        if kind=='token_status':
+            if options.get('data') is not None:return self._deny(method,url)
+            value={'client_id':self._application,'merchant_id':self._merchant,
+                   'scopes':list(READ_SCOPES),'expires_at':self._expiry.isoformat()}
+        elif kind=='locations':
+            if options.get('data') is not None:return self._deny(method,url)
+            value={'locations':[{'id':ident,'name':'Fictional counter '+label,'status':'ACTIVE','currency':'USD'}
+                for ident,label in ((self.fixture.location_a,'A'),(self.fixture.location_b,'B'))]}
+        else:
+            raw=options.get('data')
+            if type(raw) is not bytes or len(raw)>65536:return self._deny(method,url)
+            try:body=json.loads(raw)
+            except (ValueError,UnicodeError):return self._deny(method,url)
+            if type(body) is not dict:return self._deny(method,url)
+            if kind=='catalog':
+                ids=body.get('object_ids')
+                if (set(body)!={'object_ids','include_related_objects'} or body.get('include_related_objects') is not True
+                    or type(ids) is not list or not 1<=len(ids)<=2 or any(type(ident) is not str for ident in ids) or len(set(ids))!=len(ids)
+                    or any(ident not in (self.fixture.variation_id,self.fixture.parent_id) for ident in ids)):
+                    return self._deny(method,url)
+                objects={variation['id']:variation,parent['id']:parent}
+                value={'objects':[deepcopy(objects[ident]) for ident in ids],
+                       'related_objects':[deepcopy(parent)] if self.fixture.variation_id in ids and self.fixture.parent_id not in ids else []}
+            else:
+                cursor=body.get('cursor')
+                if (set(body)-{'object_types','include_deleted_objects','include_related_objects','limit','query','cursor'}
+                    or body.get('object_types')!=['ITEM_VARIATION'] or body.get('include_deleted_objects') is not False
+                    or body.get('include_related_objects',False) is not False or type(body.get('limit')) is not int
+                    or body['limit'] not in (20,1000) or body.get('query')!={'set_query':{'attribute_name':'sku','attribute_values':[self.fixture.sku]}}
+                    or cursor not in (None,'sku-next')):return self._deny(method,url)
+                if cursor is not None:
+                    if mode!='incomplete':return self._deny(method,url)
+                    value={'objects':[],'cursor':False}
+                elif mode=='empty':value={'objects':[]}
+                elif mode=='case_variant':
+                    variation['item_variation_data']['sku']=self.fixture.sku.swapcase();value={'objects':[variation]}
+                elif mode=='ambiguous':value={'objects':[variation,dict(deepcopy(variation),id=self.fixture.variation_id+'-other')]}
+                elif mode=='incomplete':value={'objects':[variation],'cursor':'sku-next'}
+                else:value={'objects':[variation]}
+        response=_SquareSkuResponse(self,value)
+        with self._lock:self.created+=1
+        return response
+    def summary(self):
+        with self._lock:return dict(self.counts,responses_created=self.created,responses_closed=self.closed,write_attempts=self.writes)
+
+
+class _SquareSkuFixture:
+    """Separate actual production-configured app/tenant/origin in the owned schema.
+
+    Only provider protocol replies are fictional. Parent owns all shared SQL/TLS
+    resources and the additional server/thread/gates through final cleanup.
+    """
+    _seed_accounts=PortalFixture._seed_accounts
+    current_mfa_code=PortalFixture.current_mfa_code
+    read_auth_state=PortalFixture.read_auth_state
+    next_password=PortalFixture.next_password
+    def __init__(self,parent):
+        self.parent=parent;self._nonce=uuid.uuid4().hex;self._entered=True
+        self.database=parent.database;self.accounts={};self._initial_hashes={}
+        self._lock=threading.Lock();self._gate=None
+        self.sku=' 000Ab^>~7 ';self.variation_id='sku-variation-'+self._nonce;self.parent_id='sku-parent-'+self._nonce
+        self.location_a='sku-location-a-'+self._nonce;self.location_b='sku-location-b-'+self._nonce
+        self.literal_name='<img src=x onerror=fixtureShouldNeverExecute()> & owned card'
+        self.literal_variation='<script>fixtureShouldNeverExecute()</script> $10.00'
+        with self.database.transaction() as db:parent._database_probe(db,scoped=True)
+        self._seed_accounts()
+        server=_TLSServer(self._dispatch,parent._tls_context(parent._private/'leaf.crt',parent._private/'leaf.key'))
+        parent._servers.append(server)
+        self.origin='https://127.0.0.1:'+str(server.server_port)
+        self.untrusted_origin=parent.untrusted_origin;self.hostname_mismatch_origin=parent.hostname_mismatch_origin
+        config=dict(parent._application.config)
+        config.update(PUBLIC_BASE_URL=self.origin,APP_ENCRYPTION_KEYS=Fernet.generate_key().decode(),SQUARE_ENVIRONMENT='production',
+            SQUARE_APPLICATION_ID='fictional-sku-app-'+self._nonce,SQUARE_APPLICATION_SECRET='fictional-sku-secret-'+self._nonce,
+            RECEIVING_WRITES_ENABLED=False,CLEANUP_OBSERVER_ENABLED=False)
+        token='fictional-sku-token-'+secrets.token_hex(24);merchant='fictional-sku-merchant-'+self._nonce
+        expiry=datetime.now(timezone.utc)+timedelta(days=30)
+        self.transport=_SquareSkuReadTransport(self,token,merchant,expiry,config['SQUARE_APPLICATION_ID'])
+        self._application=create_app(config,database=self.database,square_transport=self.transport)
+        self.auth=self._application.extensions['ss_auth'];square=self._application.extensions['ss_square']
+        sealed=square.cipher.encrypt(json.dumps({'access_token':token,'refresh_token':'fictional-unused-refresh-'+self._nonce,
+            'merchant_id':merchant}).encode()).decode()
+        with self.database.transaction() as db:
+            parent._database_probe(db,scoped=True)
+            db.execute('''INSERT INTO ss_square_connections(tenant_id,merchant_id,environment,encrypted_tokens,expires_at,
+                requested_profile,authorization_generation,oauth_application_id,token_obtained_at)
+                VALUES (%s,%s,'production',%s,%s,'standard',%s,%s,clock_timestamp())''',
+                (self._tenant,merchant,sealed,expiry,uuid.uuid4(),config['SQUARE_APPLICATION_ID']))
+        token=sealed=''
+        thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.05},daemon=True)
+        parent._threads.append(thread);thread.start()
+    @property
+    def provider_attempts(self):return self.parent.provider_attempts
+    def protected_snapshot(self):
+        names=('ss_square_connections','ss_receiving_bindings','ss_receiving_binding_previews','ss_receiving_price_templates',
+            'ss_receiving_operations','ss_receiving_steps','ss_intake_claims','ss_trade_receipts','ss_credit_entries')
+        with self.database.transaction() as db:
+            self.parent._database_probe(db,scoped=True)
+            value={name:db.execute('SELECT to_jsonb(t) AS body FROM '+name+' t WHERE tenant_id=%s ORDER BY to_jsonb(t)::text',
+                (self._tenant,)).fetchall() for name in names}
+        return hashlib.sha256(json.dumps(value,sort_keys=True,default=str).encode()).hexdigest()
+    def counts(self):
+        with self.database.transaction() as db:
+            return {name:db.execute('SELECT count(*) AS n FROM '+name+' WHERE tenant_id=%s',(self._tenant,)).fetchone()['n']
+                for name in ('ss_receiving_bindings','ss_receiving_operations','ss_receiving_steps','ss_credit_entries')}
+    def lookup_reply_gate(self):
+        gate=ReplyGate(self)
+        with self._lock:
+            if self._gate is not None:raise PortalFixtureError('fixture_sku_gate_already_armed')
+            self._gate=gate
+        with self.parent._lock:self.parent._gates.append(gate)
+        return gate
+    def _disarm(self,gate):
+        with self._lock:
+            if self._gate is gate:self._gate=None
+    def _dispatch(self,environ,start_response):
+        with self.parent._active:self.parent._active_requests+=1
+        gate=None
+        if environ.get('REQUEST_METHOD')=='GET' and environ.get('PATH_INFO')=='/api/receiving/catalog-lookup':
+            with self._lock:gate=self._gate;self._gate=None
+        if gate is None:
+            try:reply=self._application(environ,start_response)
+            except BaseException:
+                with self.parent._active:self.parent._active_requests-=1;self.parent._active.notify_all()
+                raise
+            return self.parent._tracked(reply)
+        reply=None;captured={};chunks=[];size=0
+        try:
+            def append(chunk):
+                nonlocal size
+                if type(chunk) is not bytes:raise PortalFixtureError('fixture_sku_reply_type')
+                size+=len(chunk)
+                if size>16384:raise PortalFixtureError('fixture_sku_reply_bound')
+                chunks.append(chunk)
+            def capture(status,headers,exc_info=None):captured.update(status=status,headers=list(headers));return append
+            reply=self._application(environ,capture)
+            for chunk in reply:append(chunk)
+            if hasattr(reply,'close'):reply.close()
+            reply=None;raw=b''.join(chunks);status=int(captured['status'].split(' ',1)[0])
+            try:
+                value=json.loads(raw)
+                if (status!=200 or type(value) is not dict or value.get('lookup_version')!=1
+                    or value.get('state')!='match' or value.get('lookup_complete') is not True
+                    or any(name.lower()=='set-cookie' for name,_ in captured['headers'])):
+                    raise PortalFixtureError('fixture_sku_real_reply_not_successful')
+            except (ValueError,TypeError,PortalFixtureError):
+                gate._ready({},'fixture_sku_real_reply_not_successful')
+                start_response(captured['status'],captured['headers']);return [raw]
+            gate._ready({'status':status,'has_set_cookie':False,'body_bytes':size})
+            gate._await()  # Real service finished; no application SQL remains open.
+            start_response(captured['status'],captured['headers']);return [raw]
+        except BaseException as error:
+            if not gate._committed.is_set():gate._ready({},error.code if isinstance(error,PortalFixtureError) else 'fixture_sku_real_reply_failed')
+            raise
+        finally:
+            if reply is not None and hasattr(reply,'close'):reply.close()
+            with self.parent._active:self.parent._active_requests-=1;self.parent._active.notify_all()

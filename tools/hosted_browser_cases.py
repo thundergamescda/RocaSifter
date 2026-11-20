@@ -1,4 +1,4 @@
-"""Ten source-authored real hosted-HTTPS browser flows; UNRUN until admitted.
+"""Ten preserved portal flows plus five owned fictional-Square HTTPS flows.
 
 Root owns the browser, private trust store, service fixture and evidence capture.
 No auth/me fulfilment, cookie injection, traces, secret logging or desktop imports.
@@ -238,6 +238,7 @@ def four_roles_default_off_and_logout(ctx):
             _text(ctx, page, '#cleanupObserverGate', 'Global worker gate: off', code + '_GLOBAL_OFF')
             _text(ctx, page, '#cleanupObserverGate', 'Store consent: off', code + '_OWNER_OFF')
             ctx.require(page.locator('#cleanupObserverRequest').is_disabled(), code + '_NO_COLLECTION')
+            page.locator('#cleanupObserverDetails > summary').click()
             ctx.require(page.locator('#cleanupObserverConfig').is_visible() == (role == 'owner'), code + '_CONFIG_ROLE')
             if role == 'owner':
                 ctx.require(not page.locator('#cleanupObserverEnabled').is_checked(), code + '_NO_CONSENT')
@@ -254,6 +255,40 @@ def desktop_mobile_keyboard_layout(ctx):
         context = ctx.new_context(viewport=viewport.copy())
         page = context.new_page()
         _sign_in(ctx, page, 'owner', code='HUI04_' + label.upper())
+        # Usability acceptance: native keyboard section navigation.
+        ctx.require(page.evaluate('''()=>{
+            const nav=document.querySelector('.workspace-links'),links=nav?Array.from(nav.querySelectorAll('a')):[];
+            return !!nav&&links.length===2&&nav.scrollWidth<=nav.clientWidth&&links.every(link=>{
+                const rect=link.getBoundingClientRect();
+                return rect.width>0&&rect.height>0&&rect.left>=0&&rect.right<=window.innerWidth;
+            });
+        }'''), 'HUI04_SECTION_LINKS_FIT_VIEWPORT')
+        square_link = page.locator('.workspace-links a[href="#squareConnection"]')
+        for target, code in (('squareConnection', 'HUI04_SQUARE'), ('accountSecurity', 'HUI04_SECURITY')):
+            square_link.focus()
+            page.keyboard.press('Tab')
+            if target == 'squareConnection':
+                page.keyboard.press('Shift+Tab')
+            ctx.require(page.evaluate('''target=>{
+                const link=document.querySelector('.workspace-links a[href="#'+target+'"]');
+                if(!link||document.activeElement!==link)return false;
+                const style=getComputedStyle(link);
+                return style.outlineStyle!=='none'&&parseFloat(style.outlineWidth)>0;
+            }''', target), code + '_NATIVE_LINK_KEYBOARD_FOCUS')
+            page.keyboard.press('Enter')
+            try:
+                page.wait_for_function('''target=>{
+                    const node=document.getElementById(target);
+                    if(!node||location.hash!=='#'+target||document.activeElement!==node)return false;
+                    const rect=node.getBoundingClientRect(),style=getComputedStyle(node);
+                    return rect.width>0&&rect.height>0&&rect.left>=0&&rect.right<=window.innerWidth&&
+                        rect.top>=0&&rect.top<window.innerHeight&&rect.bottom>0&&
+                        style.outlineStyle!=='none'&&parseFloat(style.outlineWidth)>0;
+                }''', arg=target, timeout=10000)
+            except Exception:
+                ctx.require(False, code + '_NATIVE_VISIBLE_FOCUS_DESTINATION')
+            _visible(ctx, page, '#' + target, code + '_DESTINATION_VISIBLE')
+        # End usability keyboard navigation.
         form = page.locator('#passwordChangeForm')
         ctx.require(form.get_by_label('Current password', exact=True).count() == 1, 'HUI04_CURRENT_LABEL')
         ctx.require(form.get_by_label('New password · 15–128 characters', exact=True).count() == 1, 'HUI04_NEW_LABEL')
@@ -300,10 +335,56 @@ def owner_mfa_enrollment_and_real_challenge(ctx):
     state = ctx.fixture.read_auth_state('owner')
     ctx.require(state['mfa_enabled'] is True and state['mfa_version'] > 0, 'HUI05_MFA_PERSISTED')
     ctx.require(state['recovery_codes_remaining'] == 10, 'HUI05_RECOVERY_PERSISTED')
+    # Usability acceptance: committed MFA feedback is visible and readable.
+    _visible(ctx, page, '#mfaSecurityStatus', 'HUI05_COMMITTED_SUCCESS_VISIBLE')
+    _text(ctx, page, '#mfaSecurityStatus', 'Authenticator enabled.', 'HUI05_COMMITTED_SUCCESS_TEXT')
+    ctx.require(page.locator('#mfaSecurityStatus').get_attribute('data-tone') == 'success',
+                'HUI05_COMMITTED_SUCCESS_TONE')
+    ctx.require(page.evaluate(r'''()=>{
+        const node=document.getElementById('mfaSecurityStatus'),panel=document.getElementById('accountSecurity');
+        if(!node||!panel)return false;
+        const style=getComputedStyle(node);
+        const rgb=value=>{
+            if(!/^rgba?\(/.test(value))return null;
+            const parts=value.match(/\d+(?:\.\d+)?/g).map(Number);
+            return (parts.length===3||(parts.length===4&&parts[3]===1))&&
+                parts.slice(0,3).every(part=>part>=0&&part<=255)?parts.slice(0,3):null;
+        };
+        const foreground=rgb(style.color),background=rgb(getComputedStyle(panel).backgroundColor);
+        if(!foreground||!background)return false;
+        const luminance=parts=>{
+            const linear=parts.map(part=>{const value=part/255;return value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4});
+            return 0.2126*linear[0]+0.7152*linear[1]+0.0722*linear[2];
+        };
+        const first=luminance(foreground),second=luminance(background);
+        return node.textContent.trim().length>0&&parseFloat(style.fontSize)>=12&&
+            (Math.max(first,second)+0.05)/(Math.min(first,second)+0.05)>=4.5;
+    }'''), 'HUI05_COMMITTED_SUCCESS_READABLE_CONTRAST')
+    # End usability committed feedback.
     _screen(ctx, page, 'hui05-enrolled')
     page.locator('#dismissMfaRecovery').click()
     ctx.require(page.locator('#mfaRecoveryCodes').text_content() == '', 'HUI05_RECOVERY_DOM_CLEARED')
     _logout(ctx, page, 'HUI05_LOGOUT')
+    # Usability acceptance: real same-page account switch clears MFA feedback.
+    ctx.require(page.locator('#mfaSecurityStatus').text_content() == '' and
+                page.locator('#mfaSecurityStatus').get_attribute('data-tone') is None,
+                'HUI05_LOGOUT_CLEARS_SUCCESS_TEXT_AND_TONE')
+    buyer = _sign_in(ctx, page, 'buyer', code='HUI05_SAME_PAGE_BUYER')
+    ctx.require(buyer['role'] == 'buyer' and buyer['mfa_enabled'] is False and
+                buyer['mfa_authenticated'] is False, 'HUI05_BUYER_ACTUAL_UNENROLLED_ACCOUNT')
+    ctx.require(page.locator('#mfaSecurityStatus').text_content() == '' and
+                page.locator('#mfaSecurityStatus').get_attribute('data-tone') is None,
+                'HUI05_BUYER_NO_PREVIOUS_ACCOUNT_FEEDBACK')
+    for field in ('mfaSigninCode', 'mfaSetupKey', 'mfaConfirmCode', 'mfaEnrollPassword',
+                  'mfaManagePassword', 'mfaManageCode'):
+        ctx.require(page.locator('#' + field).input_value() == '', 'HUI05_BUYER_' + field.upper() + '_EMPTY')
+    ctx.require(page.locator('#mfaRecoveryCodes').text_content() == '' and
+                page.locator('#mfaRecoveryResult').is_hidden() and page.locator('#mfaEnrollment').is_hidden(),
+                'HUI05_BUYER_NO_PREVIOUS_ACCOUNT_RECOVERY_MATERIAL')
+    ctx.require(page.locator('#mfaEnrollForm').is_visible() and page.locator('#mfaManageForm').is_hidden() and
+                page.locator('#staffPanel').is_hidden(), 'HUI05_BUYER_OWN_UNENROLLED_CONTROLS')
+    _logout(ctx, page, 'HUI05_BUYER_LOGOUT')
+    # End usability same-page account switch.
     value = _sign_in(ctx, page, 'owner', recovery_code=codes.pop(0), code='HUI05_SECOND_FACTOR')
     codes.clear()
     ctx.require(value['mfa_authenticated'] is True and value['mfa_fresh'] is True, 'HUI05_REAL_PROOF')
@@ -586,6 +667,230 @@ def owner_mediated_staff_password_recovery(ctx):
             'existing_mfa_preserved': True, 'new_password_real_mfa_signin': True, 'owner_session_preserved': True}
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _sku_case(parent):
+    """A case-local context permits only the owned production child origin."""
+    fixture=parent.fixture.square_sku_fixture()
+    ctx=type(parent)(fixture,parent.browser);ctx.case_id=parent.case_id
+    parent.require(parent.fixture._application.config['SQUARE_ENVIRONMENT']=='sandbox' and
+        fixture._application.config['SQUARE_ENVIRONMENT']=='production','SKU_EXPLICIT_SEPARATE_APP_ENVIRONMENTS')
+    try:yield ctx
+    finally:
+        ctx.close_contexts()
+        parent.cleanup_complete=parent.cleanup_complete and ctx.cleanup_complete
+        parent.ledger_overflow=parent.ledger_overflow or ctx.ledger_overflow
+        for name in ('network','js_errors','console_events'):
+            for row in getattr(ctx,name):parent._append(getattr(parent,name),row)
+        parent.require(not ctx.screenshots and ctx.screenshot_bytes==0,'SKU_NO_ADDITIONAL_CAPTURES')
+        summary=fixture.transport.summary()
+        parent.require(summary['write_attempts']==0 and fixture.provider_attempts==0,'SKU_ZERO_PROVIDER_WRITE_OR_DENIED_ATTEMPTS')
+        parent.require(summary['responses_created']==summary['responses_closed'],'SKU_ALL_FICTIONAL_READ_RESPONSES_CLOSED')
+
+
+def _sku_owner(ctx):
+    context=ctx.new_context(viewport=DESKTOP.copy());page=context.new_page()
+    state=ctx.fixture.read_auth_state('owner')
+    proof=ctx.fixture.current_mfa_code('owner') if state['mfa_enabled'] else None
+    try:_sign_in(ctx,page,'owner',recovery_code=proof,code=ctx.case_id+'_OWNER')
+    finally:proof=''
+    if not state['mfa_enabled']:
+        seed=code=''
+        try:
+            page.locator('#mfaEnrollPassword').fill(ctx.passwords['owner'])
+            page.locator('#mfaEnrollForm button[type=submit]').click()
+            _visible(ctx,page,'#mfaEnrollment',ctx.case_id+'_REAL_ENROLLMENT')
+            seed=page.locator('#mfaSetupKey').input_value();code=totp(secret_bytes(seed),time.time())
+            page.locator('#mfaConfirmCode').fill(code);page.locator('#mfaConfirmForm button[type=submit]').click()
+            _visible(ctx,page,'#mfaRecoveryResult',ctx.case_id+'_REAL_ENROLLED')
+            _enabled(ctx,page,'#passwordChangeSubmit',ctx.case_id+'_ENROLL_TRANSITION_COMPLETE')
+            page.locator('#dismissMfaRecovery').click()
+        finally:seed=code=''
+        _logout(ctx,page,ctx.case_id+'_ENROLL_LOGOUT')
+        proof=ctx.fixture.current_mfa_code('owner')
+        try:_sign_in(ctx,page,'owner',recovery_code=proof,code=ctx.case_id+'_REAL_MFA')
+        finally:proof=''
+    value=_me(page)
+    ctx.require(value['role']=='owner' and value['mfa_enabled'] and value['mfa_authenticated'] and value['mfa_fresh'],
+                ctx.case_id+'_ACTUAL_FRESH_OWNER_MFA')
+    return context,page
+
+
+def _sku_open(ctx,page,location=None):
+    response=page.goto(ctx.fixture.origin+'/receiving/catalog',wait_until='load',timeout=15000)
+    ctx.require(response is not None and response.status==200,ctx.case_id+'_ACTUAL_TRUSTED_SKU_PAGE')
+    ctx.require(response.all_headers().get('strict-transport-security')=='max-age=31536000',ctx.case_id+'_SKU_HSTS')
+    _visible(ctx,page,'#receivingAdminWorkspace',ctx.case_id+'_OWNER_WORKSPACE')
+    page.locator('#receivingAdminForm [name=location_id]').select_option(location or ctx.fixture.location_a)
+    _enabled(ctx,page,'#receivingAdminLookupButton',ctx.case_id+'_LOOKUP_READY')
+
+
+def _sku_lookup(ctx,page,expected='match'):
+    page.locator('#receivingAdminLookupSku').fill(ctx.fixture.sku)
+    with page.expect_response(lambda response:response.url.startswith(ctx.fixture.origin+'/api/receiving/catalog-lookup?')
+        and response.request.method=='GET',timeout=15000) as reply:
+        page.locator('#receivingAdminLookupSku').press('Enter')
+    response=reply.value;ctx.require(response.status==200,ctx.case_id+'_LOOKUP_REAL_200');response.finished()
+    value=response.json()
+    ctx.require(value.get('state')==expected and value.get('requested_sku')==ctx.fixture.sku,ctx.case_id+'_TYPED_EXACT_LOOKUP')
+    _enabled(ctx,page,'#receivingAdminLookupButton',ctx.case_id+'_LOOKUP_SETTLED')
+    return value
+
+
+def _sku_settle(page):
+    page.evaluate('''async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}''')
+
+
+def _sku_no_mutation(ctx,before):
+    ctx.require(ctx.fixture.protected_snapshot()==before,ctx.case_id+'_READ_ONLY_PRODUCT_RECORDS')
+    ctx.require(all(value==0 for value in ctx.fixture.counts().values()),ctx.case_id+'_NO_APPROVAL_STOCK_OR_CREDIT')
+    ctx.require(not any(row['event']=='request' and row['method']!='GET' and row['path'].startswith('/api/receiving/')
+        for row in ctx.network),ctx.case_id+'_NO_RECEIVING_MUTATION_REQUEST')
+
+
+def exact_sku_enter_selection_and_explicit_preview(ctx):
+    with _sku_case(ctx) as sku:
+        _,page=_sku_owner(sku);sku.fixture.transport.set_mode('match');_sku_open(sku,page)
+        form=page.locator('#receivingAdminForm')
+        form.locator('summary').filter(has_text='Set, printing and card identity').click()
+        for name,value in (('name','Fictional owned card'),('set','Fixture set'),('number','001'),
+            ('condition','Near Mint'),('printing','Normal'),('language','English')):form.locator('[name='+name+']').fill(value)
+        form.locator('[name=game]').select_option('pokemon')
+        form.locator('[name=variation_id]').fill(sku.fixture.variation_id)
+        before=sku.fixture.protected_snapshot();value=_sku_lookup(sku,page)
+        sku.require(value['lookup_complete'] is True and value['exact_match_count']==1, 'HUI11_COMPLETE_SINGLE_RAW_MATCH')
+        results=page.locator('#receivingAdminLookupResults')
+        sku.require(results.locator('img,script').count()==0 and
+            sku.fixture.literal_name in results.text_content() and sku.fixture.literal_variation in results.text_content(),
+            'HUI11_PROVIDER_STRINGS_ARE_LITERAL')
+        sku.require(results.locator('input[readonly]').input_value()==sku.fixture.sku,'HUI11_EXACT_READONLY_SKU_SPACES_CASE_ZEROES')
+        sku.require(form.locator('[name=variation_id]').input_value()=='','HUI11_ENTER_DID_NOT_SELECT_OR_PREVIEW')
+        results.get_by_role('button',name='Use this variation reference',exact=True).click()
+        _text(sku,page,'#receivingAdminProgress','Variation reference selected.','HUI11_EXPLICIT_REFERENCE_SELECTED')
+        sku.require(form.locator('[name=variation_id]').input_value()==sku.fixture.variation_id and
+            form.locator('[name=name]').input_value()=='Fictional owned card' and page.locator('#receivingAdminReview').is_hidden(),
+            'HUI11_SELECTION_ONLY_PRESERVES_PHYSICAL_FIELDS')
+        _sku_no_mutation(sku,before)
+        with page.expect_response(lambda response:response.url==sku.fixture.origin+'/api/receiving/catalog-bindings/previews'
+            and response.request.method=='POST',timeout=15000) as preview:
+            page.locator('#receivingAdminPreview').click()
+        sku.require(preview.value.status==201,'HUI11_SEPARATE_REAL_PHYSICAL_PREVIEW');preview.value.finished()
+        _visible(sku,page,'#receivingAdminReview','HUI11_EXPLICIT_PREVIEW_VISIBLE')
+        _text(sku,page,'#receivingAdminMappingStatus','No conflicting card identity mappings','HUI11_ACTUAL_MAPPING_REVIEW')
+        sku.require(all(value==0 for value in sku.fixture.counts().values()),'HUI11_PREVIEW_IS_NOT_APPROVAL_OR_STOCK')
+
+
+def exact_sku_typed_nonselectable_outcomes(ctx):
+    with _sku_case(ctx) as sku:
+        _,page=_sku_owner(sku);_sku_open(sku,page);before=sku.fixture.protected_snapshot()
+        for mode,state,text in (('empty','no_match','No exact Square SKU'),('case_variant','no_match','different capitalization'),
+            ('ambiguous','ambiguous','multiple exact or case-insensitive'),('incomplete','incomplete','read was incomplete'),
+            ('unavailable','unavailable','cannot be used for receiving')):
+            sku.fixture.transport.set_mode(mode);value=_sku_lookup(sku,page,state)
+            _text(sku,page,'#receivingAdminLookupStatus',text,'HUI12_EXPLICIT_'+mode.upper())
+            sku.require(not value['candidates'] and page.locator('#receivingAdminLookupResults button').count()==0 and
+                page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI12_NONMATCH_HAS_NO_SELECTION')
+        _sku_no_mutation(sku,before);sku.fixture.transport.set_mode('match')
+
+
+def exact_sku_native_edits_and_dom_event_races(ctx):
+    with _sku_case(ctx) as sku:
+        _,page=_sku_owner(sku);sku.fixture.transport.set_mode('match');_sku_open(sku,page)
+        before=sku.fixture.protected_snapshot();_sku_lookup(sku,page)
+        page.locator('#receivingAdminLookupResults button').click()
+        _text(sku,page,'#receivingAdminProgress','Variation reference selected.','HUI13_FIRST_NATIVE_SELECTION')
+        page.locator('#receivingAdminLookupSku').fill('CHANGED-SKU')
+        sku.require(page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI13_NATIVE_SKU_EDIT_CLEARS_REFERENCE')
+        _sku_lookup(sku,page);page.locator('#receivingAdminLookupResults button').click()
+        _text(sku,page,'#receivingAdminProgress','Variation reference selected.','HUI13_SECOND_NATIVE_SELECTION')
+        page.locator('#receivingAdminForm [name=location_id]').select_option(sku.fixture.location_b)
+        sku.require(page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI13_NATIVE_LOCATION_EDIT_CLEARS_REFERENCE')
+        for field,value in (('receivingAdminLookupSku','DOM-RACE-SKU'),('location',sku.fixture.location_a)):
+            with sku.fixture.lookup_reply_gate() as gate:
+                page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku)
+                with page.expect_response(lambda response:response.url.startswith(sku.fixture.origin+'/api/receiving/catalog-lookup?'),timeout=15000) as old:
+                    page.locator('#receivingAdminLookupSku').press('Enter')
+                    _committed(sku,gate,'HUI13_ACTUAL_LOOKUP_COMPLETED')
+                    sku.require(page.locator('#receivingAdminForm').get_attribute('inert') is not None,'HUI13_NATIVE_BUSY_FORM_INERT')
+                    # Explicit DOM-event probe, not a native edit of an inert form.
+                    page.evaluate('''({field,value})=>{const node=field==='location'?document.querySelector('#receivingAdminForm [name=location_id]'):document.getElementById(field);node.value=value;node.dispatchEvent(new Event('input',{bubbles:true}))}''',{'field':field,'value':value})
+                    with page.expect_response(lambda response:response.url==sku.fixture.origin+'/api/me' and response.status==200,timeout=15000) as current:
+                        gate.release()
+                    current.value.finished()
+                sku.require(old.value.status==200,'HUI13_OLD_REAL_REPLY_UNMODIFIED');old.value.finished()
+                _sku_settle(page)
+                sku.require(page.locator('#receivingAdminLookupResults button').count()==0 and
+                    page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI13_STALE_DOM_EVENT_RESULT_NOT_PUBLISHED')
+        _sku_no_mutation(sku,before)
+
+
+def exact_sku_completed_reply_after_real_logout(ctx):
+    with _sku_case(ctx) as sku:
+        context,page=_sku_owner(sku);sku.fixture.transport.set_mode('match');_sku_open(sku,page)
+        before=sku.fixture.protected_snapshot();other=context.new_page()
+        other.goto(sku.fixture.origin+'/',wait_until='load',timeout=15000)
+        _visible(sku,other,'#workspace','HUI14_OTHER_ACTUAL_OWNER_WORKSPACE');_observer_ready(sku,other,'HUI14_OTHER_REAL_OWNER_TAB')
+        terminals={'finished':0,'failed':0}
+        def record_terminal(kind,request):
+            if request.method=='GET' and request.url.startswith(sku.fixture.origin+'/api/receiving/catalog-lookup?'):
+                terminals[kind]=min(2,terminals[kind]+1)
+        def finished(request):record_terminal('finished',request)
+        def failed(request):record_terminal('failed',request)
+        # Observe before Enter: native logout may abort before the held reply is released.
+        page.on('requestfinished',finished);page.on('requestfailed',failed)
+        try:
+            with sku.fixture.lookup_reply_gate() as gate:
+                page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku);page.locator('#receivingAdminLookupSku').press('Enter')
+                _committed(sku,gate,'HUI14_REAL_SUCCESS_BEFORE_LOGOUT')
+                _logout(sku,other,'HUI14_ACTUAL_LOGOUT')
+                page.bring_to_front();_text(sku,page,'#receivingAdminSession','Session changed.','HUI14_OLD_OWNER_CONTEXT_CLEARED')
+                gate.release()
+            deadline=time.monotonic()+15
+            while not any(terminals.values()) and time.monotonic()<deadline:
+                # Pump real Playwright events while waiting for either bounded terminal event.
+                page.wait_for_timeout(50)
+            sku.require(sum(terminals.values())==1,'HUI14_ACTUAL_LOOKUP_TERMINATED')
+            _sku_settle(page)
+            sku.require(page.locator('#receivingAdminLookupResults').text_content()=='' and
+                page.locator('#receivingAdminLookupResults button').count()==0 and
+                page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI14_EXISTING_PAGE_EMPTY_AFTER_TERMINAL')
+            _sign_in(sku,other,'buyer',code='HUI14_DIFFERENT_REAL_PRINCIPAL')
+            _sku_settle(page)
+            sku.require(page.locator('#receivingAdminLookupResults').text_content()=='' and
+                page.locator('#receivingAdminLookupResults button').count()==0 and
+                page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI14_EXISTING_PAGE_EMPTY_AFTER_BUYER_LOGIN')
+            page.reload(wait_until='load',timeout=15000)
+            _text(sku,page,'#receivingAdminSession','Only the store owner','HUI14_DIFFERENT_PRINCIPAL_CANNOT_USE_OWNER_RESULT')
+            sku.require(page.locator('#receivingAdminLookupResults button').count()==0 and
+                page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI14_OLD_REPLY_NOT_ADOPTED')
+            _sku_no_mutation(sku,before);_logout(sku,other,'HUI14_BUYER_LOGOUT')
+        finally:
+            page.remove_listener('requestfinished',finished);page.remove_listener('requestfailed',failed)
+
+
+def exact_sku_actual_pagehide_and_network_back_navigation(ctx):
+    with _sku_case(ctx) as sku:
+        _,page=_sku_owner(sku);sku.fixture.transport.set_mode('match');_sku_open(sku,page)
+        before=sku.fixture.protected_snapshot()
+        page.evaluate('''()=>{sessionStorage.removeItem('sku-fixture-pagehide');addEventListener('pagehide',event=>sessionStorage.setItem('sku-fixture-pagehide',JSON.stringify({seen:true,persisted:event.persisted})),{once:true})}''')
+        with sku.fixture.lookup_reply_gate() as gate:
+            page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku);page.locator('#receivingAdminLookupSku').press('Enter')
+            _committed(sku,gate,'HUI15_REAL_SUCCESS_BEFORE_NAVIGATION')
+            page.goto(sku.fixture.origin+'/',wait_until='load',timeout=15000);gate.release()
+            _visible(sku,page,'#workspace','HUI15_NATIVE_NAVIGATION_OWNER_WORKSPACE');_observer_ready(sku,page,'HUI15_NATIVE_NAVIGATION_READY')
+            marker=page.evaluate("JSON.parse(sessionStorage.getItem('sku-fixture-pagehide')||'{}')")
+            sku.require(marker.get('seen') is True and marker.get('persisted') is False,'HUI15_ACTUAL_PAGEHIDE_NOT_BFCACHE')
+        response=page.go_back(wait_until='load',timeout=15000)
+        sku.require(response is not None and response.status==200,'HUI15_NETWORK_BACK_NAVIGATION')
+        _visible(sku,page,'#receivingAdminWorkspace','HUI15_FRESH_BACK_OWNER_WORKSPACE')
+        sku.require(page.locator('#receivingAdminLookupResults button').count()==0 and
+            page.locator('#receivingAdminForm [name=variation_id]').input_value()=='','HUI15_STALE_REPLY_CANNOT_FILL_FRESH_DOCUMENT')
+        _sku_no_mutation(sku,before)
+        # Actual BFCache restoration remains deferred; no synthetic pageshow.
+
+
 CASE_LABELS = {
     'HUI01': 'Trusted HTTPS, session-cookie protections and real CSRF rejection',
     'HUI02': 'Untrusted CA and hostname mismatch are rejected',
@@ -597,6 +902,11 @@ CASE_LABELS = {
     'HUI08': 'Lost committed reply recovers through manual sign-in',
     'HUI09': 'Delayed reply preserves a newer real login cookie and identity',
     'HUI10': 'Owner-mediated staff password recovery preserves MFA and owner session',
+    'HUI11': 'Exact SKU Enter/selection/literal strings and separate physical preview',
+    'HUI12': 'Real typed SKU no-match/ambiguity/incomplete/unavailable outcomes',
+    'HUI13': 'Native SKU/location clearing and separately labeled DOM-event races',
+    'HUI14': 'Completed real SKU reply cannot survive actual logout/new principal',
+    'HUI15': 'Actual pagehide/network back navigation; BFCache restore deferred',
 }
 
 CASES = (
@@ -610,4 +920,9 @@ CASES = (
     ('HUI08', lost_committed_reply_manual_recovery),
     ('HUI09', delayed_reply_preserves_newer_login_cookie),
     ('HUI10', owner_mediated_staff_password_recovery),
+    ('HUI11', exact_sku_enter_selection_and_explicit_preview),
+    ('HUI12', exact_sku_typed_nonselectable_outcomes),
+    ('HUI13', exact_sku_native_edits_and_dom_event_races),
+    ('HUI14', exact_sku_completed_reply_after_real_logout),
+    ('HUI15', exact_sku_actual_pagehide_and_network_back_navigation),
 )

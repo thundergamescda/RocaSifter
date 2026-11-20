@@ -40,7 +40,8 @@ class _CapturePage:
         self.hidden_after = hidden_after
         self.dispose_raises = dispose_raises
         self.invariants = dict.fromkeys(('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
-            'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok'), True) if invariants is None else invariants
+            'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok',
+            'new_style_attributes_empty', 'new_style_declarations_empty'), True) if invariants is None else invariants
         self.invariants_raises = invariants_raises
         self.handle = _PrivacyHandle(self)
         self.evaluations = 0
@@ -180,7 +181,8 @@ class HostedBrowserCapturePrivacyTests(unittest.TestCase):
                 self._unpublished(context)
 
         for key in ('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
-                    'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok'):
+                    'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok',
+                    'new_style_attributes_empty', 'new_style_declarations_empty'):
             context, page = self._context(), _CapturePage(restore_ok=False)
             page.invariants[key] = False
             with self.assertRaisesRegex(AssertionError, '^SCREENSHOT_PRIVACY_RESTORE_HANDLE_FALSE$'):

@@ -25,7 +25,7 @@ from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
-EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 11))
+EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 16))
 REPORT_NAMES = ('pip-freeze.txt', 'pip-bootstrap-report.json',
                 'pip-install-report.json', 'os-packages.txt')
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -35,7 +35,8 @@ MAX_SCREENSHOT_BYTES = 1536 * 1024
 MAX_SCREENSHOTS_TOTAL = 6 * 1024 * 1024
 SAFE_CODE = re.compile(r'[A-Z][A-Z0-9_]{0,95}\Z')
 RESTORE_INVARIANTS = ('write_ok', 'document_url_ok', 'same_nodes', 'connected_ok',
-                      'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok')
+                      'visibility_value_ok', 'visibility_priority_ok', 'style_presence_ok',
+                      'new_style_attributes_empty', 'new_style_declarations_empty')
 RESTORE_FAILURE_CODES = frozenset('SCREENSHOT_PRIVACY_RESTORE_' + phase for phase in (
     'HANDLE_EXCEPTION', 'HANDLE_FALSE', 'HANDLE_INVALID',
     'PAGE_EXCEPTION', 'PAGE_FALSE', 'PAGE_INVALID', 'DISPOSE_FAILURE'))
@@ -358,6 +359,10 @@ class CaseContext:
                 self.case_id == 'HUI08' and candidate == self.fixture.origin
                 and method == 'POST' and path == '/api/auth/password/change'
                 and failure in DROP_CODES
+            ) or (
+                self.case_id in ('HUI14', 'HUI15') and candidate == self.fixture.origin
+                and method == 'GET' and path == '/api/receiving/catalog-lookup'
+                and failure == 'net::ERR_ABORTED'
             )
         expected_http_error = (
             event == 'response' and candidate == self.fixture.origin and
@@ -584,20 +589,40 @@ class CaseContext:
                         if(document!==originalDocument||location.href!==originalURL)return false;
                         const current=selected();
                         if(current.length!==rows.length||current.some((node,index)=>node!==rows[index].node))return false;
-                        return rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected&&
-                            row.node.style.getPropertyValue('visibility')===(hidden?'hidden':row.value)&&
-                            row.node.style.getPropertyPriority('visibility')===(hidden?'important':row.priority)&&
-                            (hidden?getComputedStyle(row.node).visibility==='hidden':
-                                (row.hadStyle||!row.node.hasAttribute('style'))));
+                        return rows.every(row=>{
+                            if(row.node.ownerDocument!==originalDocument||!row.node.isConnected)return false;
+                            if(!hidden&&!row.hadStyle)
+                                return !row.node.hasAttribute('style')&&row.value===''&&row.priority==='';
+                            return row.node.style.getPropertyValue('visibility')===(hidden?'hidden':row.value)&&
+                                row.node.style.getPropertyPriority('visibility')===(hidden?'important':row.priority)&&
+                                (!hidden||getComputedStyle(row.node).visibility==='hidden');
+                        });
                     };
                     state.restore=()=>{
-                        let restored=true;
+                        let restored=true,cleanup=[];
                         for(const row of rows){
                             try{
                                 if(row.value)row.node.style.setProperty('visibility',row.value,row.priority);
                                 else row.node.style.removeProperty('visibility');
-                                if(!row.hadStyle&&row.node.style.length===0)row.node.removeAttribute('style');
                             }catch{restored=false}
+                        }
+                        try{
+                            const current=selected();
+                            if(document!==originalDocument||location.href!==originalURL||
+                               current.length!==rows.length||current.some((node,index)=>node!==rows[index].node)||
+                               rows.some(row=>row.node.ownerDocument!==originalDocument||!row.node.isConnected))
+                                restored=false;
+                            cleanup=rows.filter(row=>!row.hadStyle);
+                            const eligible=cleanup.map(row=>{
+                                const count=row.node.style.length,attribute=row.node.getAttribute('style');
+                                return count===0&&(attribute===null||attribute.trim()==='');
+                            });
+                            if(eligible.some(value=>value!==true))restored=false;
+                        }catch{restored=false}
+                        if(restored){
+                            for(const row of cleanup){
+                                try{row.node.removeAttribute('style')}catch{restored=false}
+                            }
                         }
                         restoreWriteOK=restored;
                         return restored&&state.check(false);
@@ -614,7 +639,10 @@ class CaseContext:
                             connected_ok:checked(()=>rows.every(row=>row.node.ownerDocument===originalDocument&&row.node.isConnected)),
                             visibility_value_ok:checked(()=>rows.every(row=>row.node.style.getPropertyValue('visibility')===row.value)),
                             visibility_priority_ok:checked(()=>rows.every(row=>row.node.style.getPropertyPriority('visibility')===row.priority)),
-                            style_presence_ok:checked(()=>rows.every(row=>row.hadStyle||!row.node.hasAttribute('style')))
+                            style_presence_ok:checked(()=>rows.every(row=>row.hadStyle||!row.node.hasAttribute('style'))),
+                            new_style_attributes_empty:checked(()=>rows.every(row=>row.hadStyle||
+                                !row.node.hasAttribute('style')||row.node.getAttribute('style').trim()==='')),
+                            new_style_declarations_empty:checked(()=>rows.every(row=>row.hadStyle||row.node.style.length===0))
                         };
                     };
                     try{
@@ -890,6 +918,14 @@ def main():
             stage = 'ledgers_and_final_probe'
             cases_context.verify_ledgers()
             require(fixture.provider_attempts == 0, 'PROVIDER_TRANSPORT_ATTEMPT')
+            sku = fixture.sku_read_summary()
+            require(all(sku.get(name) is True for name in ('started', 'parent_sandbox_unchanged',
+                    'child_production_configured', 'distinct_owned_origin', 'distinct_owned_tenant', 'actual_square_class'))
+                    and all(type(sku.get(name)) is int and sku[name] > 0 for name in
+                            ('token_status', 'locations', 'search', 'catalog'))
+                    and sku.get('write_attempts') == 0
+                    and sku.get('responses_created') == sku.get('responses_closed'),
+                    'OWNED_SKU_READ_FIXTURE_INCOMPLETE')
             tls['after'] = web_probe(fixture)
             stage = 'completed'
         except Exception as error:
@@ -959,7 +995,7 @@ def main():
         tls['before'] is not None and tls['after'] is not None
     )
     save_json('browser-summary.json', {
-        'scope': 'Ten finite real-HTTPS hosted portal browser flows; not desktop/provider/production acceptance',
+        'scope': 'Ten preserved portal flows and five owned fictional-Square HTTPS flows; not live Square, desktop or hardware acceptance',
         'started_utc': started, 'finished_utc': now(), 'source_sha': os.environ['SS_CI_SOURCE_SHA'],
         'passed': passed, 'exit_code': 0 if passed else 1,
         'expected_case_ids': list(EXPECTED_IDS), 'expected_count': len(EXPECTED_IDS),
@@ -985,6 +1021,8 @@ def main():
         'layout_overflow': cases_context.layout_overflow if cases_context else None,
         'suppressed_private_diagnostic_characters': sink.characters,
         'provider_attempts': fixture.provider_attempts if fixture else 0,
+        'square_sku_read_fixture': fixture.sku_read_summary() if fixture else {'started': False},
+        'bfcache_restore_acceptance': 'deferred_under_default_playwright_profile',
         'screenshots_manifest_sha256': digest(read_regular(EVIDENCE / 'screenshots-manifest.json')),
         'case_log_sha256': digest(read_regular(EVIDENCE / 'browser-cases.log')),
         'limits': 'No held Windows runtime, live provider, deployed database, store data or commercial release acceptance.',
