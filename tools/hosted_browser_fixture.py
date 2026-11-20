@@ -142,6 +142,8 @@ class ReplyGate:
         self._lock=threading.Lock(); self._metadata=None; self._error=None; self._action=None
     def __enter__(self):return self
     def __exit__(self,*unused):self.release(); return False
+    @property
+    def committed(self):return self._committed.is_set()
     def wait_committed(self,timeout=10):
         if type(timeout) not in (int,float) or not 0<timeout<=20:raise PortalFixtureError('fixture_gate_timeout_input')
         if not self._committed.wait(timeout):raise PortalFixtureError('fixture_gate_not_committed')

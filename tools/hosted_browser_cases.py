@@ -743,6 +743,15 @@ def _sku_settle(page):
     page.evaluate('''async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}''')
 
 
+def _sku_committed(ctx,page,gate,code):
+    # Keep sync Playwright routes live until the real completed reply reaches the gate.
+    deadline=time.monotonic()+10
+    while not gate.committed and time.monotonic()<deadline:
+        page.wait_for_timeout(50)
+    ctx.require(gate.committed,code+'_GATE_COMMITTED')
+    _committed(ctx,gate,code)
+
+
 def _sku_no_mutation(ctx,before):
     ctx.require(ctx.fixture.protected_snapshot()==before,ctx.case_id+'_READ_ONLY_PRODUCT_RECORDS')
     ctx.require(all(value==0 for value in ctx.fixture.counts().values()),ctx.case_id+'_NO_APPROVAL_STOCK_OR_CREDIT')
@@ -812,7 +821,7 @@ def exact_sku_native_edits_and_dom_event_races(ctx):
                 page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku)
                 with page.expect_response(lambda response:response.url.startswith(sku.fixture.origin+'/api/receiving/catalog-lookup?'),timeout=15000) as old:
                     page.locator('#receivingAdminLookupSku').press('Enter')
-                    _committed(sku,gate,'HUI13_ACTUAL_LOOKUP_COMPLETED')
+                    _sku_committed(sku,page,gate,'HUI13_ACTUAL_LOOKUP_COMPLETED')
                     sku.require(page.locator('#receivingAdminForm').get_attribute('inert') is not None,'HUI13_NATIVE_BUSY_FORM_INERT')
                     # Explicit DOM-event probe, not a native edit of an inert form.
                     page.evaluate('''({field,value})=>{const node=field==='location'?document.querySelector('#receivingAdminForm [name=location_id]'):document.getElementById(field);node.value=value;node.dispatchEvent(new Event('input',{bubbles:true}))}''',{'field':field,'value':value})
@@ -843,7 +852,7 @@ def exact_sku_completed_reply_after_real_logout(ctx):
         try:
             with sku.fixture.lookup_reply_gate() as gate:
                 page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku);page.locator('#receivingAdminLookupSku').press('Enter')
-                _committed(sku,gate,'HUI14_REAL_SUCCESS_BEFORE_LOGOUT')
+                _sku_committed(sku,page,gate,'HUI14_REAL_SUCCESS_BEFORE_LOGOUT')
                 _logout(sku,other,'HUI14_ACTUAL_LOGOUT')
                 page.bring_to_front();_text(sku,page,'#receivingAdminSession','Session changed.','HUI14_OLD_OWNER_CONTEXT_CLEARED')
                 gate.release()
@@ -877,7 +886,7 @@ def exact_sku_actual_pagehide_and_network_back_navigation(ctx):
         page.evaluate('''()=>{sessionStorage.removeItem('sku-fixture-pagehide');addEventListener('pagehide',event=>sessionStorage.setItem('sku-fixture-pagehide',JSON.stringify({seen:true,persisted:event.persisted})),{once:true})}''')
         with sku.fixture.lookup_reply_gate() as gate:
             page.locator('#receivingAdminLookupSku').fill(sku.fixture.sku);page.locator('#receivingAdminLookupSku').press('Enter')
-            _committed(sku,gate,'HUI15_REAL_SUCCESS_BEFORE_NAVIGATION')
+            _sku_committed(sku,page,gate,'HUI15_REAL_SUCCESS_BEFORE_NAVIGATION')
             page.goto(sku.fixture.origin+'/',wait_until='load',timeout=15000);gate.release()
             _visible(sku,page,'#workspace','HUI15_NATIVE_NAVIGATION_OWNER_WORKSPACE');_observer_ready(sku,page,'HUI15_NATIVE_NAVIGATION_READY')
             marker=page.evaluate("JSON.parse(sessionStorage.getItem('sku-fixture-pagehide')||'{}')")
