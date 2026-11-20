@@ -258,7 +258,9 @@ def desktop_mobile_keyboard_layout(ctx):
         # Usability acceptance: native keyboard section navigation.
         ctx.require(page.evaluate('''()=>{
             const nav=document.querySelector('.workspace-links'),links=nav?Array.from(nav.querySelectorAll('a')):[];
-            return !!nav&&links.length===2&&nav.scrollWidth<=nav.clientWidth&&links.every(link=>{
+            const expected=['/stock','#squareConnection','#accountSecurity'];
+            return !!nav&&links.length===expected.length&&links.every((link,index)=>link.getAttribute('href')===expected[index])&&
+                nav.scrollWidth<=nav.clientWidth&&links.every(link=>{
                 const rect=link.getBoundingClientRect();
                 return rect.width>0&&rect.height>0&&rect.left>=0&&rect.right<=window.innerWidth;
             });
@@ -1031,22 +1033,49 @@ def _stock_no_mutation(ctx,before):
 
 @contextmanager
 def _stock_terminal(ctx,page):
-    terminals={'finished':0,'failed':0}
-    def record(kind,request):
+    # The first actual post-arm Request is retained across native navigation.
+    # Context events can outlive the old document; URL equality alone is not identity.
+    terminals={'request':None,'starts':0,'finished':0,'failed':0}
+    context=page.context
+    def started(request):
         if request.method=='GET' and request.url.startswith(ctx.fixture.origin+'/api/stock/lookup?'):
-            terminals[kind]=min(2,terminals[kind]+1)
+            terminals['starts']=min(2,terminals['starts']+1)
+            if terminals['request'] is None:terminals['request']=request
+    def record(kind,request):
+        if request is terminals['request']:terminals[kind]=min(2,terminals[kind]+1)
     def finished(request):record('finished',request)
     def failed(request):record('failed',request)
-    page.on('requestfinished',finished);page.on('requestfailed',failed)
+    context.on('request',started);context.on('requestfinished',finished);context.on('requestfailed',failed)
     try:yield terminals
     finally:
-        page.remove_listener('requestfinished',finished);page.remove_listener('requestfailed',failed)
+        context.remove_listener('request',started)
+        context.remove_listener('requestfinished',finished);context.remove_listener('requestfailed',failed)
 
 
 def _stock_wait_terminal(ctx,page,terminals):
     deadline=time.monotonic()+15
-    while not any(terminals.values()) and time.monotonic()<deadline:page.wait_for_timeout(50)
-    ctx.require(sum(terminals.values())==1,ctx.case_id+'_ONE_ACTUAL_LOOKUP_TERMINAL')
+    while terminals['finished']+terminals['failed']==0 and time.monotonic()<deadline:
+        page.wait_for_timeout(50)  # Existing bounded synchronous Playwright event pump.
+    ctx.require(terminals['request'] is not None and terminals['starts']>0,ctx.case_id+'_NO_ACTUAL_LOOKUP_REQUEST')
+    ctx.require(terminals['starts']==1,ctx.case_id+'_MULTIPLE_ACTUAL_LOOKUP_REQUESTS')
+    total=terminals['finished']+terminals['failed']
+    ctx.require(total<=1,ctx.case_id+'_MULTIPLE_ACTUAL_LOOKUP_TERMINALS')
+    if total==0:
+        # Finite sanitized failure-state codes only. Do not wait on request.response(),
+        # read private headers/body/query, treat response as terminal, or accept a timeout.
+        try:
+            failure=terminals['request'].failure
+            response=terminals['request'].existing_response
+            status=None if response is None else response.status
+        except Exception:
+            ctx.require(False,ctx.case_id+'_LOOKUP_TERMINAL_STATE_UNAVAILABLE')
+        if failure=='net::ERR_ABORTED':code='_LOOKUP_ABORT_WITHOUT_TERMINAL'
+        elif failure is not None:code='_LOOKUP_FAILURE_WITHOUT_TERMINAL'
+        elif status is None:code='_LOOKUP_NO_RESPONSE_OR_TERMINAL'
+        elif status==200:code='_LOOKUP_200_WITHOUT_TERMINAL'
+        else:code='_LOOKUP_NON200_WITHOUT_TERMINAL'
+        ctx.require(False,ctx.case_id+code)
+    ctx.require(total==1,ctx.case_id+'_ONE_ACTUAL_LOOKUP_TERMINAL')
     _sku_settle(page)
 
 
@@ -1055,8 +1084,21 @@ def stock_four_roles_native_enter_literal_and_layout(ctx):
         stock.fixture.transport.set_mode('stock_positive');before=stock.fixture.protected_snapshot()
         for role,viewport in [('owner',DESKTOP),('manager',DESKTOP),('buyer',DESKTOP),('cashier',DESKTOP),('cashier',MOBILE)]:
             context,page=_stock_actor(stock,role,viewport);_stock_open(stock,page)
-            stock.require(page.get_by_label('Square location',exact=True).count()==1 and
-                page.get_by_label('Exact Square SKU',exact=True).count()==1,'HUI16_ACCESSIBLE_INPUT_LABELS')
+            location=page.get_by_role('combobox',name='Square location',exact=True)
+            sku=page.get_by_role('textbox',name='Exact Square SKU',exact=True)
+            stock.require(location.count()==1 and location.get_attribute('id')=='stockLocation' and
+                sku.count()==1 and sku.get_attribute('id')=='stockSku','HUI16_ACCESSIBLE_INPUT_LABELS')
+            stock.require(page.evaluate('''()=>[
+                ['stockLocation','Square location'],['stockSku','Exact Square SKU']
+            ].every(([id,text])=>{
+                const control=document.getElementById(id),labels=control?Array.from(control.labels||[]):[];
+                if(labels.length!==1||labels[0].control!==control||labels[0].htmlFor!==id)return false;
+                const directText=Array.from(labels[0].childNodes).filter(node=>node.nodeType===Node.TEXT_NODE)
+                    .map(node=>node.textContent).join('').trim();
+                return directText===text;
+            })'''),'HUI16_NATIVE_LABEL_CONTROL_ASSOCIATION')
+            location.focus();page.keyboard.press('Tab')
+            stock.require(page.evaluate("document.activeElement.id==='stockSku'"),'HUI16_NATIVE_LOCATION_TO_SKU_FOCUS')
             value=_stock_lookup(stock,page);_stock_report(stock,page,value,'+0007.00000','positive');_stock_times(stock,page,value)
             _text(stock,page,'#stockResultSummary','Square reports positive IN_STOCK quantity.','HUI16_POSITIVE_REPORT')
             stock.require(page.locator('#stockResultLocation').input_value()=='Fictional counter A','HUI16_SELECTED_LOCATION_LABEL')
