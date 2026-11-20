@@ -327,6 +327,7 @@ class CaseContext:
         self.screenshots = []
         self.restore_diagnostics = []
         self.layout_overflow = None
+        self.stock_pagehide_observation = None
         self.screenshot_bytes = 0
         self.ledger_overflow = False
         self.cleanup_complete = True
@@ -750,6 +751,45 @@ class CaseContext:
                 self.cleanup_complete = False
         self.contexts.clear()
 
+    def stock_pagehide_snapshot(self):
+        value = self.stock_pagehide_observation
+        if value is None:
+            return None
+        require(self.case_id == 'HUI21' and type(value) is dict and
+                set(value) == {'version', 'case', 'status', 'post_destruction_transport', 'branches', 'pending_transport'} and
+                type(value['version']) is int and value['version'] == 1 and type(value['case']) is str and value['case'] == 'HUI21' and
+                type(value['status']) is str and type(value['post_destruction_transport']) is str and
+                value['status'] in ('incomplete', 'ui_verified_transport_deferred') and
+                value['post_destruction_transport'] == 'deferred_after_document_destruction',
+                'HUI21_OBSERVATION_IDENTITY')
+        flags = ('pagehide_seen', 'pagehide_not_persisted', 'form_hidden', 'manual_inputs_empty', 'result_hidden',
+                 'result_fields_empty', 'result_text_empty', 'result_timestamps_empty', 'network_back_200',
+                 'fresh_form_ready', 'fresh_result_empty', 'fresh_manual_inputs_empty')
+        rows = value['branches']
+        require(type(rows) is list and len(rows) <= 2 and
+                all(type(row) is dict and set(row) == set(('branch',) + flags) and type(row['branch']) is str and
+                    all(type(row[name]) is bool for name in flags) for row in rows) and
+                [row['branch'] for row in rows] == ['visible', 'pending'][:len(rows)],
+                'HUI21_OBSERVATION_BRANCHES')
+        record = value['pending_transport']
+        require(type(record) is dict and set(record) == {'request_starts', 'real_response_completed', 'finished_events',
+                'failed_events', 'exposed_response', 'exposed_failure'} and
+                all(type(record[name]) is int and 0 <= record[name] <= 2
+                    for name in ('request_starts', 'finished_events', 'failed_events')) and
+                type(record['real_response_completed']) is bool and type(record['exposed_response']) is str and
+                type(record['exposed_failure']) is str and
+                record['exposed_response'] in ('none', 'http200', 'other', 'unavailable') and
+                record['exposed_failure'] in ('none', 'aborted', 'other', 'unavailable'),
+                'HUI21_OBSERVATION_TRANSPORT')
+        if value['status'] == 'ui_verified_transport_deferred':
+            require(len(rows) == 2 and all(row[name] for row in rows for name in flags) and
+                    record['request_starts'] == 1 and record['real_response_completed'] is True and
+                    record['finished_events'] + record['failed_events'] <= 1 and
+                    record['exposed_response'] in ('none', 'http200') and record['exposed_failure'] in ('none', 'aborted'),
+                    'HUI21_OBSERVATION_VERIFIED_PROOF')
+        require(len(json.dumps(value, allow_nan=False).encode('utf-8')) <= 2048, 'HUI21_OBSERVATION_BYTES')
+        return json.loads(json.dumps(value, allow_nan=False))
+
     def verify_ledgers(self):
         require(not self.ledger_overflow, 'BROWSER_LEDGER_OVERFLOW')
         require(not self.js_errors, 'BROWSER_PAGE_ERRORS')
@@ -1046,6 +1086,7 @@ def main():
         'suppressed_private_diagnostic_characters': sink.characters,
         'provider_attempts': fixture.provider_attempts if fixture else 0,
         'square_sku_read_fixture': fixture.sku_read_summary() if fixture else {'started': False},
+        'stock_pagehide_observation': cases_context.stock_pagehide_snapshot() if cases_context else None,
         'bfcache_restore_acceptance': 'deferred_under_default_playwright_profile',
         'screenshots_manifest_sha256': digest(read_regular(EVIDENCE / 'screenshots-manifest.json')),
         'case_log_sha256': digest(read_regular(EVIDENCE / 'browser-cases.log')),

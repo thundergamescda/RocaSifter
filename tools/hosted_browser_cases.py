@@ -925,6 +925,10 @@ def _stock_case(parent):
         parent.ledger_overflow=parent.ledger_overflow or ctx.ledger_overflow
         for name in ('network','js_errors','console_events','restore_diagnostics'):
             for row in getattr(ctx,name):parent._append(getattr(parent,name),row)
+        if ctx.stock_pagehide_observation is not None:
+            parent.require(ctx.case_id==parent.case_id=='HUI21' and parent.stock_pagehide_observation is None,
+                'HUI21_ONLY_OWNED_OBSERVATION_PROPAGATION')
+            parent.stock_pagehide_observation=ctx.stock_pagehide_snapshot()
         names=tuple(row['name'] for row in ctx.screenshots)
         parent.require(len(set(names))==len(names) and all(name in STOCK_CAPTURE_NAMES[ctx.case_id] for name in names),
             'STOCK_ONLY_FOUR_ADMITTED_CAPTURE_NAMES')
@@ -1226,35 +1230,87 @@ def stock_logout_new_principal_on_existing_page(ctx):
 
 def stock_native_pagehide_and_network_back(ctx):
     with _stock_case(ctx) as stock:
+        branch_flags=('pagehide_seen','pagehide_not_persisted','form_hidden','manual_inputs_empty','result_hidden',
+            'result_fields_empty','result_text_empty','result_timestamps_empty','network_back_200','fresh_form_ready',
+            'fresh_result_empty','fresh_manual_inputs_empty')
+        observation={'version':1,'case':'HUI21','status':'incomplete',
+            'post_destruction_transport':'deferred_after_document_destruction','branches':[],
+            'pending_transport':{'request_starts':0,'real_response_completed':False,'finished_events':0,'failed_events':0,
+                'exposed_response':'unavailable','exposed_failure':'unavailable'}}
+        stock.stock_pagehide_observation=observation
         _,page=_stock_actor(stock,'cashier');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
         before=stock.fixture.protected_snapshot()
+
+        def verify_pagehide_and_back(row):
+            marker=page.evaluate("JSON.parse(sessionStorage.getItem('stock-fixture-pagehide')||'{}')")
+            names=branch_flags[:8]
+            stock.require(type(marker) is dict and set(marker)==set(names) and
+                all(type(marker[name]) is bool for name in names),'HUI21_NATIVE_PAGEHIDE_MARKER_SHAPE')
+            for name in names:row[name]=marker[name]
+            stock.require(all(marker.values()),'HUI21_ACTUAL_PAGEHIDE_CLEARS_ALL_DATA')
+            response=page.go_back(wait_until='load',timeout=15000)
+            row['network_back_200']=response is not None and response.status==200 and page.url==stock.fixture.origin+'/stock'
+            stock.require(row['network_back_200'],'HUI21_REAL_NETWORK_BACK_NAVIGATION')
+            _visible(stock,page,'#stockForm','HUI21_FRESH_BACK_STAFF_PAGE')
+            _enabled(stock,page,'#stockRefreshSession','HUI21_BACK_REFRESH_SETTLED');row['fresh_form_ready']=True
+            _stock_empty(stock,page,'HUI21_BACK_DOCUMENT_HAS_NO_OLD_REPORT');row['fresh_result_empty']=True
+            row['fresh_manual_inputs_empty']=(page.locator('#stockSku').input_value()=='' and
+                page.locator('#stockLocation').input_value()=='' and page.locator('#stockCheck').is_disabled() and
+                page.locator('#stockCheck').text_content()=='Check stock')
+            stock.require(row['fresh_manual_inputs_empty'],'HUI21_BACK_REQUIRES_NEW_MANUAL_INPUT')
+
+        def snapshot_transport(terminals):
+            # Immediate scalar observation only; never imply terminal/cancellation acceptance.
+            target=terminals['request'];record=observation['pending_transport']
+            record.update(request_starts=terminals['starts'],finished_events=terminals['finished'],failed_events=terminals['failed'])
+            try:
+                if target is not None:
+                    failure=target.failure;response=target.existing_response
+                    record['exposed_failure']='none' if failure is None else 'aborted' if failure=='net::ERR_ABORTED' else 'other'
+                    record['exposed_response']='none' if response is None else 'http200' if response.status==200 else 'other'
+            except Exception:
+                record['exposed_failure']=record['exposed_response']='unavailable'
+
         for pending in (False,True):
-            _stock_lookup(stock,page);_visible(stock,page,'#stockResult','HUI21_REAL_REPORT_BEFORE_NAVIGATION')
+            row=dict.fromkeys(branch_flags,False);row['branch']='pending' if pending else 'visible'
+            observation['branches'].append(row)
+            value=_stock_lookup(stock,page);_stock_report(stock,page,value,'+0007.00000','positive');_stock_times(stock,page,value)
             page.evaluate('''()=>{sessionStorage.removeItem('stock-fixture-pagehide');addEventListener('pagehide',event=>{
-                const ids=['Sku','Item','Variation','Location','Quantity','Id','Parent'];
-                sessionStorage.setItem('stock-fixture-pagehide',JSON.stringify({seen:true,persisted:event.persisted,
-                    hidden:document.getElementById('stockResult').hidden,
-                    empty:ids.every(suffix=>document.getElementById('stockResult'+suffix).value==='')}));
+                const result=document.getElementById('stockResult'),form=document.getElementById('stockForm');
+                const fields=['Sku','Item','Variation','Location','Quantity','Id','Parent'];
+                const texts=['Summary','Unit','Qualifications','Checked','Updated'];
+                sessionStorage.setItem('stock-fixture-pagehide',JSON.stringify({
+                    pagehide_seen:true,pagehide_not_persisted:event.persisted===false,form_hidden:form.hidden,
+                    manual_inputs_empty:document.getElementById('stockSku').value===''&&document.getElementById('stockLocation').value==='',
+                    result_hidden:result.hidden,result_fields_empty:fields.every(suffix=>document.getElementById('stockResult'+suffix).value===''),
+                    result_text_empty:texts.every(suffix=>document.getElementById('stockResult'+suffix).textContent===''),
+                    result_timestamps_empty:texts.every(suffix=>{const node=document.getElementById('stockResult'+suffix);
+                        return !node.hasAttribute('title')&&!node.hasAttribute('data-timestamp')})}));
             },{once:true})}''')
             if pending:
                 with _stock_terminal(stock,page) as terminals:
-                    with stock.fixture.stock_reply_gate() as gate:
-                        page.locator('#stockSku').press('Enter');_sku_committed(stock,page,gate,'HUI21_REAL_SUCCESS_BEFORE_NAVIGATION')
-                        _stock_workspace(stock,page);gate.release()
-                    _stock_wait_terminal(stock,page,terminals)
-            else:_stock_workspace(stock,page)
-            marker=page.evaluate("JSON.parse(sessionStorage.getItem('stock-fixture-pagehide')||'{}')")
-            stock.require(marker=={'seen':True,'persisted':False,'hidden':True,'empty':True},'HUI21_ACTUAL_PAGEHIDE_CLEARS_DATA')
-            response=page.go_back(wait_until='load',timeout=15000)
-            stock.require(response is not None and response.status==200 and page.url==stock.fixture.origin+'/stock',
-                'HUI21_REAL_NETWORK_BACK_NAVIGATION')
-            _visible(stock,page,'#stockForm','HUI21_FRESH_BACK_STAFF_PAGE');_enabled(stock,page,'#stockRefreshSession','HUI21_BACK_REFRESH_SETTLED')
-            _stock_empty(stock,page,'HUI21_BACK_DOCUMENT_HAS_NO_OLD_REPORT')
-            stock.require(page.locator('#stockSku').input_value()=='' and page.locator('#stockLocation').input_value()=='',
-                'HUI21_BACK_REQUIRES_NEW_MANUAL_INPUT')
+                    try:
+                        with stock.fixture.stock_reply_gate() as gate:
+                            page.locator('#stockSku').press('Enter');_sku_committed(stock,page,gate,'HUI21_REAL_SUCCESS_BEFORE_NAVIGATION')
+                            stock.require(terminals['request'] is not None and terminals['starts']==1,'HUI21_ONE_ACTUAL_REQUEST_BEFORE_NAVIGATION')
+                            observation['pending_transport']['request_starts']=terminals['starts']
+                            observation['pending_transport']['real_response_completed']=True
+                            _stock_workspace(stock,page);gate.release()
+                        verify_pagehide_and_back(row)
+                    finally:snapshot_transport(terminals)
+                    record=observation['pending_transport']
+                    stock.require(record['request_starts']==1,'HUI21_ONE_ACTUAL_LOOKUP_REQUEST')
+                    stock.require(record['finished_events']+record['failed_events']<=1,'HUI21_AT_MOST_ONE_EXPOSED_TERMINAL')
+                    stock.require(record['exposed_failure'] in ('none','aborted'),'HUI21_UNEXPECTED_EXPOSED_REQUEST_FAILURE')
+                    stock.require(record['exposed_response'] in ('none','http200'),'HUI21_UNEXPECTED_EXPOSED_RESPONSE')
+                    # Exact abort/finish after document destruction remains explicitly DEFERRED.
+            else:
+                _stock_workspace(stock,page);verify_pagehide_and_back(row)
         _stock_no_mutation(stock,before)
-        # Routing/profile remain unchanged; actual BFCache restoration stays DEFERRED.
-    return {'actual_pagehide':True,'network_back_clears_result':True,'bfcache_restore':'deferred_under_default_playwright_profile'}
+        observation['status']='ui_verified_transport_deferred'
+        # No timer/timeout establishes UI success. Actual BFCache restoration stays DEFERRED.
+    return {'actual_pagehide':True,'network_back_clears_result':True,'post_destruction_transport':'deferred',
+        'bfcache_restore':'deferred_under_default_playwright_profile'}
 
 
 CASE_LABELS = {
@@ -1278,7 +1334,7 @@ CASE_LABELS = {
     'HUI18': 'Price/options/units/conversion qualifications and locale stock timestamps',
     'HUI19': 'Native pending SKU/location edits abort and clear completed old replies',
     'HUI20': 'Existing stock page rejects old principal and permits new manual buyer check',
-    'HUI21': 'Native stock pagehide/network back clears data; actual BFCache deferred',
+    'HUI21': 'Native stock pagehide/network back clears data; old-document transport and BFCache deferred',
 }
 
 CASES = (
