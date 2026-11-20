@@ -42,7 +42,7 @@ required=(label-summary.json source-before.json source-after.json dependency-pre
 # All container inputs are exact source or fictional fixture data; no host env,
 # credentials, customer profiles, database or provider transport is forwarded.
 # Strip terminal controls before the shared bounded length/hash transport.
-sanitize() { LC_ALL=C sed $'s/\r$//;s/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]//g' "$1"; }
+sanitize() { LC_ALL=C sed 's/\r$//;s/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]//g' "$1"; }
 source "$source_root/tools/ci_evidence_transport.sh"
 
 owned_container() {
