@@ -1114,6 +1114,78 @@ def stock_four_roles_native_enter_literal_and_layout(ctx):
     return {'four_real_roles':True,'native_enter':True,'exact_literal_sku':True,'desktop_mobile_layout':True}
 
 
+def _stock_quantity_readable_and_keyboard_focus(ctx,page):
+    page.locator('#stockCheck').focus()
+    reached=False
+    for _ in range(16):
+        page.keyboard.press('Tab')
+        if page.evaluate("document.activeElement===document.getElementById('stockResultQuantity')"):
+            reached=True;break
+    ctx.require(reached,'HUI17_QUANTITY_REACHED_BY_NATIVE_TAB')
+    try:
+        result=page.evaluate('''()=>{
+            const input=document.getElementById('stockResultQuantity'),style=getComputedStyle(input),rect=input.getBoundingClientRect();
+            const px=value=>{const number=parseFloat(value);if(!Number.isFinite(number))throw Error('MEASUREMENT');return number};
+            const fonts=['font-family','font-size','font-style','font-weight','font-stretch','font-variant','font-kerning',
+                'font-feature-settings','font-variation-settings','font-optical-sizing','font-size-adjust','font-synthesis',
+                'font-variant-caps','font-variant-numeric','font-variant-ligatures','font-variant-east-asian',
+                'font-variant-position','font-language-override','letter-spacing','word-spacing','text-transform',
+                'text-rendering','direction','unicode-bidi','line-height'];
+            let probe=null,fits=false;
+            try{
+                probe=document.createElement('span');
+                probe.style.cssText='all:initial;position:fixed;left:0;top:0;display:inline-block;visibility:hidden;pointer-events:none;white-space:pre;width:max-content;max-width:none;min-width:0;margin:0;border:0;padding:0';
+                for(const name of fonts)probe.style.setProperty(name,style.getPropertyValue(name));
+                probe.textContent=input.value;document.body.append(probe);
+                const contentWidth=Math.min(input.clientWidth,rect.width-px(style.borderLeftWidth)-px(style.borderRightWidth))-
+                    px(style.paddingLeft)-px(style.paddingRight);
+                const measured=probe.getBoundingClientRect().width;
+                fits=input.value.length===26&&rect.width>0&&rect.height>0&&contentWidth>1&&
+                    measured>0&&measured<=contentWidth-1&&input.scrollLeft===0;
+            }finally{
+                if(probe){probe.remove();if(probe.isConnected)throw Error('MEASUREMENT_CLEANUP')}
+            }
+            // Browser color parsing, alpha compositing and unrounded sRGB contrast.
+            const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+            const paint=canvas.getContext('2d',{willReadFrequently:true});
+            if(!paint)throw Error('COLOR_MEASUREMENT');
+            const rgba=color=>{paint.clearRect(0,0,1,1);paint.fillStyle=color;paint.fillRect(0,0,1,1);
+                const data=paint.getImageData(0,0,1,1).data;return [data[0],data[1],data[2],data[3]/255]};
+            const over=(front,back)=>{const alpha=front[3]+back[3]*(1-front[3]);
+                if(!alpha)return [0,0,0,0];return [0,1,2].map(index=>
+                    (front[index]*front[3]+back[index]*back[3]*(1-front[3]))/alpha).concat(alpha)};
+            const layers=[];let node=input.parentElement,opaque=false,depth=0;
+            while(node&&depth++<16){
+                const parent=getComputedStyle(node);if(parent.backgroundImage!=='none')throw Error('COLOR_BACKGROUND');
+                const color=rgba(parent.backgroundColor);layers.push(color);
+                if(color[3]===1){opaque=true;break}node=node.parentElement;
+            }
+            if(!opaque)throw Error('COLOR_BACKGROUND');
+            let background=layers.pop();while(layers.length)background=over(layers.pop(),background);
+            let opacity=1;node=input;depth=0;
+            while(node&&depth++<16){opacity*=px(getComputedStyle(node).opacity);node=node.parentElement}
+            if(node)throw Error('COLOR_DEPTH');
+            const ring=rgba(style.outlineColor);ring[3]*=opacity;
+            const foreground=over(ring,background);
+            const luminance=color=>color.slice(0,3).map(value=>{const channel=value/255;
+                return channel<=0.04045?channel/12.92:Math.pow((channel+0.055)/1.055,2.4)})
+                .reduce((sum,value,index)=>sum+value*[0.2126,0.7152,0.0722][index],0);
+            const light=luminance(foreground),dark=luminance(background);
+            const contrast=(Math.max(light,dark)+0.05)/(Math.min(light,dark)+0.05);
+            const extent=px(style.outlineWidth)+Math.max(0,px(style.outlineOffset));
+            return {fits,readonly:input.readOnly,focused:document.activeElement===input,
+                indicator:!['none','hidden'].includes(style.outlineStyle)&&px(style.outlineWidth)>=2&&
+                    px(style.outlineOffset)>=0&&contrast>=3&&rect.left-extent>=0&&rect.right+extent<=innerWidth&&
+                    rect.top-extent>=0&&rect.bottom+extent<=innerHeight};
+        }''')
+    except Exception:
+        ctx.require(False,'HUI17_QUANTITY_RENDER_MEASUREMENT')
+    ctx.require(type(result) is dict and set(result)=={'fits','readonly','focused','indicator'} and
+        all(type(value) is bool for value in result.values()),'HUI17_QUANTITY_MEASUREMENT_SHAPE')
+    ctx.require(result['readonly'] and result['fits'],'HUI17_ALL_26_QUANTITY_CHARACTERS_FIT')
+    ctx.require(result['focused'] and result['indicator'],'HUI17_QUANTITY_FOCUS_VISIBLE_AND_CONTRASTING')
+
+
 def stock_raw_quantities_and_unknown_outcomes(ctx):
     with _stock_case(ctx) as stock:
         _,page=_stock_actor(stock,'cashier');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
@@ -1139,6 +1211,19 @@ def stock_raw_quantities_and_unknown_outcomes(ctx):
             'HUI17_MALFORMED_COUNT_TYPED_INCOMPLETE')
         _stock_empty(stock,page,'HUI17_MALFORMED_CLEARS_NUMBER')
         _text(stock,page,'#stockStatus','The complete Square count could not be checked.','HUI17_MALFORMED_EXPLICIT_RETRY')
+        for viewport in (DESKTOP,MOBILE):
+            if viewport==DESKTOP:quantity_page=page
+            else:
+                _,quantity_page=_stock_actor(stock,'cashier',viewport);_stock_open(stock,quantity_page)
+            for mode,expected,availability in (
+                ('stock_max_quantity','-0000000000000000001.12500','fractional_review'),
+                ('stock_max_integer','00000000000000000000000007','positive')):
+                stock.require(len(expected)==26,'HUI17_MAXIMUM_QUANTITY_LITERAL_LENGTH')
+                stock.fixture.transport.set_mode(mode);value=_stock_lookup(stock,quantity_page)
+                _stock_report(stock,quantity_page,value,expected,availability)
+                stock.require(value['inventory']['quantity']==expected and
+                    quantity_page.locator('#stockResultQuantity').input_value()==expected,'HUI17_EXACT_26_CHARACTER_RAW_QUANTITY')
+                _stock_quantity_readable_and_keyboard_focus(stock,quantity_page)
         _stock_no_mutation(stock,before)
     return {'signed_decimal_text_preserved':True,'explicit_zero':True,'unknown_never_zero':True,'malformed_clears_result':True}
 

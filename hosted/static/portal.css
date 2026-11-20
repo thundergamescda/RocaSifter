@@ -5,3 +5,56 @@
 #accountSecurity{margin-top:24px}#accountSecurity>p:not(.eyebrow):not(.status),#mfaSignin>p:not(.eyebrow):not(.status){font-size:14px;color:var(--muted)}#mfaSetupKey{font-family:ui-monospace,Consolas,monospace;font-size:13px}#mfaRecoveryCodes{font:12px/1.9 ui-monospace,Consolas,monospace;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere;user-select:all}#mfaEnrollment,#mfaRecoveryResult{padding-top:20px;border-top:1px solid var(--line);margin-top:24px}#mfaManageForm>.quiet{margin-top:12px}#cancelMfaSignin{margin-top:16px}
 
 .workspace-links{display:flex;flex-wrap:wrap;gap:8px 16px;margin:4px 0 16px;padding-bottom:16px;border-bottom:1px solid var(--line)}.workspace-links a{font-size:13px;font-weight:650;max-width:100%;overflow-wrap:anywhere}.portal-details{margin-top:20px;min-width:0}.portal-details>summary{cursor:pointer;font-size:13px;font-weight:650;color:var(--ink);padding:8px 0;overflow-wrap:anywhere}.portal-details>summary:focus-visible{outline:3px solid #b74e3840;outline-offset:3px}.portal-details[open]>summary{margin-bottom:12px}.service-setup{margin-top:16px}.service-setup>.help{margin:0 0 14px}#squareConnection,#accountSecurity{scroll-margin-top:24px}#squareConnection:focus-visible,#accountSecurity:focus-visible{outline:3px solid #b74e3840;outline-offset:5px}#mfaSecurityStatus[data-tone="success"]{color:#23633d}#mfaSecurityStatus[data-tone="info"]{color:#526171}#mfaSecurityStatus[data-tone="error"]{color:var(--rust)}
+
+/* Stock lookup only: retain native controls, exact values and shared portal styles. */
+.stock-page .stock-header{justify-content:space-between;flex-wrap:wrap;gap:16px}
+.stock-page .stock-brand{display:flex;align-items:center;gap:12px;min-width:0}
+.stock-page .stock-brand>div{min-width:0}
+.stock-page .stock-header>a{font-size:13px;font-weight:650}
+.stock-page .intro{margin:40px 0 28px;max-width:760px}
+.stock-page .intro h1{font-size:clamp(32px,4.2vw,44px)}
+.stock-page .stock-workbench{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:32px;max-width:none;align-items:start}
+.stock-page .stock-workbench>*{min-width:0}
+.stock-page .stock-controls h2,.stock-page .stock-report h2{margin-bottom:18px}
+.stock-page #stockRefreshSession{font-size:13px;margin-bottom:20px}
+.stock-page #stockForm label{margin-bottom:16px}
+.stock-page #stockSkuHelp{margin:0 0 18px;font-size:12px}
+.stock-page #stockStatus{margin:18px 0 0;overflow-wrap:anywhere}
+.stock-page .stock-report{grid-column:2;grid-row:1;padding:0 0 0 28px;border-top:0;border-left:1px solid var(--line)}
+.stock-page #stockResultSummary{margin:0 0 18px}
+.stock-page .stock-quantity{padding:16px;background:var(--paper);border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
+.stock-page .stock-quantity label{margin:0;gap:8px}
+.stock-page .stock-quantity input{font-size:24px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.2;background:transparent;border:0;border-radius:3px;padding:2px 0}
+.stock-page .stock-quantity input:focus{outline:3px solid var(--rust);outline-offset:3px}
+.stock-page .stock-quantity .help{margin:8px 0 0;font-size:12px}
+.stock-page #stockResultQualifications{margin:0 0 18px;font-size:12px}
+.stock-page .stock-report-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.stock-page .stock-report-fields label{min-width:0;margin:0;font-size:12px}
+.stock-page .stock-report-fields .stock-wide{grid-column:1/-1}
+.stock-page .stock-report input[readonly]{font-variant-numeric:tabular-nums}
+.stock-page .stock-report-fields input{font-size:13px;background:#fafaf9;padding:10px 11px}
+.stock-page .stock-times{margin-top:18px}
+.stock-page .stock-times .help{margin:7px 0 0;font-size:12px;max-width:none;overflow-wrap:anywhere}
+.stock-page .stock-report .portal-details{margin-top:14px}
+.stock-page .stock-report .portal-details input{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.stock-page .stock-empty{display:none;grid-column:2;grid-row:1;border-left:1px solid var(--line);padding:24px 0 24px 28px;align-self:stretch}
+.stock-page #stockResult[hidden]+.stock-empty{display:block}
+.stock-page .stock-empty h2{font-size:24px;line-height:1.25;max-width:320px;margin-bottom:16px}
+.stock-page .stock-empty .help{margin:14px 0 0;font-size:14px;max-width:370px}
+.stock-page footer{margin-top:28px}
+@media(max-width:860px){
+  .stock-page .stock-workbench{grid-template-columns:minmax(0,1fr);gap:24px}
+  .stock-page .stock-report{grid-column:1;grid-row:auto;border-left:0;border-top:1px solid var(--line);padding:24px 0 0}
+  .stock-page .stock-empty{grid-column:1;grid-row:auto;border-left:0;border-top:1px solid var(--line);padding:24px 0 0}
+}
+@media(max-width:600px){
+  .stock-page .stock-header{gap:14px}
+  .stock-page .stock-header .mark{width:36px;height:36px;border-radius:9px}
+  .stock-page .stock-brand strong{font-size:17px}
+  .stock-page .stock-brand span{font-size:8px;letter-spacing:1.8px}
+  .stock-page .intro{margin:32px 0 24px}
+  .stock-page .stock-workbench{padding:22px}
+  .stock-page .stock-report-fields{grid-template-columns:minmax(0,1fr)}
+  .stock-page .stock-quantity input{font-size:18px}
+  .stock-page .stock-empty h2{font-size:21px}
+}

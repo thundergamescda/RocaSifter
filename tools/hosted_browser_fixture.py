@@ -569,7 +569,7 @@ class _SquareSkuReadTransport:
     trust_env=False
     STOCK_MODES=frozenset(('stock_positive','stock_zero','stock_negative','stock_fractional','stock_missing',
         'stock_estimated','stock_no_time','stock_malformed','stock_variable','stock_options','stock_measured',
-        'stock_conversion','stock_qualified'))
+        'stock_conversion','stock_qualified','stock_max_quantity','stock_max_integer'))
     MODES=frozenset(('match','empty','case_variant','ambiguous','incomplete','unavailable'))|STOCK_MODES
     def __init__(self,fixture,token,merchant,expiry,application):
         self.fixture=fixture;self._token=token;self._merchant=merchant
@@ -643,7 +643,8 @@ class _SquareSkuReadTransport:
             return self._deny('POST','https://connect.squareup.com/v2/inventory/counts/batch-retrieve')
         if mode=='stock_missing':return {'counts':[]}
         quantities={'stock_zero':'+000.00000','stock_negative':'-0002.00000','stock_fractional':'+0002.12500',
-            'stock_measured':'0.12500','stock_conversion':'3.00000','stock_malformed':'1e3'}
+            'stock_measured':'0.12500','stock_conversion':'3.00000','stock_malformed':'1e3',
+            'stock_max_quantity':'-0000000000000000001.12500','stock_max_integer':'00000000000000000000000007'}
         row={'catalog_object_id':f.variation_id,'catalog_object_type':'ITEM_VARIATION','location_id':locations[0],
             'state':'IN_STOCK','quantity':quantities.get(mode,'+0007.00000'),'calculated_at':'2026-10-01T12:34:56Z',
             'is_estimated':mode=='stock_estimated'}
