@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock lookup · Stock &amp; Sleeve</title><link rel="icon" href="/static/brand-icon.png">
+<link rel="stylesheet" href="/static/portal.css"><script src="/static/stock_lookup.js" defer></script></head>
+<body><main class="shell"><header><a href="/">Back to workspace</a></header>
+<section class="intro"><p class="eyebrow">STORE STOCK</p><h1>Check a Square SKU.</h1>
+<p>Square-reported stock at the selected location; physical stock may differ.</p></section>
+<section class="panel" aria-labelledby="stockTitle"><h2 id="stockTitle">Stock lookup</h2>
+<p id="stockSession" class="status" role="status" aria-live="polite">Checking your staff session…</p>
+<button id="stockRefreshSession" type="button" class="quiet">Refresh staff session</button>
+<form id="stockForm" hidden><label for="stockLocation">Square location<select id="stockLocation" required><option value="">Choose a location</option></select></label>
+<label for="stockSku">Exact Square SKU<input id="stockSku" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="stockSkuHelp"></label>
+<p id="stockSkuHelp" class="help">Enter or scan a Square SKU of up to 100 characters, keeping its capitalization, spaces and leading zeros.</p>
+<button id="stockCheck" type="submit" disabled>Check stock</button></form>
+<p id="stockStatus" class="status" role="status" aria-live="polite"></p>
+<section id="stockResult" class="status-card" aria-labelledby="stockResultTitle" hidden>
+<h2 id="stockResultTitle">Square stock report</h2><p id="stockResultSummary"></p>
+<label>Exact SKU<input id="stockResultSku" readonly autocomplete="off"></label>
+<label>Square item<input id="stockResultItem" readonly autocomplete="off"></label>
+<label>Square variation<input id="stockResultVariation" readonly autocomplete="off"></label>
+<label>Selected location<input id="stockResultLocation" readonly autocomplete="off"></label>
+<label>Square quantity · IN_STOCK<input id="stockResultQuantity" readonly autocomplete="off"></label>
+<p id="stockResultUnit" class="help"></p><p id="stockResultQualifications" class="help"></p>
+<p id="stockResultChecked" class="help"></p><p id="stockResultUpdated" class="help"></p>
+<details class="portal-details"><summary>Square references</summary>
+<label>Variation reference<input id="stockResultId" readonly autocomplete="off"></label>
+<label>Parent item reference<input id="stockResultParent" readonly autocomplete="off"></label></details>
+</section></section><footer>Stock &amp; Sleeve · Store operations</footer></main></body></html>

@@ -62,6 +62,10 @@ HOSTED_RECOVERY_FILES = {
     'hosted/staff_password_recovery.py', 'hosted/static/staff_password_recovery.js',
     'hosted/templates/staff_password_recovery.html',
 }
+HOSTED_STOCK_FILES = {
+    'hosted/stock_lookup.py', 'hosted/static/stock_lookup.js',
+    'hosted/templates/stock_lookup.html',
+}
 BROWSER_TOOL_FILES = {
     'tools/hosted_browser_ci.py', 'tools/hosted_browser_fixture.py', 'tools/hosted_browser_cases.py',
     'tools/hosted_browser_constraints.txt', 'tools/hosted_browser_requirements.txt',
@@ -144,9 +148,9 @@ def source_snapshot():
 
 def verify_source_scope(snapshot):
     required = (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES |
-                HOSTED_RECOVERY_FILES | {'requirements-hosted.txt'})
+                HOSTED_RECOVERY_FILES | HOSTED_STOCK_FILES | {'requirements-hosted.txt'})
     require(required.issubset(snapshot), 'COPIED_SOURCE_REQUIRED_INPUT_MISSING')
-    require(len(snapshot) == 84 and
+    require(len(snapshot) == 87 and
             all(path in required or path.startswith('hosted/') for path in snapshot),
             'COPIED_SOURCE_SCOPE_MISMATCH')
 
@@ -1006,7 +1010,7 @@ def main():
         'error_codes': errors, 'error_types': error_types,
         'last_stage': stage, 'failure_stage': failure_stage,
         'source_scope_matches': (SHARED_PRODUCTION_FILES | BROWSER_TOOL_FILES | HOSTED_AUTHORITY_FILES |
-                                HOSTED_RECOVERY_FILES | {'requirements-hosted.txt'}).issubset(before) and len(before) == 84 and
+                                HOSTED_RECOVERY_FILES | HOSTED_STOCK_FILES | {'requirements-hosted.txt'}).issubset(before) and len(before) == 87 and
             all(path.startswith('hosted/') or path in SHARED_PRODUCTION_FILES or
                 path in BROWSER_TOOL_FILES or path == 'requirements-hosted.txt' for path in before),
         'source_stable': stable, 'copied_source_count': len(before),

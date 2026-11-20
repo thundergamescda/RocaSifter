@@ -26,7 +26,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 540
+POSTGRES_EXPECTED_COUNT = 549
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',

@@ -24,9 +24,10 @@ from .intake import IntakeClaims, IntakeError
 from .receiving import Receiving,restoration_source_bytes
 from .receiving_pipeline import CatalogReceiving
 from .receiving_square import ReceivingSquare
-from .receiving_plan import ReceivingError,public_response_bytes
+from .receiving_plan import ReceivingError,public_response_bytes,canonical
 from .owner_onboarding import OwnerOnboarding,EnrollmentError
 from .cleanup_observer import CleanupObserver,CleanupObserverError
+from .stock_lookup import StockLookup
 
 
 def create_app(config=None,*,database=None,square_transport=None):
@@ -59,6 +60,7 @@ def create_app(config=None,*,database=None,square_transport=None):
     intake=IntakeClaims(db) if db else None
     owner_onboarding=OwnerOnboarding(db) if db else None
     receiving=CatalogReceiving(db,ReceivingSquare(square),square.cipher,writes_enabled=app.config.get('RECEIVING_WRITES_ENABLED') is True) if db else None
+    stock_lookup=StockLookup(db,square) if db else None
     cleanup_observer=CleanupObserver(db,square,enabled=app.config.get('CLEANUP_OBSERVER_ENABLED') is True,
         allowed_environments=app.config.get('CLEANUP_OBSERVER_ALLOWED_ENVIRONMENTS',('production',))) if db else None
     privacy=Privacy(db,authorize_session=lambda token:auth.resolve(token),
@@ -67,6 +69,7 @@ def create_app(config=None,*,database=None,square_transport=None):
     app.extensions.update(ss_database=db,ss_auth=auth,ss_ledger=ledger,ss_square=square,ss_trades=trades,ss_privacy=privacy,ss_intake=intake,ss_receiving=receiving)
     app.extensions['ss_owner_onboarding']=owner_onboarding
     app.extensions['ss_cleanup_observer']=cleanup_observer
+    app.extensions['ss_stock_lookup']=stock_lookup
 
     def require_db():
         if db is None:raise ServiceError('Database configuration is required.',503)
@@ -434,6 +437,23 @@ def create_app(config=None,*,database=None,square_transport=None):
     @app.get('/api/receiving/readiness')
     @authenticated
     def receiving_readiness():return jsonify(receiving.readiness(g.actor))
+
+    @app.get('/stock')
+    def stock_page():return render_template('stock_lookup.html')
+
+    @app.get('/api/stock/locations')
+    @authenticated
+    def stock_locations():
+        if request.args:raise ServiceError('Stock locations do not accept query fields.')
+        return Response(canonical(stock_lookup.locations(g.actor)),mimetype='application/json')
+
+    @app.get('/api/stock/lookup')
+    @authenticated
+    def stock_lookup_result():
+        if (set(request.args)!={'sku','location_id'}
+                or any(len(request.args.getlist(key))!=1 for key in ('sku','location_id'))):
+            raise ServiceError('Supply one exact Square SKU and one stock location.')
+        return Response(canonical(stock_lookup.lookup(g.actor,request.args['sku'],request.args['location_id'])),mimetype='application/json')
 
     @app.get('/receiving/catalog')
     def receiving_catalog_page():return render_template('receiving_admin.html')
