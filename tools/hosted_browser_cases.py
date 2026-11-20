@@ -1,4 +1,4 @@
-"""Ten preserved portal flows plus five owned fictional-Square HTTPS flows.
+"""Fifteen preserved portal/SKU flows plus six actual HTTPS staff stock flows.
 
 Root owns the browser, private trust store, service fixture and evidence capture.
 No auth/me fulfilment, cookie injection, traces, secret logging or desktop imports.
@@ -900,6 +900,321 @@ def exact_sku_actual_pagehide_and_network_back_navigation(ctx):
         # Actual BFCache restoration remains deferred; no synthetic pageshow.
 
 
+# Six additional actual HTTPS staff-page flows. Source definitions remain UNRUN.
+STOCK_CAPTURE_NAMES = {
+    'HUI16': ('hui16-stock-desktop.png', 'hui16-stock-mobile.png'),
+    'HUI17': ('hui17-stock-unknown.png',),
+    'HUI18': ('hui18-stock-unit.png',),
+    'HUI19': (), 'HUI20': (), 'HUI21': (),
+}
+
+
+@contextmanager
+def _stock_case(parent):
+    fixture=parent.fixture.square_sku_fixture()
+    ctx=type(parent)(fixture,parent.browser);ctx.case_id=parent.case_id
+    parent.require(ctx.case_id in STOCK_CAPTURE_NAMES and
+        parent.fixture._application.config['SQUARE_ENVIRONMENT']=='sandbox' and
+        fixture._application.config['SQUARE_ENVIRONMENT']=='production','STOCK_SEPARATE_REAL_APPLICATIONS')
+    try:yield ctx
+    finally:
+        ctx.close_contexts()
+        parent.cleanup_complete=parent.cleanup_complete and ctx.cleanup_complete
+        parent.ledger_overflow=parent.ledger_overflow or ctx.ledger_overflow
+        for name in ('network','js_errors','console_events','restore_diagnostics'):
+            for row in getattr(ctx,name):parent._append(getattr(parent,name),row)
+        names=tuple(row['name'] for row in ctx.screenshots)
+        parent.require(len(set(names))==len(names) and all(name in STOCK_CAPTURE_NAMES[ctx.case_id] for name in names),
+            'STOCK_ONLY_FOUR_ADMITTED_CAPTURE_NAMES')
+        parent.require(len(parent.screenshots)+len(ctx.screenshots)<=20 and
+            parent.screenshot_bytes+ctx.screenshot_bytes<=6*1024*1024,'STOCK_AGGREGATE_CAPTURE_BOUNDS')
+        parent.screenshots.extend(ctx.screenshots);parent.screenshot_bytes+=ctx.screenshot_bytes
+        summary=fixture.transport.summary()
+        parent.require(summary['write_attempts']==0 and summary['denied_attempts']==0 and fixture.provider_attempts==0,
+            'STOCK_ZERO_PROVIDER_WRITE_OR_DENIED_ATTEMPTS')
+        parent.require(summary['responses_created']==summary['responses_closed'],'STOCK_ALL_READ_RESPONSES_CLOSED')
+
+
+def _stock_actor(ctx,role,viewport=None):
+    if role=='owner':return _sku_owner(ctx)
+    context=ctx.new_context(viewport=(viewport or DESKTOP).copy());page=context.new_page()
+    _sign_in(ctx,page,role,code=ctx.case_id+'_'+role.upper())
+    return context,page
+
+
+def _stock_open(ctx,page):
+    link=page.get_by_role('link',name='Stock lookup',exact=True)
+    ctx.require(link.count()==1 and link.get_attribute('href')=='/stock',ctx.case_id+'_REAL_WORKSPACE_STOCK_LINK')
+    link.focus()
+    ctx.require(page.evaluate("document.activeElement.getAttribute('href')==='/stock'"),ctx.case_id+'_NATIVE_LINK_FOCUS')
+    with page.expect_navigation(wait_until='load',timeout=15000) as navigation:
+        page.keyboard.press('Enter')
+    response=navigation.value
+    ctx.require(response is not None and response.status==200 and page.url==ctx.fixture.origin+'/stock',
+        ctx.case_id+'_NATIVE_STOCK_NAVIGATION')
+    ctx.require(response.all_headers().get('strict-transport-security')=='max-age=31536000' and
+        response.all_headers().get('cache-control')=='no-store',ctx.case_id+'_STOCK_HTTPS_NO_STORE')
+    _visible(ctx,page,'#stockForm',ctx.case_id+'_REAL_SESSION_AND_LOCATIONS')
+    _enabled(ctx,page,'#stockRefreshSession',ctx.case_id+'_STOCK_SESSION_READY')
+    ctx.require(page.locator('#stockLocation option').count()==3,ctx.case_id+'_TWO_OWNED_ACTIVE_LOCATIONS')
+
+
+def _stock_workspace(ctx,page):
+    page.get_by_role('link',name='Back to workspace',exact=True).click()
+    _visible(ctx,page,'#workspace',ctx.case_id+'_BACK_TO_REAL_WORKSPACE')
+    _observer_ready(ctx,page,ctx.case_id+'_BACK_WORKSPACE_READY')
+
+
+def _stock_lookup(ctx,page,*,catalog='match',count='reported',location=None):
+    page.locator('#stockLocation').select_option(location or ctx.fixture.location_a)
+    page.locator('#stockSku').fill(ctx.fixture.sku)
+    ctx.require(page.locator('#stockSku').input_value()==ctx.fixture.sku and
+        page.locator('#stockCheck').text_content()=='Check stock',ctx.case_id+'_EXACT_MANUAL_INPUT')
+    with page.expect_response(lambda response:response.request.method=='GET' and
+        response.url.startswith(ctx.fixture.origin+'/api/stock/lookup?'),timeout=15000) as reply:
+        page.locator('#stockSku').press('Enter')
+    response=reply.value
+    ctx.require(response.status==200 and 'set-cookie' not in response.all_headers(),ctx.case_id+'_REAL_STOCK_200_NO_COOKIE')
+    response.finished();value=response.json()
+    ctx.require(value.get('stock_lookup_version')==1 and value.get('requested_sku')==ctx.fixture.sku and
+        value.get('location_id')==(location or ctx.fixture.location_a) and value.get('atomic_snapshot') is False and
+        value.get('catalog_state')==catalog and value.get('count_state')==count,ctx.case_id+'_ACTUAL_TYPED_STOCK_RESULT')
+    _enabled(ctx,page,'#stockCheck',ctx.case_id+'_STOCK_LOOKUP_SETTLED')
+    ctx.require(page.locator('#stockCheck').text_content()=='Check again',ctx.case_id+'_EXPLICIT_MANUAL_RETRY')
+    return value
+
+
+def _stock_empty(ctx,page,code):
+    ctx.require(page.locator('#stockResult').is_hidden(),code+'_HIDDEN')
+    for suffix in ('Sku','Item','Variation','Location','Quantity','Id','Parent'):
+        ctx.require(page.locator('#stockResult'+suffix).input_value()=='',code+'_FIELDS_EMPTY')
+    for suffix in ('Summary','Unit','Qualifications','Checked','Updated'):
+        node=page.locator('#stockResult'+suffix)
+        ctx.require(node.text_content()=='' and node.get_attribute('title') is None and
+            node.get_attribute('data-timestamp') is None,code+'_TEXT_AND_TIMES_EMPTY')
+
+
+def _stock_report(ctx,page,value,quantity,availability):
+    _visible(ctx,page,'#stockResult',ctx.case_id+'_REPORT_VISIBLE')
+    ctx.require(value['availability']==availability and value['inventory']['quantity']==quantity and
+        value['inventory']['state']=='IN_STOCK' and page.locator('#stockResultQuantity').input_value()==quantity,
+        ctx.case_id+'_RAW_QUANTITY_NOT_ROUNDED')
+    for suffix,expected in (('Sku',ctx.fixture.sku),('Item',ctx.fixture.literal_name),('Variation',ctx.fixture.literal_variation),
+        ('Id',ctx.fixture.variation_id),('Parent',ctx.fixture.parent_id)):
+        ctx.require(page.locator('#stockResult'+suffix).input_value()==expected,ctx.case_id+'_LITERAL_EXACT_REFERENCE')
+    ctx.require(page.locator('#stockResult img,#stockResult script').count()==0,ctx.case_id+'_NO_PROVIDER_HTML_EXECUTION')
+
+
+def _stock_times(ctx,page,value):
+    for suffix,prefix,stamp in (('Checked','Checked at: ',value['read_completed_at']),
+        ('Updated','Last affecting update: ',value['inventory']['calculated_at'])):
+        actual=page.locator('#stockResult'+suffix)
+        expected=page.evaluate('''({prefix,stamp})=>prefix+new Intl.DateTimeFormat(undefined,
+            {dateStyle:'medium',timeStyle:'short'}).format(new Date(stamp))''',{'prefix':prefix,'stamp':stamp})
+        ctx.require(actual.text_content()==expected and actual.get_attribute('title')==stamp and
+            actual.get_attribute('data-timestamp')==stamp,ctx.case_id+'_LOCALE_TIME_AND_EXACT_SOURCE')
+    ctx.require(page.evaluate("new Intl.DateTimeFormat().resolvedOptions().locale==='en-US'&&new Intl.DateTimeFormat().resolvedOptions().timeZone==='America/Boise'"),
+        ctx.case_id+'_UNCHANGED_LOCALE_TIMEZONE')
+    ctx.require(value['inventory']['calculated_at']!=value['read_completed_at'],ctx.case_id+'_CHECK_TIME_DISTINCT_FROM_STOCK_UPDATE')
+
+
+def _stock_capture(ctx,page,name):
+    ctx.require(name in STOCK_CAPTURE_NAMES[ctx.case_id],ctx.case_id+'_ADMITTED_STOCK_CAPTURE')
+    ctx.screenshot(page,name,mask_selectors=('#stockSession',))
+
+
+def _stock_no_mutation(ctx,before):
+    _sku_no_mutation(ctx,before)
+    ctx.require(not any(row['event']=='request' and row['method']!='GET' and row['path'].startswith('/api/stock/')
+        for row in ctx.network),ctx.case_id+'_ONLY_STOCK_GET_REQUESTS')
+
+
+@contextmanager
+def _stock_terminal(ctx,page):
+    terminals={'finished':0,'failed':0}
+    def record(kind,request):
+        if request.method=='GET' and request.url.startswith(ctx.fixture.origin+'/api/stock/lookup?'):
+            terminals[kind]=min(2,terminals[kind]+1)
+    def finished(request):record('finished',request)
+    def failed(request):record('failed',request)
+    page.on('requestfinished',finished);page.on('requestfailed',failed)
+    try:yield terminals
+    finally:
+        page.remove_listener('requestfinished',finished);page.remove_listener('requestfailed',failed)
+
+
+def _stock_wait_terminal(ctx,page,terminals):
+    deadline=time.monotonic()+15
+    while not any(terminals.values()) and time.monotonic()<deadline:page.wait_for_timeout(50)
+    ctx.require(sum(terminals.values())==1,ctx.case_id+'_ONE_ACTUAL_LOOKUP_TERMINAL')
+    _sku_settle(page)
+
+
+def stock_four_roles_native_enter_literal_and_layout(ctx):
+    with _stock_case(ctx) as stock:
+        stock.fixture.transport.set_mode('stock_positive');before=stock.fixture.protected_snapshot()
+        for role,viewport in [('owner',DESKTOP),('manager',DESKTOP),('buyer',DESKTOP),('cashier',DESKTOP),('cashier',MOBILE)]:
+            context,page=_stock_actor(stock,role,viewport);_stock_open(stock,page)
+            stock.require(page.get_by_label('Square location',exact=True).count()==1 and
+                page.get_by_label('Exact Square SKU',exact=True).count()==1,'HUI16_ACCESSIBLE_INPUT_LABELS')
+            value=_stock_lookup(stock,page);_stock_report(stock,page,value,'+0007.00000','positive');_stock_times(stock,page,value)
+            _text(stock,page,'#stockResultSummary','Square reports positive IN_STOCK quantity.','HUI16_POSITIVE_REPORT')
+            stock.require(page.locator('#stockResultLocation').input_value()=='Fictional counter A','HUI16_SELECTED_LOCATION_LABEL')
+            stock.require(page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'HUI16_NO_VIEWPORT_OVERFLOW')
+            if role=='owner':_stock_capture(stock,page,'hui16-stock-desktop.png')
+            if viewport==MOBILE:_stock_capture(stock,page,'hui16-stock-mobile.png')
+            _stock_workspace(stock,page);_logout(stock,page,'HUI16_'+role.upper()+'_LOGOUT');context.close()
+        _stock_no_mutation(stock,before)
+    return {'four_real_roles':True,'native_enter':True,'exact_literal_sku':True,'desktop_mobile_layout':True}
+
+
+def stock_raw_quantities_and_unknown_outcomes(ctx):
+    with _stock_case(ctx) as stock:
+        _,page=_stock_actor(stock,'cashier');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
+        before=stock.fixture.protected_snapshot()
+        for mode,quantity,availability,summary in (
+            ('stock_zero','+000.00000','zero_reported','Square reports zero IN_STOCK quantity.'),
+            ('stock_negative','-0002.00000','negative_reported','Square reports a negative IN_STOCK quantity.'),
+            ('stock_fractional','+0002.12500','fractional_review','Square reports fractional IN_STOCK quantity.')):
+            stock.fixture.transport.set_mode(mode);value=_stock_lookup(stock,page)
+            _stock_report(stock,page,value,quantity,availability);_text(stock,page,'#stockResultSummary',summary,'HUI17_EXPLICIT_SIGNED_OUTCOME')
+        for mode,state,reason in (('stock_missing','missing','COUNT_NOT_RETURNED'),
+            ('stock_estimated','unknown','COMPOSED_COUNT'),('stock_no_time','unknown','COUNT_TIMESTAMP_UNKNOWN')):
+            stock.fixture.transport.set_mode(mode);value=_stock_lookup(stock,page,count=state)
+            stock.require(value['availability']=='unknown' and value['reason_code']==reason and value['inventory'] is None,
+                'HUI17_NO_NUMERIC_FALLBACK')
+            _visible(stock,page,'#stockResult','HUI17_UNKNOWN_REFERENCE_VISIBLE')
+            stock.require(page.locator('#stockResultQuantity').input_value()=='Unknown' and
+                page.locator('#stockResultUpdated').text_content()=='','HUI17_UNKNOWN_IS_NEVER_ZERO')
+            _text(stock,page,'#stockResultSummary','Square quantity is unknown.','HUI17_TYPED_UNKNOWN_VISIBLE')
+            if mode=='stock_estimated':_stock_capture(stock,page,'hui17-stock-unknown.png')
+        stock.fixture.transport.set_mode('stock_malformed');value=_stock_lookup(stock,page,catalog='incomplete',count='incomplete')
+        stock.require(value['reason_code']=='COUNTS_READ_INCOMPLETE' and value['reference'] is None and value['inventory'] is None,
+            'HUI17_MALFORMED_COUNT_TYPED_INCOMPLETE')
+        _stock_empty(stock,page,'HUI17_MALFORMED_CLEARS_NUMBER')
+        _text(stock,page,'#stockStatus','The complete Square count could not be checked.','HUI17_MALFORMED_EXPLICIT_RETRY')
+        _stock_no_mutation(stock,before)
+    return {'signed_decimal_text_preserved':True,'explicit_zero':True,'unknown_never_zero':True,'malformed_clears_result':True}
+
+
+def stock_price_options_units_and_qualifications(ctx):
+    with _stock_case(ctx) as stock:
+        _,page=_stock_actor(stock,'buyer');stock.fixture.transport.set_mode('stock_variable');_stock_open(stock,page)
+        before=stock.fixture.protected_snapshot()
+        for mode,kind,label,precision,quantity,availability,codes,words in (
+            ('stock_variable','whole','Whole quantities in this Square variation',0,'+0007.00000','positive',
+                ['STOCKABLE','SELLABLE'],'Square marks this variation stockable. Square marks this variation sellable.'),
+            ('stock_options','whole','Whole quantities in this Square variation',0,'+0007.00000','positive',
+                ['STOCKABLE','SELLABLE'],'Square marks this variation stockable. Square marks this variation sellable.'),
+            ('stock_measured','measured','Fixture length (fl)',5,'0.12500','fractional_review',
+                ['STOCKABLE','SELLABLE'],'Square marks this variation stockable. Square marks this variation sellable.'),
+            ('stock_conversion','conversion','Whole quantities in this Square variation; Square conversion variation, no conversion applied here',0,
+                '3.00000','positive',['SELLABLE','CONVERSION'],
+                'Square marks this variation sellable. Quantity is for the requested variation; no unit conversion was applied here.'),
+            ('stock_qualified','whole','Whole quantities in this Square variation',0,'+0007.00000','positive',
+                ['ARCHIVED','STOCKABLE','NOT_SELLABLE','MARKED_SOLD_OUT'],
+                'This Square item is archived. Square marks this variation stockable. This variation is not marked sellable in Square. This variation is marked sold out in Square.')):
+            stock.fixture.transport.set_mode(mode);value=_stock_lookup(stock,page)
+            _stock_report(stock,page,value,quantity,availability);_stock_times(stock,page,value)
+            stock.require(value['reference']['unit']=={'kind':kind,'label':label,'precision':precision} and
+                value['reference']['qualifications']==codes,'HUI18_PRECISE_SUPPORTED_REFERENCE')
+            stock.require(page.locator('#stockResultUnit').text_content()==label and
+                page.locator('#stockResultQualifications').text_content()==words,'HUI18_PRECISE_UNIT_AND_QUALIFICATIONS')
+            if mode=='stock_measured':_stock_capture(stock,page,'hui18-stock-unit.png')
+        _stock_no_mutation(stock,before)
+    return {'price_independent_reference':True,'options_supported':True,'unit_and_conversion_exact':True,'locale_timestamps':True}
+
+
+def stock_pending_native_edits_abort_and_clear(ctx):
+    with _stock_case(ctx) as stock:
+        _,page=_stock_actor(stock,'manager');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
+        before=stock.fixture.protected_snapshot()
+        for edit in ('sku','location'):
+            _stock_lookup(stock,page);_visible(stock,page,'#stockResult','HUI19_PRIOR_REPORT_VISIBLE')
+            with _stock_terminal(stock,page) as terminals:
+                with stock.fixture.stock_reply_gate() as gate:
+                    page.locator('#stockSku').press('Enter');_sku_committed(stock,page,gate,'HUI19_REAL_COMPLETED_LOOKUP')
+                    _stock_empty(stock,page,'HUI19_SUBMIT_CLEARS_PRIOR_REPORT')
+                    stock.require(page.locator('#stockCheck').is_disabled(),'HUI19_ACTUAL_PENDING_CHECK')
+                    if edit=='sku':page.locator('#stockSku').fill('NATIVE-CHANGED-SKU')
+                    else:page.locator('#stockLocation').select_option(stock.fixture.location_b)
+                    _stock_empty(stock,page,'HUI19_NATIVE_EDIT_CLEARS_PENDING_DATA')
+                    stock.require(page.locator('#stockCheck').text_content()=='Check stock','HUI19_EDIT_RESETS_MANUAL_ACTION')
+                    gate.release()
+                _stock_wait_terminal(stock,page,terminals)
+                stock.require(terminals['failed']==1,'HUI19_NATIVE_EDIT_ABORTED_OLD_FETCH')
+            _stock_empty(stock,page,'HUI19_HELD_OLD_REPLY_NEVER_RENDERED')
+            stock.require(page.locator('#stockSku').input_value()==('NATIVE-CHANGED-SKU' if edit=='sku' else stock.fixture.sku) and
+                page.locator('#stockLocation').input_value()==(stock.fixture.location_a if edit=='sku' else stock.fixture.location_b),
+                'HUI19_NATIVE_EDIT_VALUE_PRESERVED')
+        _stock_lookup(stock,page);_visible(stock,page,'#stockResult','HUI19_NEW_MANUAL_CHECK_WORKS');_stock_no_mutation(stock,before)
+    return {'native_input_and_location_edits':True,'old_fetch_aborted':True,'held_real_reply_rejected':True}
+
+
+def stock_logout_new_principal_on_existing_page(ctx):
+    with _stock_case(ctx) as stock:
+        context,page=_stock_actor(stock,'owner');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
+        before=stock.fixture.protected_snapshot();_stock_lookup(stock,page)
+        document=page.evaluate_handle('document');other=context.new_page()
+        other.goto(stock.fixture.origin+'/',wait_until='load',timeout=15000)
+        _visible(stock,other,'#workspace','HUI20_OTHER_REAL_OWNER_WORKSPACE');_observer_ready(stock,other,'HUI20_OTHER_READY')
+        try:
+            with _stock_terminal(stock,page) as terminals:
+                with stock.fixture.stock_reply_gate() as gate:
+                    page.locator('#stockSku').press('Enter');_sku_committed(stock,page,gate,'HUI20_REAL_SUCCESS_BEFORE_LOGOUT')
+                    _logout(stock,other,'HUI20_ACTUAL_OWNER_LOGOUT');page.bring_to_front()
+                    _text(stock,page,'#stockSession','Your session changed.','HUI20_LOGOUT_OBSERVED')
+                    _stock_empty(stock,page,'HUI20_EXISTING_PAGE_CLEARED_AT_LOGOUT')
+                    _sign_in(stock,other,'buyer',code='HUI20_DIFFERENT_REAL_BUYER');page.bring_to_front();_sku_settle(page)
+                    _stock_empty(stock,page,'HUI20_NEW_PRINCIPAL_CANNOT_ADOPT_PRIOR_DATA');gate.release()
+                _stock_wait_terminal(stock,page,terminals)
+            _stock_empty(stock,page,'HUI20_OLD_REPLY_REMAINS_UNUSABLE')
+            stock.require(document.evaluate('node=>node===document') is True and page.url==stock.fixture.origin+'/stock' and
+                page.locator('#stockForm').is_hidden(),'HUI20_ACTUAL_EXISTING_DOCUMENT_BEFORE_RELOAD')
+            page.locator('#stockRefreshSession').click();_visible(stock,page,'#stockForm','HUI20_EXPLICIT_NEW_SESSION_REFRESH')
+            _enabled(stock,page,'#stockRefreshSession','HUI20_NEW_SESSION_SETTLED')
+            stock.require(_me(page)['role']=='buyer','HUI20_REAL_CURRENT_BUYER')
+            _stock_empty(stock,page,'HUI20_REFRESH_DOES_NOT_REUSE_RESULT');read_count=stock.fixture.transport.summary()['count_read']
+            value=_stock_lookup(stock,page);_stock_report(stock,page,value,'+0007.00000','positive')
+            stock.require(stock.fixture.transport.summary()['count_read']==read_count+1,'HUI20_NEW_MANUAL_PROVIDER_COUNT_READ')
+            _stock_no_mutation(stock,before);_logout(stock,other,'HUI20_BUYER_LOGOUT')
+        finally:document.dispose()
+    return {'real_logout_and_new_principal':True,'existing_document_clears_old_data':True,'new_manual_buyer_check':True}
+
+
+def stock_native_pagehide_and_network_back(ctx):
+    with _stock_case(ctx) as stock:
+        _,page=_stock_actor(stock,'cashier');stock.fixture.transport.set_mode('stock_positive');_stock_open(stock,page)
+        before=stock.fixture.protected_snapshot()
+        for pending in (False,True):
+            _stock_lookup(stock,page);_visible(stock,page,'#stockResult','HUI21_REAL_REPORT_BEFORE_NAVIGATION')
+            page.evaluate('''()=>{sessionStorage.removeItem('stock-fixture-pagehide');addEventListener('pagehide',event=>{
+                const ids=['Sku','Item','Variation','Location','Quantity','Id','Parent'];
+                sessionStorage.setItem('stock-fixture-pagehide',JSON.stringify({seen:true,persisted:event.persisted,
+                    hidden:document.getElementById('stockResult').hidden,
+                    empty:ids.every(suffix=>document.getElementById('stockResult'+suffix).value==='')}));
+            },{once:true})}''')
+            if pending:
+                with _stock_terminal(stock,page) as terminals:
+                    with stock.fixture.stock_reply_gate() as gate:
+                        page.locator('#stockSku').press('Enter');_sku_committed(stock,page,gate,'HUI21_REAL_SUCCESS_BEFORE_NAVIGATION')
+                        _stock_workspace(stock,page);gate.release()
+                    _stock_wait_terminal(stock,page,terminals)
+            else:_stock_workspace(stock,page)
+            marker=page.evaluate("JSON.parse(sessionStorage.getItem('stock-fixture-pagehide')||'{}')")
+            stock.require(marker=={'seen':True,'persisted':False,'hidden':True,'empty':True},'HUI21_ACTUAL_PAGEHIDE_CLEARS_DATA')
+            response=page.go_back(wait_until='load',timeout=15000)
+            stock.require(response is not None and response.status==200 and page.url==stock.fixture.origin+'/stock',
+                'HUI21_REAL_NETWORK_BACK_NAVIGATION')
+            _visible(stock,page,'#stockForm','HUI21_FRESH_BACK_STAFF_PAGE');_enabled(stock,page,'#stockRefreshSession','HUI21_BACK_REFRESH_SETTLED')
+            _stock_empty(stock,page,'HUI21_BACK_DOCUMENT_HAS_NO_OLD_REPORT')
+            stock.require(page.locator('#stockSku').input_value()=='' and page.locator('#stockLocation').input_value()=='',
+                'HUI21_BACK_REQUIRES_NEW_MANUAL_INPUT')
+        _stock_no_mutation(stock,before)
+        # Routing/profile remain unchanged; actual BFCache restoration stays DEFERRED.
+    return {'actual_pagehide':True,'network_back_clears_result':True,'bfcache_restore':'deferred_under_default_playwright_profile'}
+
+
 CASE_LABELS = {
     'HUI01': 'Trusted HTTPS, session-cookie protections and real CSRF rejection',
     'HUI02': 'Untrusted CA and hostname mismatch are rejected',
@@ -916,6 +1231,12 @@ CASE_LABELS = {
     'HUI13': 'Native SKU/location clearing and separately labeled DOM-event races',
     'HUI14': 'Completed real SKU reply cannot survive actual logout/new principal',
     'HUI15': 'Actual pagehide/network back navigation; BFCache restore deferred',
+    'HUI16': 'Four real stock roles, native Enter, literal SKU and desktop/mobile layout',
+    'HUI17': 'Raw zero/negative/fractional and missing/unknown/malformed stock outcomes',
+    'HUI18': 'Price/options/units/conversion qualifications and locale stock timestamps',
+    'HUI19': 'Native pending SKU/location edits abort and clear completed old replies',
+    'HUI20': 'Existing stock page rejects old principal and permits new manual buyer check',
+    'HUI21': 'Native stock pagehide/network back clears data; actual BFCache deferred',
 }
 
 CASES = (
@@ -934,4 +1255,10 @@ CASES = (
     ('HUI13', exact_sku_native_edits_and_dom_event_races),
     ('HUI14', exact_sku_completed_reply_after_real_logout),
     ('HUI15', exact_sku_actual_pagehide_and_network_back_navigation),
+    ('HUI16', stock_four_roles_native_enter_literal_and_layout),
+    ('HUI17', stock_raw_quantities_and_unknown_outcomes),
+    ('HUI18', stock_price_options_units_and_qualifications),
+    ('HUI19', stock_pending_native_edits_abort_and_clear),
+    ('HUI20', stock_logout_new_principal_on_existing_page),
+    ('HUI21', stock_native_pagehide_and_network_back),
 )

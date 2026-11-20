@@ -11,10 +11,11 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 from cryptography.fernet import Fernet
+from psycopg.types.json import Jsonb
 
 from hosted.app import create_app
 from hosted.mfa import secret_bytes, totp
-from hosted.receiving_plan import API_VERSION, READ_SCOPES
+from hosted.receiving_plan import API_VERSION, READ_SCOPES, fingerprint
 from hosted.security import ServiceError, password_hash
 from test_hosted_settlement_postgres import _PostgreSQLSettlementFixture
 
@@ -31,7 +32,8 @@ class _Response:
 class _Transport:
     """No network implementation; only fixed fictional reads and normal OAuth."""
     def __init__(self, case):
-        self.case=case;self.calls=[];self.responses=[];self.token='';self.exchanges=0;self.business_writes=0
+        self.case=case;self.calls=[];self.responses=[];self.token='';self.refresh_token='';self.expiry=None
+        self.exchanges=0;self.business_writes=0
         self.scopes=list(READ_SCOPES);self.hook=None;self.count_pages=None;self.search_override=None
         self.location='stock-location-'+uuid.uuid4().hex;self.merchant='stock-merchant-'+uuid.uuid4().hex
         self.variation='stock-variation-'+uuid.uuid4().hex;self.parent='stock-parent-'+uuid.uuid4().hex
@@ -68,18 +70,24 @@ class _Transport:
             if body['grant_type']=='authorization_code':
                 self.case.assertEqual(body['code'],'fictional-stock-code')
                 self.case.assertEqual(body['redirect_uri'],'https://stock-fixture.invalid/oauth/square/callback')
-            else:self.case.assertEqual(body['refresh_token'],'fictional-stock-refresh-'+str(self.exchanges))
+                self.refresh_token='fictional-stock-refresh-'+str(self.exchanges+1)
+            else:
+                self.case.assertEqual(body['refresh_token'],self.refresh_token)
+                self.case.assertIsNotNone(self.expiry)
+            expires=datetime.now(timezone.utc)+timedelta(days=30)
+            # PRIVATE refresh retains its refresh token, changes access and extends expiry.
+            self.expiry=max(expires,self.expiry+timedelta(seconds=1)) if body['grant_type']=='refresh_token' else expires
             self.exchanges+=1;self.token='fictional-stock-access-'+str(self.exchanges)
-            value={'access_token':self.token,'refresh_token':'fictional-stock-refresh-'+str(self.exchanges),
+            value={'access_token':self.token,'refresh_token':self.refresh_token,
                    'merchant_id':self.merchant,'client_id':'fictional-stock-app','token_type':'bearer',
-                   'expires_at':(datetime.now(timezone.utc)+timedelta(days=30)).isoformat()}
+                   'expires_at':self.expiry.isoformat()}
         else:
             self.case.assertEqual(options['headers'],{'Square-Version':API_VERSION,'Authorization':'Bearer '+self.token,
                                                        'Content-Type':'application/json'})
             if method=='POST' and path=='/oauth2/token/status':
                 self.case.assertNotIn('data',options);self.case.assertNotIn('json',options)
                 value={'client_id':'fictional-stock-app','merchant_id':self.merchant,'scopes':self.scopes,
-                       'expires_at':(datetime.now(timezone.utc)+timedelta(days=30)).isoformat()}
+                       'expires_at':self.expiry.isoformat()}
             elif method=='GET' and path=='/v2/locations':
                 self.case.assertNotIn('data',options);value={'locations':deepcopy(self.locations)}
             elif method=='POST' and path=='/v2/catalog/search':
@@ -289,12 +297,41 @@ class PostgreSQLStockLookupAcceptance(_PostgreSQLSettlementFixture):
         with self.database.transaction() as db:
             connection=db.execute('SELECT authorization_generation,merchant_id FROM ss_square_connections WHERE tenant_id=%s',(self.tenant,)).fetchone()
         changes=(('revoked_at=clock_timestamp()',()),('authorization_generation=%s',(uuid.uuid4(),)),
-                 ('merchant_id=%s',('changed-merchant',)),('pending_notice_cursor=1',()))
+                 ('merchant_id=%s',('changed-merchant',)),('pending_notice_cursor',()))
         for clause,values in changes:
+            committed={}
             def change(clause=clause,values=values):
-                with self.database.transaction() as db:db.execute('UPDATE ss_square_connections SET '+clause+' WHERE tenant_id=%s',values+(self.tenant,))
+                if clause=='pending_notice_cursor':
+                    event='fictional-stock-pending-'+uuid.uuid4().hex
+                    evidence={'event_id':event,'merchant_id':self.transport.merchant,'type':'oauth.authorization.revoked'}
+                    with self.database.transaction() as db:
+                        self.square._notice_barrier(db)  # First SQL; same receipt-allocation barrier as ingress.
+                        receipt=db.execute('''INSERT INTO ss_square_revocation_receipts
+                            (application_id,environment,event_id,merchant_id,body_hash,outcome)
+                            VALUES (%s,%s,%s,%s,%s,%s) RETURNING notice_cursor''',
+                            (self.app.config['SQUARE_APPLICATION_ID'],self.square.environment,event,self.transport.merchant,
+                             fingerprint(evidence),Jsonb({'accepted':True,'revocation_pending':True}))).fetchone()
+                        db.execute('UPDATE ss_square_connections SET pending_notice_cursor=%s WHERE tenant_id=%s',
+                                   (receipt['notice_cursor'],self.tenant))
+                    committed.update(cursor=receipt['notice_cursor'],event=event,body_hash=fingerprint(evidence))
+                else:
+                    with self.database.transaction() as db:db.execute('UPDATE ss_square_connections SET '+clause+' WHERE tenant_id=%s',values+(self.tenant,))
             self.transport.hook=change
             with self.subTest(clause=clause),self.assertRaises(ServiceError):self.lookup()
+            if clause=='pending_notice_cursor':
+                # Outside assertRaises: a swallowed hook/SQL error cannot satisfy the test.
+                self.assertTrue(committed)
+                with self.database.transaction() as db:
+                    pending=db.execute('''SELECT c.pending_notice_cursor,c.revoked_at,r.application_id,r.environment,
+                        r.event_id,r.merchant_id,r.body_hash,r.outcome FROM ss_square_connections c
+                        JOIN ss_square_revocation_receipts r ON r.notice_cursor=c.pending_notice_cursor
+                        WHERE c.tenant_id=%s''',(self.tenant,)).fetchone()
+                self.assertIsNotNone(pending);self.assertEqual(pending['pending_notice_cursor'],committed['cursor'])
+                self.assertEqual(pending['event_id'],committed['event']);self.assertEqual(pending['body_hash'],committed['body_hash'])
+                self.assertEqual(pending['application_id'],self.app.config['SQUARE_APPLICATION_ID'])
+                self.assertEqual(pending['environment'],self.square.environment);self.assertEqual(pending['merchant_id'],self.transport.merchant)
+                self.assertEqual(pending['outcome'],{'accepted':True,'revocation_pending':True})
+                self.assertIsNone(pending['revoked_at'])  # Isolate pending-notice denial from the revoked-at case.
             with self.database.transaction() as db:
                 db.execute('''UPDATE ss_square_connections SET revoked_at=NULL,authorization_generation=%s,merchant_id=%s,
                     pending_notice_cursor=NULL WHERE tenant_id=%s''',(connection['authorization_generation'],connection['merchant_id'],self.tenant))
@@ -339,8 +376,14 @@ class PostgreSQLStockLookupAcceptance(_PostgreSQLSettlementFixture):
         before=self.protected();old=self.transport.exchanges
         with self.database.transaction() as db:
             db.execute("UPDATE ss_square_connections SET token_obtained_at=clock_timestamp()-interval '7 days' WHERE tenant_id=%s",(self.tenant,))
+            previous=db.execute('SELECT encrypted_tokens,expires_at FROM ss_square_connections WHERE tenant_id=%s',(self.tenant,)).fetchone()
+        previous_tokens=json.loads(self.square.cipher.decrypt(previous['encrypted_tokens'].encode()))
         result=self.lookup('cashier');self.assertEqual(result['count_state'],'reported');self.assertEqual(self.transport.exchanges,old+1)
         with self.database.transaction() as db:
-            row=db.execute('SELECT requested_profile,token_obtained_at,clock_timestamp() AS checked_at FROM ss_square_connections WHERE tenant_id=%s',(self.tenant,)).fetchone()
+            row=db.execute('SELECT requested_profile,token_obtained_at,encrypted_tokens,expires_at,clock_timestamp() AS checked_at FROM ss_square_connections WHERE tenant_id=%s',(self.tenant,)).fetchone()
+        renewed_tokens=json.loads(self.square.cipher.decrypt(row['encrypted_tokens'].encode()))
+        self.assertEqual(renewed_tokens['refresh_token'],previous_tokens['refresh_token'])
+        self.assertNotEqual(renewed_tokens['access_token'],previous_tokens['access_token'])
+        self.assertGreater(row['expires_at'],previous['expires_at'])
         self.assertEqual(row['requested_profile'],'standard');self.assertLess((row['checked_at']-row['token_obtained_at']).total_seconds(),60)
         self.assertEqual(set(self.transport.scopes),set(READ_SCOPES));self.assert_safe(before)

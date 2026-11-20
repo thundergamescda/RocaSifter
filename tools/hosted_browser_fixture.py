@@ -565,19 +565,23 @@ class _SquareSkuResponse:
 
 
 class _SquareSkuReadTransport:
-    """No network implementation. Only four fixed fictional read endpoints."""
+    """No network implementation. Only five fixed fictional read endpoints."""
     trust_env=False
-    MODES=frozenset(('match','empty','case_variant','ambiguous','incomplete','unavailable'))
+    STOCK_MODES=frozenset(('stock_positive','stock_zero','stock_negative','stock_fractional','stock_missing',
+        'stock_estimated','stock_no_time','stock_malformed','stock_variable','stock_options','stock_measured',
+        'stock_conversion','stock_qualified'))
+    MODES=frozenset(('match','empty','case_variant','ambiguous','incomplete','unavailable'))|STOCK_MODES
     def __init__(self,fixture,token,merchant,expiry,application):
         self.fixture=fixture;self._token=token;self._merchant=merchant
         self._expiry=expiry;self._application=application;self._lock=threading.Lock()
         self.mode='match';self.created=self.closed=self.writes=0
-        self.counts={key:0 for key in ('token_status','locations','search','catalog')}
+        self.counts={key:0 for key in ('token_status','locations','search','catalog','count_read')}
     def _deny(self,method='OTHER',url=''):
         with self._lock:
             if method not in ('GET','POST') or method=='POST' and url not in (
                 'https://connect.squareup.com/oauth2/token/status','https://connect.squareup.com/v2/catalog/search',
-                'https://connect.squareup.com/v2/catalog/batch-retrieve'):self.writes+=1
+                'https://connect.squareup.com/v2/catalog/batch-retrieve',
+                'https://connect.squareup.com/v2/inventory/counts/batch-retrieve'):self.writes+=1
         return self.fixture.parent._deny_provider()
     def request(self,*unused,**ignored):return self._deny()
     def get(self,url,**options):return self._read('GET',url,options)
@@ -597,14 +601,61 @@ class _SquareSkuReadTransport:
             'item_variation_data':{'item_id':f.parent_id,'name':f.literal_variation,'sku':f.sku,
                 'pricing_type':'FIXED_PRICING','price_money':{'amount':1000,'currency':'USD'},
                 'track_inventory':mode!='unavailable','stockable':True,'sellable':True}}
+        if mode in self.STOCK_MODES:
+            data=variation['item_variation_data']
+            if mode=='stock_variable':
+                data['pricing_type']='VARIABLE_PRICING';data.pop('price_money')
+            if mode=='stock_options':
+                data['price_money']['currency']='EUR'
+                data['item_option_values']=[{'item_option_id':'fictional-size-option',
+                    'item_option_value_id':'fictional-size-value'}]
+            if mode=='stock_measured':data['measurement_unit_id']=f.measurement_id
+            if mode=='stock_conversion':
+                data['stockable']=False
+                data['stockable_conversion']={'stockable_item_variation_id':f.stockable_id,
+                    'stockable_quantity':'24','nonstockable_quantity':'1'}
+            if mode=='stock_qualified':
+                data['sellable']=False
+                data['location_overrides']=[{'location_id':ident,'track_inventory':True,'sold_out':True}
+                    for ident in (f.location_a,f.location_b)]
+
         parent={'id':f.parent_id,'type':'ITEM','version':17,'is_deleted':False,'present_at_all_locations':True,
             'item_data':{'name':f.literal_name,'product_type':'REGULAR','tax_ids':[], 'variations':[deepcopy(variation)]}}
+        if mode=='stock_qualified':parent['item_data']['is_archived']=True
         return variation,parent
+    def _extra_objects(self,mode):
+        f=self.fixture
+        if mode=='stock_measured':
+            return {f.measurement_id:{'id':f.measurement_id,'type':'MEASUREMENT_UNIT','version':17,'is_deleted':False,
+                'measurement_unit_data':{'precision':5,'measurement_unit':{'type':'TYPE_CUSTOM',
+                    'custom_unit':{'name':'Fixture length','abbreviation':'fl'}}}}}
+        if mode=='stock_conversion':
+            return {f.stockable_id:{'id':f.stockable_id,'type':'ITEM_VARIATION','version':17,'is_deleted':False,
+                'present_at_all_locations':True,'item_variation_data':{'item_id':f.parent_id,'name':'Fictional stock unit',
+                    'sku':'FICTIONAL-STOCK-UNIT','pricing_type':'VARIABLE_PRICING','track_inventory':True,'stockable':True,'sellable':False}}}
+        return {}
+    def _stock_count_value(self,mode,body):
+        f=self.fixture;locations=body.get('location_ids')
+        if (mode not in self.STOCK_MODES or set(body)!={'catalog_object_ids','location_ids','states','limit'}
+            or body.get('catalog_object_ids')!=[f.variation_id] or type(locations) is not list or len(locations)!=1
+            or type(locations[0]) is not str or locations[0] not in (f.location_a,f.location_b)
+            or body.get('states')!=['IN_STOCK'] or type(body.get('limit')) is not int or body['limit']!=1000):
+            return self._deny('POST','https://connect.squareup.com/v2/inventory/counts/batch-retrieve')
+        if mode=='stock_missing':return {'counts':[]}
+        quantities={'stock_zero':'+000.00000','stock_negative':'-0002.00000','stock_fractional':'+0002.12500',
+            'stock_measured':'0.12500','stock_conversion':'3.00000','stock_malformed':'1e3'}
+        row={'catalog_object_id':f.variation_id,'catalog_object_type':'ITEM_VARIATION','location_id':locations[0],
+            'state':'IN_STOCK','quantity':quantities.get(mode,'+0007.00000'),'calculated_at':'2026-10-01T12:34:56Z',
+            'is_estimated':mode=='stock_estimated'}
+        if mode=='stock_no_time':row.pop('calculated_at')
+        return {'counts':[row]}
+
     def _read(self,method,url,options):
         allowed={('POST','https://connect.squareup.com/oauth2/token/status'):'token_status',
             ('GET','https://connect.squareup.com/v2/locations'):'locations',
             ('POST','https://connect.squareup.com/v2/catalog/search'):'search',
-            ('POST','https://connect.squareup.com/v2/catalog/batch-retrieve'):'catalog'}
+            ('POST','https://connect.squareup.com/v2/catalog/batch-retrieve'):'catalog',
+            ('POST','https://connect.squareup.com/v2/inventory/counts/batch-retrieve'):'count_read'}
         kind=allowed.get((method,url));headers=options.get('headers')
         if (kind is None or set(options)-{'headers','timeout','allow_redirects','stream','data'}
             or type(headers) is not dict or set(headers)!={'Authorization','Square-Version','Content-Type'}
@@ -622,7 +673,7 @@ class _SquareSkuReadTransport:
                    'scopes':list(READ_SCOPES),'expires_at':self._expiry.isoformat()}
         elif kind=='locations':
             if options.get('data') is not None:return self._deny(method,url)
-            value={'locations':[{'id':ident,'name':'Fictional counter '+label,'status':'ACTIVE','currency':'USD'}
+            value={'locations':[{'id':ident,'name':'Fictional counter '+label,'status':'ACTIVE','currency':'EUR' if mode=='stock_options' else 'USD'}
                 for ident,label in ((self.fixture.location_a,'A'),(self.fixture.location_b,'B'))]}
         else:
             raw=options.get('data')
@@ -630,13 +681,15 @@ class _SquareSkuReadTransport:
             try:body=json.loads(raw)
             except (ValueError,UnicodeError):return self._deny(method,url)
             if type(body) is not dict:return self._deny(method,url)
-            if kind=='catalog':
-                ids=body.get('object_ids')
+            if kind=='count_read':
+                value=self._stock_count_value(mode,body)
+            elif kind=='catalog':
+                ids=body.get('object_ids');extra=self._extra_objects(mode)
                 if (set(body)!={'object_ids','include_related_objects'} or body.get('include_related_objects') is not True
                     or type(ids) is not list or not 1<=len(ids)<=2 or any(type(ident) is not str for ident in ids) or len(set(ids))!=len(ids)
-                    or any(ident not in (self.fixture.variation_id,self.fixture.parent_id) for ident in ids)):
+                    or any(ident not in {self.fixture.variation_id,self.fixture.parent_id}|set(extra) for ident in ids)):
                     return self._deny(method,url)
-                objects={variation['id']:variation,parent['id']:parent}
+                objects={variation['id']:variation,parent['id']:parent};objects.update(extra)
                 value={'objects':[deepcopy(objects[ident]) for ident in ids],
                        'related_objects':[deepcopy(parent)] if self.fixture.variation_id in ids and self.fixture.parent_id not in ids else []}
             else:
@@ -659,7 +712,8 @@ class _SquareSkuReadTransport:
         with self._lock:self.created+=1
         return response
     def summary(self):
-        with self._lock:return dict(self.counts,responses_created=self.created,responses_closed=self.closed,write_attempts=self.writes)
+        with self._lock:return dict(self.counts,responses_created=self.created,responses_closed=self.closed,write_attempts=self.writes,
+            denied_attempts=self.fixture.provider_attempts)
 
 
 class _SquareSkuFixture:
@@ -678,6 +732,7 @@ class _SquareSkuFixture:
         self._lock=threading.Lock();self._gate=None
         self.sku=' 000Ab^>~7 ';self.variation_id='sku-variation-'+self._nonce;self.parent_id='sku-parent-'+self._nonce
         self.location_a='sku-location-a-'+self._nonce;self.location_b='sku-location-b-'+self._nonce
+        self.measurement_id='stock-measurement-'+self._nonce;self.stockable_id='stock-unit-'+self._nonce
         self.literal_name='<img src=x onerror=fixtureShouldNeverExecute()> & owned card'
         self.literal_variation='<script>fixtureShouldNeverExecute()</script> $10.00'
         with self.database.transaction() as db:parent._database_probe(db,scoped=True)
@@ -721,20 +776,31 @@ class _SquareSkuFixture:
             return {name:db.execute('SELECT count(*) AS n FROM '+name+' WHERE tenant_id=%s',(self._tenant,)).fetchone()['n']
                 for name in ('ss_receiving_bindings','ss_receiving_operations','ss_receiving_steps','ss_credit_entries')}
     def lookup_reply_gate(self):
-        gate=ReplyGate(self)
+        gate=ReplyGate(self);gate._path='/api/receiving/catalog-lookup'
         with self._lock:
             if self._gate is not None:raise PortalFixtureError('fixture_sku_gate_already_armed')
             self._gate=gate
         with self.parent._lock:self.parent._gates.append(gate)
         return gate
+    def stock_reply_gate(self):
+        # One completed real stock response. No route/body/auth fulfilment.
+        gate=ReplyGate(self);gate._path='/api/stock/lookup'
+        with self._lock:
+            if self._gate is not None:raise PortalFixtureError('fixture_sku_gate_already_armed')
+            self._gate=gate
+        with self.parent._lock:self.parent._gates.append(gate)
+        return gate
+
     def _disarm(self,gate):
         with self._lock:
             if self._gate is gate:self._gate=None
     def _dispatch(self,environ,start_response):
         with self.parent._active:self.parent._active_requests+=1
         gate=None
-        if environ.get('REQUEST_METHOD')=='GET' and environ.get('PATH_INFO')=='/api/receiving/catalog-lookup':
-            with self._lock:gate=self._gate;self._gate=None
+        path=environ.get('PATH_INFO')
+        if environ.get('REQUEST_METHOD')=='GET' and path in ('/api/receiving/catalog-lookup','/api/stock/lookup'):
+            with self._lock:
+                if self._gate is not None and self._gate._path==path:gate=self._gate;self._gate=None
         if gate is None:
             try:reply=self._application(environ,start_response)
             except BaseException:
@@ -756,8 +822,12 @@ class _SquareSkuFixture:
             reply=None;raw=b''.join(chunks);status=int(captured['status'].split(' ',1)[0])
             try:
                 value=json.loads(raw)
-                if (status!=200 or type(value) is not dict or value.get('lookup_version')!=1
-                    or value.get('state')!='match' or value.get('lookup_complete') is not True
+                successful=(type(value) is dict and (
+                    (value.get('stock_lookup_version')==1 and value.get('catalog_state')=='match'
+                     and value.get('count_state')=='reported' and type(value.get('inventory')) is dict)
+                    if path=='/api/stock/lookup' else
+                    (value.get('lookup_version')==1 and value.get('state')=='match' and value.get('lookup_complete') is True)))
+                if (status!=200 or not successful
                     or any(name.lower()=='set-cookie' for name,_ in captured['headers'])):
                     raise PortalFixtureError('fixture_sku_real_reply_not_successful')
             except (ValueError,TypeError,PortalFixtureError):

@@ -25,7 +25,7 @@ from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
-EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 16))
+EXPECTED_IDS = tuple('HUI%02d' % number for number in range(1, 22))
 REPORT_NAMES = ('pip-freeze.txt', 'pip-bootstrap-report.json',
                 'pip-install-report.json', 'os-packages.txt')
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -367,6 +367,10 @@ class CaseContext:
                 self.case_id in ('HUI14', 'HUI15') and candidate == self.fixture.origin
                 and method == 'GET' and path == '/api/receiving/catalog-lookup'
                 and failure == 'net::ERR_ABORTED'
+            ) or (
+                self.case_id in ('HUI19', 'HUI20', 'HUI21') and candidate == self.fixture.origin
+                and method == 'GET' and path == '/api/stock/lookup'
+                and failure == 'net::ERR_ABORTED'
             )
         expected_http_error = (
             event == 'response' and candidate == self.fixture.origin and
@@ -557,15 +561,17 @@ class CaseContext:
         require(isinstance(name, str) and bool(re.fullmatch(r'hui[0-9]{2}-[a-z0-9-]{1,48}\.png', name)),
                 'INVALID_SCREENSHOT_NAME')
         require(name.startswith(self.case_id.lower() + '-') and
-                all(item['name'] != name for item in self.screenshots) and len(self.screenshots) < 16,
+                all(item['name'] != name for item in self.screenshots) and len(self.screenshots) < 20,
                 'SCREENSHOT_IDENTITY_OR_COUNT')
         require(origin_of(page.url) == self.fixture.origin, 'SCREENSHOT_ORIGIN')
         defaults = ('input', 'textarea', '#mfaRecoveryCodes', '#mfaSetupKey',
                     '#staffInvitationResult', '#staffList', '#storeName')
-        require(type(mask_selectors) in (tuple, list) and len(mask_selectors) <= len(defaults),
+        approved = defaults + (('#stockSession',) if self.case_id in ('HUI16', 'HUI17', 'HUI18')
+                               and public_path(page.url) == '/stock' else ())
+        require(type(mask_selectors) in (tuple, list) and len(mask_selectors) <= len(approved),
                 'SCREENSHOT_MASK_SELECTOR')
         selectors = defaults + tuple(mask_selectors)
-        require(all(type(selector) is str and selector in defaults for selector in selectors),
+        require(all(type(selector) is str and selector in approved for selector in selectors),
                 'SCREENSHOT_MASK_SELECTOR')
         masks = [page.locator(selector) for selector in selectors]
         privacy = None
@@ -718,7 +724,7 @@ class CaseContext:
                                             'SCREENSHOT_PRIVACY_CONTEXT', 'SCREENSHOT_PRIVACY_HIDDEN') and
                             invariant_code in ('RESTORE_INVARIANTS_AVAILABLE', 'RESTORE_INVARIANTS_EXCEPTION',
                                                'RESTORE_INVARIANTS_INVALID') and
-                            len(self.restore_diagnostics) < 16 and
+                            len(self.restore_diagnostics) < 20 and
                             len(json.dumps(row, allow_nan=False).encode('utf-8')) <= 1024,
                             'SCREENSHOT_PRIVACY_RESTORE_DIAGNOSTIC_BOUNDS')
                     self.restore_diagnostics.append(row)
@@ -731,7 +737,8 @@ class CaseContext:
         self.screenshots.append({
             'name': name, 'case': self.case_id, 'bytes': len(payload),
             'sha256': digest(payload), 'viewport': page.viewport_size,
-            'mask_policy': 'All inputs/textarea plus MFA seed/recovery and staff/invitation/store identity displays',
+            'mask_policy': 'All inputs/textarea plus MFA seed/recovery and staff/invitation/store identity displays' +
+                           (' plus stock session identity' if '#stockSession' in selectors else ''),
             'base64': base64.b64encode(payload).decode('ascii'),
         })
 
@@ -770,6 +777,19 @@ class CaseContext:
         for viewport in ({'width': 1440, 'height': 1000}, {'width': 390, 'height': 844}):
             require(any(item['case'] == 'HUI04' and item['viewport'] == viewport
                         for item in self.screenshots), 'REQUIRED_LAYOUT_SCREENSHOT_MISSING')
+        stock_captures = {
+            'hui16-stock-desktop.png': ('HUI16', {'width': 1440, 'height': 1000}),
+            'hui16-stock-mobile.png': ('HUI16', {'width': 390, 'height': 844}),
+            'hui17-stock-unknown.png': ('HUI17', {'width': 1440, 'height': 1000}),
+            'hui18-stock-unit.png': ('HUI18', {'width': 1440, 'height': 1000}),
+        }
+        require(len(self.screenshots) == 20 and
+                len({item['name'] for item in self.screenshots}) == 20 and
+                sum(item['case'] in ('HUI16', 'HUI17', 'HUI18', 'HUI19', 'HUI20', 'HUI21')
+                    for item in self.screenshots) == 4 and
+                all(sum(item['name'] == name and item['case'] == case and item['viewport'] == viewport
+                        for item in self.screenshots) == 1 for name, (case, viewport) in stock_captures.items()),
+                'EXACT_TWENTY_MASKED_CAPTURES')
 
 
 def web_probe(fixture):
@@ -926,8 +946,8 @@ def main():
             require(all(sku.get(name) is True for name in ('started', 'parent_sandbox_unchanged',
                     'child_production_configured', 'distinct_owned_origin', 'distinct_owned_tenant', 'actual_square_class'))
                     and all(type(sku.get(name)) is int and sku[name] > 0 for name in
-                            ('token_status', 'locations', 'search', 'catalog'))
-                    and sku.get('write_attempts') == 0
+                            ('token_status', 'locations', 'search', 'catalog', 'count_read'))
+                    and sku.get('write_attempts') == 0 and sku.get('denied_attempts') == 0
                     and sku.get('responses_created') == sku.get('responses_closed'),
                     'OWNED_SKU_READ_FIXTURE_INCOMPLETE')
             tls['after'] = web_probe(fixture)
@@ -999,7 +1019,7 @@ def main():
         tls['before'] is not None and tls['after'] is not None
     )
     save_json('browser-summary.json', {
-        'scope': 'Ten preserved portal flows and five owned fictional-Square HTTPS flows; not live Square, desktop or hardware acceptance',
+        'scope': 'Fifteen preserved portal/SKU flows and six actual HTTPS staff stock flows; not live Square, desktop or hardware acceptance',
         'started_utc': started, 'finished_utc': now(), 'source_sha': os.environ['SS_CI_SOURCE_SHA'],
         'passed': passed, 'exit_code': 0 if passed else 1,
         'expected_case_ids': list(EXPECTED_IDS), 'expected_count': len(EXPECTED_IDS),
