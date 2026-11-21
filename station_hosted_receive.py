@@ -693,6 +693,30 @@ class HostedReceive:
             if value['state']=='cancelled_before_write':self.cloud.receiving.finish(receipt['id'],expected)
         return self._view(receipt,value,readiness)
 
+    @_budget_scope
+    def label_authority(self,receipt,expected):
+        """Read current ordinary proof without adopting status or issuing writes."""
+        require_ordinary_receipt(receipt)
+        intent=receipt.get('hosted_receive') or {}
+        if intent.get('state')!='confirmed':
+            raise StationError('Recover this original hosted receiving receipt before creating labels.')
+        saved=self._session(expected,intent['store'])
+        me=self.cloud._authenticated('GET','/api/me',expected_session_id=expected)
+        if (me.get('role') not in ('owner','manager') or me.get('role')!=saved['role']
+            or me.get('store')!=saved['store']
+            or saved.get('tenant_id') is not None and me.get('tenant_id')!=saved['tenant_id']):
+            raise CloudError('An owner or manager must verify these original receiving labels. Sign in again if the staff role changed.',status=403)
+        self._claim(receipt,expected)
+        self._prime_budget(receipt,expected)
+        value=self.cloud.receiving_get(intent['receiving_id'],expected_session_id=expected)
+        proof=self._receipt_proof(receipt,value)
+        if proof!=intent.get('server_receipt'):
+            raise CloudError('The current hosted receipt differs from this saved original. Keep the operation for owner recovery; no labels were published.',status=409,pending=True)
+        return {'store':saved['store'],'tenant_id':saved.get('tenant_id'),
+                'receiving_id':proof['receiving_id'],'receipt_hash':proof['receipt_hash'],
+                'physical_manifest_hash':proof['physical_manifest_hash'],
+                'source_snapshot_hash':proof['source_snapshot_hash']}
+
     def confirmed_cards(self,receipt,cards=None):
         """Reapply only the immutable hosted receipt, never an incoming marker."""
         require_ordinary_receipt(receipt)
