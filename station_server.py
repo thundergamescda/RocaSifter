@@ -1,18 +1,91 @@
 """Loopback-only HTTP interface. Admin credentials are never returned to operators."""
 import json
 import mimetypes
+import socket
+import time
 from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import urlsplit, unquote
 from station_service import StationService
 from station_store import StationError
 from station_cloud import CloudError
+from station_profile import ProfilePolicyError
 
 
 def make_handler(core):
     from http.server import BaseHTTPRequestHandler
 
     class StationHandler(BaseHTTPRequestHandler):
+        _CLOSE_DRAIN_BYTES = 64 * 1024
+        _CLOSE_DRAIN_SECONDS = 0.05
+
+        def handle_one_request(self):
+            self._request_body_bytes = 0
+            self._request_headers_ready = False
+            return super().handle_one_request()
+
+        def parse_request(self):
+            result = super().parse_request()
+            self._request_headers_ready = bool(result and getattr(self, 'headers', None) is not None)
+            return result
+
+        def _framed_request_length(self):
+            if not getattr(self, '_request_headers_ready', False):
+                return None
+            if self.headers.get_all('Transfer-Encoding'):
+                return None
+            values = self.headers.get_all('Content-Length', [])
+            if not values:
+                return 0
+            if len(values) != 1:
+                return None
+            value = values[0].strip(' \t')
+            if not 1 <= len(value) <= 20 or any(char < '0' or char > '9' for char in value):
+                return None
+            return int(value)
+
+        def _drain_closing_input(self):
+            length = self._framed_request_length()
+            remaining = (self._CLOSE_DRAIN_BYTES if length is None else
+                         min(self._CLOSE_DRAIN_BYTES, max(0, length - self._request_body_bytes)))
+            if remaining == 0:
+                return
+            try:
+                previous_timeout = self.connection.gettimeout()
+            except OSError:
+                return
+            try:
+                deadline = time.monotonic() + self._CLOSE_DRAIN_SECONDS
+                self.connection.settimeout(self._CLOSE_DRAIN_SECONDS)
+                self.wfile.flush()
+                try:
+                    self.connection.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+                while remaining:
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        break
+                    self.connection.settimeout(timeout)
+                    chunk = self.rfile.read1(min(8192, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    self.connection.settimeout(previous_timeout)
+                except OSError:
+                    pass
+
+        def finish(self):
+            try:
+                if self.close_connection:
+                    self._drain_closing_input()
+            finally:
+                super().finish()
+
         def log_message(self, *_):
             pass
 
@@ -59,7 +132,7 @@ def make_handler(core):
         def local_request(self):
             host=f'127.0.0.1:{self.server.server_port}'
             if self.headers.get('Host') != host or self.headers.get('Origin',f'http://{host}') != f'http://{host}':
-                self.send_json({'errors':['Open Roca Station through its local launcher.']},403)
+                self.send_json({'errors':['Open Stock & Sleeve from its desktop icon.']},403)
                 return False
             return True
 
@@ -77,6 +150,19 @@ def make_handler(core):
                 return False
             return True
 
+        def clear_cloud_previews(self):
+            self.station.receiving_restoration.clear()
+            labels=getattr(self.station,'receiving_labels',None)
+            if labels is not None:labels.clear()
+            actions=getattr(self.station,'receiving_actions',None)
+            if actions is not None:actions.clear()
+            references=getattr(self.station,'receiving_reference_retirement',None)
+            if references is not None:references.clear()
+            stock=getattr(self.station,'intake_stock_projection',None)
+            if stock is not None:stock.clear()
+            intake_actions=getattr(self.station,'intake_stock_actions',None)
+            if intake_actions is not None:intake_actions.clear()
+
         def do_GET(self):
             if not self.local_request():
                 return
@@ -89,6 +175,26 @@ def make_handler(core):
                     return self.send_json(control.status() if control else {'errors':['No background launcher.']},200 if control else 404)
                 if path=='/api/settings':
                     return self.send_json(self.station.public_settings())
+                if path=='/api/cloud/setup-status':
+                    control=getattr(self.server,'runtime_control',None)
+                    if control and control.stopping.is_set():
+                        return self.send_json({'errors':['The app is stopping. Reopen it before checking store setup.']},503)
+                    return self.send_json(self.station.setup.snapshot(self.headers.get('X-SS-Local-Session','')))
+                if path.startswith('/api/receipt-label-publications/'):
+                    segments=path.split('/')
+                    if len(segments)!=6 or urlsplit(self.path).query:
+                        raise StationError('Use the saved receipt label-pair download link.')
+                    from station_label_publication import OrdinaryLabels
+                    result=OrdinaryLabels(self.station).download(segments[3],segments[4],segments[5],self.headers.get('X-SS-Local-Session',''))
+                    return self.send_bytes(result['content'],content_type=result['contentType'],
+                                           disposition='attachment; filename="'+result['filename']+'"')
+                if path.startswith('/api/cloud/receiving-label-publications/'):
+                    segments=path.split('/')
+                    if len(segments)!=6 or urlsplit(self.path).query:
+                        raise StationError('Use the original-stock publication download link.')
+                    result=self.station.receiving_labels.download(segments[4],segments[5],self.headers.get('X-SS-Local-Session',''))
+                    return self.send_bytes(result['content'],content_type=result['contentType'],
+                                           disposition='attachment; filename="'+result['filename']+'"')
                 if path in ('/api/cloud/session','/api/cloud/pending'):
                     with self.station.cloud.lock:
                         control=getattr(self.server,'runtime_control',None)
@@ -121,12 +227,14 @@ def make_handler(core):
                     return self.send_json({'events':self.station.store.activity(),'tasks':self.station.tasks()})
                 if path.startswith('/files/'):
                     name=unquote(path[7:])
+                    if name.casefold().startswith(('ss-stock-label-','ss-receipt-label-')):
+                        raise StationError('Open this original-stock label publication through its current signed-in stock record.')
                     if name!=Path(name).name or '/' in name or '\\' in name or not name.endswith(('.pdf','.zpl','.csv')):
                         raise StationError('Invalid output filename.')
                     filename=Path(core.OUTPUT_DIR)/name
                 elif path=='/':
                     filename=Path(core.HTML_APP_FILE)
-                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css','/intake-claim.js','/intake-claim.css','/receiving.js','/receiving.css'):
+                elif path in ('/station.js','/station.css','/preview.js','/cloud.js','/cloud.css','/intake.js','/import.js','/import.css','/shared-trade.js','/shared-trade.css','/intake-claim.js','/intake-claim.css','/receiving.js','/receiving.css','/setup.js','/setup.css','/trade-recovery.js','/trade-recovery.css','/receiving-restore.js','/receiving-restore.css','/receiving-labels.js','/receiving-labels.css','/receiving-actions.js','/receiving-actions.css','/receiving-intake-actions.js','/receiving-intake-actions.css'):
                     filename=Path(core.APP_DIR)/path[1:]
                 elif path in ('/assets/stock-and-sleeve.png','/assets/stock-and-sleeve.ico'):
                     filename=Path(core.APP_DIR)/path[1:]
@@ -143,7 +251,9 @@ def make_handler(core):
                 disposition=f'attachment; filename="{filename.name}"' if filename.suffix in ('.csv','.zpl') else None
                 return self.send_bytes(content,content_type=mime+('' if mime=='application/pdf' else '; charset=utf-8'),disposition=disposition)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id,'originalTradeId':exc.original_trade_id},exc.status)
+            except ProfilePolicyError as exc:
+                self.send_json({'errors':[str(exc)],'code':exc.code,'profileRecoveryRequired':exc.code!='HOSTED_WORKFLOW_REQUIRED'},409)
             except StationError as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -155,10 +265,16 @@ def make_handler(core):
             try:
                 if self.headers.get('Content-Type','').split(';')[0]!='application/json':
                     return self.send_json({'errors':['Expected application/json.']},415)
-                size=int(self.headers.get('Content-Length',0))
+                size=self._framed_request_length()
+                if size is None:
+                    self.close_connection=True
+                    raise StationError('Use one valid Content-Length without Transfer-Encoding.')
                 if not 0<size<=20_000_000:
+                    self.close_connection=True
                     raise StationError('Uploads must be between 1 byte and 20 MB.')
-                data=json.loads(self.rfile.read(size).decode())
+                raw=self.rfile.read(size)
+                self._request_body_bytes += len(raw)
+                data=json.loads(raw.decode())
                 if not isinstance(data,dict):
                     raise StationError('Expected a JSON object.')
                 control=getattr(self.server,'runtime_control',None)
@@ -187,12 +303,21 @@ def make_handler(core):
                     with self.station.cloud.lock:
                         if control and control.stopping.is_set():return self.send_json({'errors':['The app is stopping. Reopen it before using shared credit.']},503)
                         return self.dispatch_post(data)
+                # Only ordinary label rendering detaches from the blanket local
+                # lock. Its coordinator owns short profile/session/receipt CAS
+                # fences. All original request framing/origin/stop gates above
+                # remain in force; every other action retains its old locking.
+                segments=self.path.split('/')
+                if len(segments)==5 and segments[1:3]==['api','receipts'] and segments[4]=='labels':
+                    return self.dispatch_post(data)
                 with self.station.lock:
                     if control and control.stopping.is_set():
                         return self.send_json({'errors':['Roca is stopping. Start it again before continuing.']},503)
                     return self.dispatch_post(data)
             except CloudError as exc:
-                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id},exc.status)
+                self.send_json({'errors':[str(exc)],'cloudRequired':exc.status==401,'offline':exc.offline,'pendingRequired':exc.pending,'sessionChanged':exc.session_changed,'mfaRestartRequired':exc.mfa_restart,'code':exc.code,'physicalIntakeId':exc.physical_intake_id,'receivingId':exc.receiving_id,'originalTradeId':exc.original_trade_id},exc.status)
+            except ProfilePolicyError as exc:
+                self.send_json({'errors':[str(exc)],'code':exc.code,'profileRecoveryRequired':exc.code!='HOSTED_WORKFLOW_REQUIRED'},409)
             except (StationError, ValueError, TypeError, KeyError) as exc:
                 self.send_json({'errors':[str(exc)]},400)
             except Exception:
@@ -217,11 +342,16 @@ def make_handler(core):
             if path.startswith('/api/cloud/'):
                 expected=data.get('sessionId','')
                 if not isinstance(expected,str):expected=''
-                if path=='/api/cloud/login':return self.send_json(service.cloud.login(data))
-                if path=='/api/cloud/mfa-verify':return self.send_json(service.cloud.verify_mfa(data))
-                if path=='/api/cloud/mfa-cancel':return self.send_json(service.cloud.cancel_mfa(data))
-                if path=='/api/cloud/mfa-clear-local':return self.send_json(service.cloud.clear_mfa_local(data))
-                if path=='/api/cloud/logout':return self.send_json(service.cloud.logout(expected_session_id=expected,expected_challenge_id=data.get('challengeId')))
+                if path=='/api/cloud/login':
+                    result=service.cloud.login(data);self.clear_cloud_previews();return self.send_json(result)
+                if path=='/api/cloud/mfa-verify':
+                    result=service.cloud.verify_mfa(data);self.clear_cloud_previews();return self.send_json(result)
+                if path=='/api/cloud/mfa-cancel':
+                    result=service.cloud.cancel_mfa(data);self.clear_cloud_previews();return self.send_json(result)
+                if path=='/api/cloud/mfa-clear-local':
+                    result=service.cloud.clear_mfa_local(data);self.clear_cloud_previews();return self.send_json(result)
+                if path=='/api/cloud/logout':
+                    result=service.cloud.logout(expected_session_id=expected,expected_challenge_id=data.get('challengeId'));self.clear_cloud_previews();return self.send_json(result)
                 if path=='/api/cloud/search':return self.send_json(service.cloud.customers(data.get('query',''),expected_session_id=expected))
                 if path=='/api/cloud/account':return self.send_json(service.cloud.account(data.get('customerId'),expected_session_id=expected))
                 if path=='/api/cloud/customer':return self.send_json(service.cloud.create_customer(data,expected_session_id=expected))
@@ -232,6 +362,39 @@ def make_handler(core):
                 if path=='/api/cloud/intake-select':return self.send_json(service.intake_claims.select_existing(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/intake-additional':return self.send_json(service.intake_claims.additional(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/receiving-context':return self.send_json(service.hosted_receiving.context(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/receiving-intake-history':return self.send_json(service.intake_receiving_review.history(data,expected))
+                if path=='/api/cloud/receiving-intake-preview':return self.send_json(service.intake_receiving_review.preview(data,expected))
+                if path=='/api/cloud/receiving-intake-rows':return self.send_json(service.intake_receiving_review.rows(data,expected))
+                if path=='/api/cloud/receiving-intake-projection-activate':
+                    try:result=service.intake_stock_projection.activate(data,expected)
+                    finally:self.clear_cloud_previews()
+                    return self.send_json(result)
+                if path=='/api/cloud/receiving-intake-projection-preview':return self.send_json(service.intake_stock_projection.preview(data,expected))
+                if path=='/api/cloud/receiving-intake-projection-adopt':return self.send_json(service.intake_stock_projection.adopt(data,expected))
+                if path=='/api/cloud/receiving-intake-projection-view':return self.send_json(service.intake_stock_projection.view(data,expected))
+                if path=='/api/cloud/receiving-intake-projection-rows':return self.send_json(service.intake_stock_projection.rows(data,expected))
+                if path=='/api/cloud/receiving-intake-action-activate':
+                    try:result=service.intake_stock_actions.activate(data,expected)
+                    finally:self.clear_cloud_previews()
+                    return self.send_json(result)
+                if path=='/api/cloud/receiving-intake-action-preview':return self.send_json(service.intake_stock_actions.preview(data,expected))
+                if path=='/api/cloud/receiving-intake-action-status':return self.send_json(service.intake_stock_actions.status(data,expected))
+                if path=='/api/cloud/receiving-intake-action-perform':return self.send_json(service.intake_stock_actions.perform(data,expected))
+                if path=='/api/cloud/receiving-intake-action-apply':return self.send_json(service.intake_stock_actions.apply_saved_result(data,expected))
+                if path=='/api/cloud/receiving-restoration-preview':return self.send_json(service.receiving_restoration.preview(data,expected))
+                if path=='/api/cloud/receiving-restoration-history':return self.send_json(service.receiving_restoration.history(data,expected))
+                if path=='/api/cloud/receiving-restoration-adopt':return self.send_json(service.receiving_restoration.adopt(data,expected))
+                if path=='/api/cloud/receiving-restoration-rows':return self.send_json(service.receiving_restoration.rows(data,expected))
+                if path=='/api/cloud/receiving-restoration-labels-preview':return self.send_json(service.receiving_labels.preview(data,expected))
+                if path=='/api/cloud/receiving-restoration-labels':return self.send_json(service.receiving_labels.generate(data,expected))
+                if path=='/api/cloud/receiving-restoration-label-publication':return self.send_json(service.receiving_labels.status(data,expected))
+                if path=='/api/cloud/receiving-restoration-labels-list':return self.send_json(service.receiving_labels.list(data,expected))
+                if path=='/api/cloud/receiving-original-action-preview':return self.send_json(service.receiving_actions.preview(data,expected))
+                if path=='/api/cloud/receiving-original-action-perform':return self.send_json(service.receiving_actions.perform(data,expected))
+                if path=='/api/cloud/receiving-original-action-status':return self.send_json(service.receiving_actions.status(data,expected))
+                if path=='/api/cloud/receiving-original-reference-preview':return self.send_json(service.receiving_reference_retirement.preview(data,expected))
+                if path=='/api/cloud/receiving-original-reference-retire':return self.send_json(service.receiving_reference_retirement.retire(data,expected))
+                if path=='/api/cloud/receiving-original-reference-status':return self.send_json(service.receiving_reference_retirement.status(data,expected))
                 if path=='/api/cloud/receiving-prepare':return self.send_json(service.hosted_receiving.prepare(str(data.get('receiptId','')),data,expected))
                 if path=='/api/cloud/receiving-status':return self.send_json(service.hosted_receiving.status(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/receiving-existing':return self.send_json(service.hosted_receiving.recover_existing(str(data.get('receiptId','')),data,expected))
@@ -240,8 +403,14 @@ def make_handler(core):
                 if path in ('/api/cloud/receiving-commit','/api/cloud/receiving-recover','/api/cloud/receiving-authorize','/api/cloud/receiving-cancel'):
                     return self.send_json(service.hosted_receiving.act(str(data.get('receiptId','')),data,expected,path.rsplit('-',1)[1]))
                 if path=='/api/cloud/trade-prepare':return self.send_json(service.shared_trades.prepare(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/trade-recovery-preview':return self.send_json(service.original_trade_recovery.preview(data,expected))
+                if path=='/api/cloud/trade-recover-original':return self.send_json(service.original_trade_recovery.recover(data,expected))
+                if path=='/api/cloud/trade-recovery-inventory':return self.send_json(service.recovery_review.inventory(data,expected))
+                if path=='/api/cloud/trade-recovery-retail-review':return self.send_json(service.recovery_review.retail(data,expected))
                 if path=='/api/cloud/trade-status':return self.send_json(service.shared_trades.status(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/trade-accept':return self.send_json(service.shared_trades.accept(str(data.get('receiptId','')),data,expected))
+                if path=='/api/cloud/trade-print':return self.send_json(service.shared_trade_record(str(data.get('receiptId','')),expected))
+                if path=='/api/cloud/trade-record-view':return self.send_json(service.shared_trades.record(str(data.get('receiptId','')),expected))
                 if path=='/api/cloud/trade-cancel':return self.send_json(service.shared_trades.cancel(str(data.get('receiptId','')),expected))
                 return self.send_json({'errors':['Cloud action not found.']},404)
             if path.startswith('/api/admin/'):
@@ -256,6 +425,7 @@ def make_handler(core):
                 if path=='/api/admin/downloads-folder':
                     return self.send_json({'folder':service.downloads_folder()})
                 if path=='/api/admin/locations':
+                    service.profile.require_legacy('local Square location lookup')
                     settings=service.preferences()
                     token=data.get('squareToken','').strip() or service.vault.read()
                     environment=data.get('squareEnvironment',settings['squareEnvironment'])
@@ -273,6 +443,7 @@ def make_handler(core):
             if path=='/api/manual-items':
                 return self.send_json({'receipt':service.add_manual_item(data)})
             if path.startswith('/api/credit/'):
+                service.profile.require_legacy('local customer credit')
                 if service.credit is None:return self.send_json({'errors':['Credit tracking is not included in this edition.']},404)
                 if path=='/api/credit/search':return self.send_json({'customers':service.credit.search(data.get('query',''))})
                 if path=='/api/credit/customer':return self.send_json({'customer':service.credit.add_customer(data)})
@@ -312,23 +483,26 @@ def make_handler(core):
                 pieces=path.split('/');receipt_id=pieces[3];action=pieces[4] if len(pieces)>4 else 'save'
                 if action=='save':
                     receipt=service.save_receipt(receipt_id,data)
+                elif action=='review-cards':
+                    if len(pieces)!=5:
+                        raise StationError('Use the saved-card review action without extra path segments.')
+                    receipt=service.review_cards(receipt_id,data)
                 elif action=='approve-price':
                     receipt=service.approve_price(receipt_id,data)
                 elif action=='apply-safe-prices':
                     return self.send_json(service.apply_safe_prices(receipt_id,data.get('revision'),data.get('rowIds')))
                 elif action=='research':
-                    if not service.preferences().get('pricingEnabled', True):
-                        raise StationError('Price research is paused. Enable it in Admin to continue.')
-                    receipt=service.active_receipt(receipt_id)
-                    if data.get('revision') != receipt['revision']:
-                        raise StationError('This batch changed. Reload it before researching.')
-                    service.pricing.enqueue_receipt(receipt, force=True)
+                    receipt=service.research_receipt(receipt_id,data.get('revision'))
                 elif action=='accept-buy':
                     receipt=service.accept_buy(receipt_id,data.get('offerType'))
                 elif action=='receive':
                     receipt=service.receive(receipt_id)
                 elif action=='labels':
-                    receipt=service.labels(receipt_id,data.get('layout'),data.get('dpi'))
+                    if len(pieces)!=5 or urlsplit(self.path).query:
+                        raise StationError('Use the saved receipt label action without extra path segments.')
+                    receipt=service.labels(receipt_id,data.get('layout'),data.get('dpi'),
+                        copy_offset=data.get('copyOffset',0),copy_count=data.get('copyCount'),
+                        job_id=data.get('jobId'),expected_session_id=self.headers.get('X-SS-Local-Session',''))
                 elif action=='prepare':
                     receipt=service.prepare_online(receipt_id)
                 elif action=='delete':
@@ -345,7 +519,7 @@ def make_handler(core):
             if path.startswith('/api/tasks/') and path.endswith('/complete'):
                 return self.send_json({'task':service.complete_task(path.split('/')[3])})
             if path in ('/api/process','/api/settings','/api/square/locations'):
-                return self.send_json({'errors':['This older interface is no longer supported. Reload the complete Roca Station 2 app.']},410)
+                return self.send_json({'errors':['This older interface is no longer supported. Use Quit app, then reopen Stock & Sleeve from its desktop icon.']},410)
             return self.send_json({'errors':['Not found.']},404)
 
     return StationHandler

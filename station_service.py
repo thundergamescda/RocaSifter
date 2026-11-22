@@ -7,11 +7,14 @@ import io
 import json
 import math
 import os
+import sqlite3
 from pathlib import Path
 import threading
 import time
+import tempfile
 import uuid
 from station_store import Store, Vault, AdminAuth, StationError, now
+from station_profile import initialize_profile, ProfilePolicyError
 from square_variations import price_cents, resolution_key, card_identity
 from station_pricing import Research, DEFAULTS as PRICING_DEFAULTS, identity as price_identity
 from pricing_review import Identity
@@ -19,22 +22,43 @@ from store_pricing import apply_label_rule, extreme, retail_label_price
 from scanner_adapters import (ALIASES, GAME_LABELS, IntakeValidationError, identity_key,
                               normalize_game, normalize_manual_card, parse_csv, parse_csv_strict,
                               spreadsheet_safe)
+from intake_physical_identity import (PHYSICAL_IDENTITY_VERSION, PhysicalIdentityError,
+                                     physical_key_v2)
 import station_edition
 from station_shared_trade import SharedTrade, require_editable as require_trade_editable
-from station_intake_claim import IntakeClaims, capture_original, append_original_manual, centrally_bound, require_editable as require_intake_editable
+from station_intake_claim import (IntakeClaims, capture_original, append_original_manual, centrally_bound,
+                                 require_ordinary_receipt, require_editable as require_intake_editable)
 from station_hosted_receive import HostedReceive,require_editable as require_receiving_editable
 
 MODES = ('bulk', 'trade', 'labels', 'online')
 CARD_FIELDS = ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language',
                'qty', 'final_price', 'include', 'reviewed', 'storage_location', 'sku_override',
                'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number',
-               'serial_number', 'year', 'manufacturer', 'team', 'player', 'price_confirmed')
+               'serial_number', 'year', 'sport', 'league', 'manufacturer', 'team', 'player', 'price_confirmed')
+LEGACY_SQUARE_FIELDS = frozenset(('squareToken', 'squareEnvironment', 'squareLocationId'))
+IMMUTABLE_PROFILE_FIELDS = frozenset(('profile', 'profileVersion', 'profileMode', 'profile_mode',
+    'localCreditEnabled', 'legacySquareEntryEnabled', 'storeBound', 'requiredReceivingRoute', 'edition'))
 
 
 def require_shared_editable(receipt):
     require_trade_editable(receipt)
     require_intake_editable(receipt)
     require_receiving_editable(receipt)
+
+
+def _physical_key(card):
+    try:
+        return physical_key_v2(card)
+    except PhysicalIdentityError:
+        pass
+    raise StationError('Card identity requires a fresh review.')
+
+
+def _physical_binding_matches(version, key, current_key):
+    return (type(version) is int and version == PHYSICAL_IDENTITY_VERSION
+            and type(key) is str and len(key) == 64
+            and all(character in '0123456789abcdef' for character in key)
+            and key == current_key)
 
 
 def money(value):
@@ -60,15 +84,43 @@ class StoredResponse:
 class StationService:
     def __init__(self, core):
         self.core = core
+        self.profile = initialize_profile(Path(core.SETTINGS_FILE).parent, Path(core.SETTINGS_FILE))
         self.store = Store(Path(core.SETTINGS_FILE).parent / 'station_data')
         self.vault = Vault(self.store.root)
         from station_cloud import CloudClient
-        self.cloud = CloudClient(self.store.root)
+        self.cloud = CloudClient(self.store.root, profile=self.profile)
         self.auth = AdminAuth(self.store)
         self.lock = threading.RLock()
         self.shared_trades = SharedTrade(self)
         self.intake_claims = IntakeClaims(self)
         self.hosted_receiving = HostedReceive(self)
+        from station_trade_recovery import OriginalTradeRecovery
+        from station_recovery_review import OriginalTradeReview
+        self.original_trade_recovery = OriginalTradeRecovery(self)
+        self.recovery_review = OriginalTradeReview(self)
+        from station_receiving_restore import OriginalReceivingRestoration
+        if self.profile.mode == 'hosted':
+            from station_receiving_registry import initialize as initialize_receiving_registry
+            initialize_receiving_registry(self.store)
+            from station_receiving_label_publication import initialize as initialize_label_publications
+            initialize_label_publications(self.store)
+            from station_receiving_action_registry import initialize as initialize_action_intents
+            initialize_action_intents(self.store)
+        self.receiving_restoration = OriginalReceivingRestoration(self)
+        from station_intake_receiving_review import IntakeReceivingReview
+        self.intake_receiving_review = IntakeReceivingReview(self)
+        from station_intake_receiving_projection import IntakeStockProjection
+        self.intake_stock_projection = IntakeStockProjection(self)
+        from station_intake_stock_actions import IntakeStockActions
+        self.intake_stock_actions = IntakeStockActions(self)
+        from station_receiving_labels import OriginalStockLabels
+        self.receiving_labels = OriginalStockLabels(self)
+        from station_receiving_actions import OriginalReceivingActions
+        self.receiving_actions = OriginalReceivingActions(self)
+        from station_receiving_reference_retirement import OriginalReceivingReferenceRetirement
+        self.receiving_reference_retirement = OriginalReceivingReferenceRetirement(self)
+        from station_setup import Setup
+        self.setup = Setup(self, self.profile)
         self.stop_event = threading.Event()
         edition_root = Path(core.SETTINGS_FILE).parent
         if not (edition_root / 'roca_edition.json').exists():
@@ -77,7 +129,7 @@ class StationService:
         self.credit=None
         from catalog_cleanup import Cleanup
         self.cleanup=Cleanup(self.store)
-        if self.edition=='credit-tracker':
+        if self.edition=='credit-tracker' and self.profile.mode=='legacy_compatibility':
             from credit_tracker import Tracker
             self.credit=Tracker(self)
         self.pricing = Research(self.store, self.stop_event, self.preferences)
@@ -92,7 +144,8 @@ class StationService:
                 'squareEnvironment': old.get('squareEnvironment', 'production'),
                 'squareLocationId': old.get('squareLocationId', ''),
                 'watchFolder': '', 'watchMode': 'labels'})
-        self.migrate_legacy_token()
+        if self.profile.mode=='legacy_compatibility':
+            self.migrate_legacy_token()
         self.watch_status = self.pickup_status()
         # A restart during a commit keeps the same receipt and journal for safe retry.
         for receipt in self.store.summaries():
@@ -103,6 +156,7 @@ class StationService:
                 self.store.save_receipt(full, ('interrupted', 'Receiving interrupted; saved operation retained.'))
 
     def migrate_legacy_token(self):
+        self.profile.require_legacy('legacy credential migration')
         path = Path(self.core.SETTINGS_FILE)
         if not path.exists():
             return
@@ -125,18 +179,43 @@ class StationService:
         return dict(PRICING_DEFAULTS, **self.store.get('preferences', {}))
 
     def public_settings(self):
+        profile = self.profile.safe_snapshot()
         pref = self.preferences()
-        return dict({key: pref[key] for key in ('labelLayout', 'printerDpi', 'minPrice', 'cashPercent', 'creditPercent', *PRICING_DEFAULTS)}, squareConfigured=self.vault.exists() and bool(pref.get('squareLocationId')), squareEnvironment=pref['squareEnvironment'],edition=self.edition,creditTracking=self.credit is not None)
+        result = dict({key: pref[key] for key in ('labelLayout', 'printerDpi', 'minPrice', 'cashPercent', 'creditPercent', *PRICING_DEFAULTS)},
+                      profile=profile, edition=self.edition,
+                      creditTracking=profile['localCreditEnabled'] and self.credit is not None)
+        if profile['legacySquareEntryEnabled']:
+            result.update(squareConfigured=self.vault.exists() and bool(pref.get('squareLocationId')),
+                          squareEnvironment=pref['squareEnvironment'])
+        return result
 
     def admin_settings(self):
-        return dict(self.preferences(), tokenSaved=self.vault.exists())
+        profile = self.profile.safe_snapshot()
+        result = {key: value for key, value in self.preferences().items()
+                  if key not in LEGACY_SQUARE_FIELDS and
+                  (profile['legacySquareEntryEnabled'] or
+                   (not key.lower().startswith('square') and key != 'tokenSaved'))}
+        result.update(profile=profile, edition=self.edition,
+                      creditTracking=profile['localCreditEnabled'] and self.credit is not None)
+        if profile['legacySquareEntryEnabled']:
+            result.update({key: value for key, value in self.preferences().items() if key in LEGACY_SQUARE_FIELDS})
+            result['tokenSaved'] = self.vault.exists()
+        return result
 
     def save_preferences(self, changes):
+        if not isinstance(changes, dict):
+            raise StationError('Choose valid device and workflow settings.')
+        if IMMUTABLE_PROFILE_FIELDS & changes.keys():
+            raise ProfilePolicyError('Profile policy and edition cannot be changed through device settings.',
+                                     'PROFILE_POLICY_IMMUTABLE')
+        profile = self.profile.safe_snapshot()
+        if LEGACY_SQUARE_FIELDS & changes.keys():
+            self.profile.require_legacy('local Square connection settings')
         pref = self.preferences()
         pref.update({key: changes[key] for key in pref if key in changes})
         if pref['labelLayout'] not in ('side', 'standard', 'fold') or int(pref['printerDpi']) not in (203, 300):
             raise StationError('Choose a supported label layout and printer resolution.')
-        if pref['squareEnvironment'] not in ('production', 'sandbox') or pref['watchMode'] not in MODES:
+        if (profile['legacySquareEntryEnabled'] and pref['squareEnvironment'] not in ('production', 'sandbox')) or pref['watchMode'] not in MODES:
             raise StationError('Choose a valid environment and intake workflow.')
         for key in ('cashPercent', 'creditPercent'):
             pref[key] = money(pref[key])
@@ -161,18 +240,19 @@ class StationService:
             raise StationError('Choose a discrepancy percentage from 1–100 and a positive dollar threshold.')
         folder = str(pref['watchFolder']).strip()
         if folder and Path(folder).resolve() == Path(self.core.OUTPUT_DIR).resolve():
-            raise StationError('Choose the Roca export folder, not this app’s generated output folder.')
+            raise StationError('Choose your CSV export folder, not this app’s generated output folder.')
         if folder and not Path(folder).is_dir():
             raise StationError('The export folder does not exist on this computer.')
         pref['watchFolder'] = folder
-        pref['squareLocationId'] = str(pref['squareLocationId']).strip()
-        token = str(changes.get('squareToken', '')).strip()
-        connection_changed = token or any(pref[k] != self.preferences().get(k) for k in ('squareEnvironment', 'squareLocationId'))
-        if connection_changed and (token or self.vault.exists()):
-            locations = self.core.square_locations(token or self.vault.read(), pref['squareEnvironment'])
-            pref['squareLocationId'] = self.core.resolve_square_location(locations, pref['squareLocationId'], pref['squareEnvironment'])
-        if token:
-            self.vault.set(token)
+        if profile['legacySquareEntryEnabled']:
+            pref['squareLocationId'] = str(pref['squareLocationId']).strip()
+            token = str(changes.get('squareToken', '')).strip()
+            connection_changed = token or any(pref[k] != self.preferences().get(k) for k in ('squareEnvironment', 'squareLocationId'))
+            if connection_changed and (token or self.vault.exists()):
+                locations = self.core.square_locations(token or self.vault.read(), pref['squareEnvironment'])
+                pref['squareLocationId'] = self.core.resolve_square_location(locations, pref['squareLocationId'], pref['squareEnvironment'])
+            if token:
+                self.vault.set(token)
         previous_folder = self.preferences().get('watchFolder', '')
         if folder and (not previous_folder or Path(folder).resolve() != Path(previous_folder).resolve()):
             # Existing downloads are not new deliveries. Record them before enabling pickup.
@@ -202,13 +282,13 @@ class StationService:
                     free(ctypes.cast(value, ctypes.c_void_p))
         folder = folder or Path.home() / 'Downloads'
         if not folder.is_dir():
-            raise StationError('Downloads was not found. Enter the folder Roca exports into instead.')
+            raise StationError('Downloads was not found. Enter the folder where you save CSV exports instead.')
         return str(folder)
 
     def pickup_status(self):
         folder = self.preferences().get('watchFolder', '')
         return {'state': 'starting' if folder else 'off', 'folder': folder,
-                'message': 'Checking for new Roca exports.' if folder else 'Choose an export folder to enable automatic pickup.'}
+                'message': 'Checking for new CSV exports.' if folder else 'Choose an export folder to enable automatic pickup.'}
 
     def preview_import(self, content, intake_options=None):
         """Read-only normalized preview and source columns; no receipt is created."""
@@ -307,9 +387,21 @@ class StationService:
             self.pricing.enqueue_receipt(receipt)
             return {'receipt': receipt, 'duplicate': False}
 
+    def research_receipt(self, receipt_id, revision):
+        with self.lock:
+            receipt = self.active_receipt(receipt_id)
+            require_ordinary_receipt(receipt)
+            if not self.preferences().get('pricingEnabled', True):
+                raise StationError('Price research is paused. Enable it in Admin to continue.')
+            if revision != receipt['revision']:
+                raise StationError('This batch changed. Reload it before researching.')
+            self.pricing.enqueue_receipt(receipt, force=True)
+            return receipt
+
     def acknowledge_pickup(self, receipt_id):
         with self.lock:
             receipt = self.active_receipt(receipt_id)
+            require_ordinary_receipt(receipt)
             if receipt.get('pickup_pending'):
                 receipt['pickup_pending'] = False
                 self.store.save_receipt(receipt)
@@ -334,7 +426,10 @@ class StationService:
                     entry_source='manual', include=True, reviewed=False,
                     price_missing=False, price_confirmed=True)
         card = self.validate_card(card)
-        payload_hash = hashlib.sha256(json.dumps(dict(card, game=selected_game), sort_keys=True).encode()).hexdigest()
+        # Preserve retry hashes from before these optional fields were retained.
+        payload = {key: value for key, value in dict(card, game=selected_game).items()
+                   if key not in ('sport', 'league') or value}
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         card['manual_payload_hash'] = payload_hash
         receipt_id = data.get('receiptId')
         with self.lock:
@@ -412,6 +507,8 @@ class StationService:
     def restore_receipt(self, receipt_id):
         with self.lock:
             receipt = self.store.receipt(receipt_id)
+            if 'original_receiving_recovery' in receipt:
+                raise StationError('Open the original receiving preview and explicitly restore this same stock record. Its original plan must be verified first.')
             if receipt.get('deleted_at'):
                 receipt.pop('deleted_at')
                 self.store.save_receipt(receipt, ('restored', 'Receipt restored with its original inventory status. No stock changed.'))
@@ -424,8 +521,10 @@ class StationService:
         result.pop('hosted_sku_resolution',None)
         for key in ('card_name', 'card_num', 'card_set', 'condition', 'printing', 'language', 'storage_location', 'sku_override',
                     'game', 'game_label', 'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number',
-                    'year', 'manufacturer', 'team', 'player'):
+                    'year', 'sport', 'league', 'manufacturer', 'team', 'player'):
             result[key] = str(result.get(key, '') or '').strip()
+            if key in ('sport', 'league') and (len(result[key]) > 100 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in result[key])):
+                raise StationError('Sport and league must be at most 100 characters and contain no control characters.')
             if len(result[key]) > 500 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in result[key]):
                 raise StationError('Card identity fields must be at most 500 characters and contain no control characters.')
         if result['game']:
@@ -454,6 +553,8 @@ class StationService:
         result['final_price'] = money(result.get('final_price', 0))
         if 'price_confirmed' in result and not isinstance(result['price_confirmed'], bool):
             raise StationError('Price confirmation must be true or false.')
+        if result['final_price'] == 0 and result.get('price_confirmed') is False:
+            result['price_missing'] = True
         if result.get('price_missing'):
             if result['final_price'] > 0 or result.get('price_confirmed') is True:
                 result['price_missing'] = False
@@ -483,10 +584,26 @@ class StationService:
         with self.lock:
             old = self.active_receipt(receipt_id)
             require_shared_editable(old)
+            recovered='original_trade_recovery' in old
+            if recovered:
+                from station_trade_recovery import validate_recovered_projection
+                validate_recovered_projection(old)
+                for key in ('mode','title','customer_reference','pricing_game','cash_percent','credit_percent'):
+                    if key in data and data[key]!=old.get(key):
+                        raise StationError('Original trade terms and card identities are fixed. Review only current retail prices and storage.')
+                if 'inventory_intent' in data and data['inventory_intent']!=old.get('inventory_intent'):
+                    from station_trade_recovery import recovered_marker
+                    marker=recovered_marker(old)
+                    if data['inventory_intent'] not in (None,'new') or marker['inventoryVerification']!='no_operation':
+                        raise StationError('Check original inventory history before explicitly choosing Add new copies. An existing operation must be recovered.')
             if data.get('revision') != old['revision']:
                 raise StationError('This receipt changed in another window. Reload it before saving.')
             if old['inventory_status'] in ('committing', 'needs_attention'):
                 raise StationError('Receiving is in progress or requires a saved retry. Card details are locked.')
+            physical_states = {card['row_id']: self._physical_review_state(card)
+                               for card in old['cards']}
+            # Stage edits so a rejected physical change preserves the loaded row.
+            old = copy.deepcopy(old)
             mode = data.get('mode', old['mode'])
             prior_game = old.get('pricing_game', '')
             if mode not in MODES:
@@ -521,6 +638,8 @@ class StationService:
                     old[key] = money(data[key])
                     if old[key] > 100:
                         raise StationError('Offer percentages must be 0–100.')
+            physical_changed_rows = set()
+            invalidate_current_outputs = False
             if 'cards' in data:
                 prior = {c['row_id']: c for c in old['cards']}
                 rows = []
@@ -530,6 +649,7 @@ class StationService:
                     base = prior.get(incoming.get('row_id')) or prior.get(incoming.get('split_from'))
                     if not base:
                         raise StationError('The original split row was not found.')
+                    base_physical_key, physical_review_required = physical_states[base['row_id']]
                     merged = dict(base)
                     merged.update({key: incoming[key] for key in CARD_FIELDS if key in incoming})
                     if base.get('game') and not merged.get('game'):
@@ -538,23 +658,57 @@ class StationService:
                     if merged.get('final_price')!=base.get('final_price'):
                         merged['operator_price']=True
                         merged.pop('label_rounding',None)
-                    if merged.get('reviewed') and base.get('pricing_notice'):
-                        merged['pricing_acknowledged']=dict(base['pricing_notice'],at=now(),kept_price=merged['final_price'])
-                        merged.pop('pricing_notice',None)
-                        merged['operator_price']=True
-                    if (Identity.from_card(price_identity(merged, old.get('pricing_game', ''))) != Identity.from_card(price_identity(base, old.get('pricing_game', '')))
-                            or identity_key(merged) != identity_key(base)):
-                        merged.pop('intake_value', None)
-                        merged.pop('price_approval', None)
-                    rows.append(self.validate_card(merged))
+                    requested_reviewed = merged.get('reviewed')
+                    if type(requested_reviewed) is not bool:
+                        raise StationError('Review and inclusion flags must be true or false.')
+                    # Check edited values without granting an echoed review first.
+                    merged['reviewed'] = False
+                    validated = self.validate_card(merged)
+                    validated['reviewed'] = requested_reviewed
+                    current_physical_key = _physical_key(validated)
+                    physical_changed = (current_physical_key != base_physical_key or
+                        Identity.from_card(price_identity(validated, old.get('pricing_game', ''))) !=
+                        Identity.from_card(price_identity(base, old.get('pricing_game', ''))))
+                    value_changed = (validated['row_id'] != base['row_id'] or
+                        any(validated.get(key) != base.get(key) for key in
+                            ('qty', 'final_price', 'price_confirmed', 'price_missing',
+                             'sku_override', 'include')))
+                    if physical_changed:
+                        if (base.get('sku_override') or 'square_sku_resolution' in base
+                                or 'hosted_sku_resolution' in base):
+                            raise StationError('This card has a saved SKU override or resolution. Explicit reviewed rebinding is required before changing its physical identity.')
+                        for key in ('intake_value', 'price_approval', 'pricing_acknowledged',
+                                    'pricing_notice', 'research_baseline', 'research_handled',
+                                    'physical_review', 'label_rounding', 'automatic_price'):
+                            validated.pop(key, None)
+                        validated['reviewed'] = False
+                        validated['physical_review_required'] = True
+                        physical_changed_rows.add(validated['row_id'])
+                    elif physical_review_required or value_changed or base.get('reviewed') is not True:
+                        # Autosave echoes cannot grant review or lift a hold.
+                        validated['reviewed'] = False
+                    review_revoked = base.get('reviewed') is True and validated['reviewed'] is False
+                    if physical_changed or value_changed or review_revoked:
+                        invalidate_current_outputs = True
+                    if validated['reviewed'] and validated.get('price_missing'):
+                        raise StationError('Enter a selling price for every included card. Explicitly confirm a zero price before marking it reviewed.')
+                    rows.append(validated)
                 if not rows or len({c['row_id'] for c in rows}) != len(rows):
                     raise StationError('Keep at least one row and unique row identifiers.')
                 if old['inventory_status'] == 'received' or old['purchase']:
-                    mutable = ('storage_location', 'final_price', 'reviewed') if old['purchase'] and old['inventory_status'] != 'received' else ('storage_location',)
-                    frozen = lambda c: {k: c.get(k) for k in CARD_FIELDS if k not in mutable}
+                    mutable = ('storage_location', 'final_price', 'reviewed', 'price_confirmed') if old['purchase'] and old['inventory_status'] != 'received' else ('storage_location',)
+                    # Older saved rows predate these optional metadata fields.
+                    frozen = lambda c: {k: c.get(k, '') if k in ('sport', 'league') else c.get(k)
+                                        for k in CARD_FIELDS if k not in mutable}
                     if len(rows) != len(old['cards']) or any(frozen(a) != frozen(b) for a, b in zip(rows, old['cards'])):
                         raise StationError('Purchased or received cards are locked. Create a separate correction receipt.')
+                if [card['row_id'] for card in rows] != [card['row_id'] for card in old['cards']]:
+                    invalidate_current_outputs = True
                 old['cards'] = rows
+                if invalidate_current_outputs:
+                    for output in ('pdf', 'zpl', 'listing', 'ticket'):
+                        old['files'].pop(output, None)
+                    old['prepared'] = False
                 explicit_games = {card.get('game', '') for card in rows}
                 if '' not in explicit_games:
                     old['mixed_games'] = len(explicit_games) > 1
@@ -564,7 +718,29 @@ class StationService:
                     card.pop('intake_value', None)
                     card.pop('price_approval', None)
                     card['reviewed'] = False
+                for output in ('pdf', 'zpl', 'listing', 'ticket'):
+                    old['files'].pop(output, None)
+                old['prepared'] = False
+            review_value_fields = ('row_id', 'reviewed', 'qty', 'final_price',
+                                   'price_confirmed', 'price_missing', 'sku_override', 'include')
+            before_pricing_state = [tuple(card.get(key) for key in review_value_fields)
+                                    for card in old['cards']]
             self.prepare_pricing(old)
+            after_pricing_state = [tuple(card.get(key) for key in review_value_fields)
+                                   for card in old['cards']]
+            if after_pricing_state != before_pricing_state:
+                for output in ('pdf', 'zpl', 'listing', 'ticket'):
+                    old['files'].pop(output, None)
+                old['prepared'] = False
+            for card in old['cards']:
+                if card.get('row_id') in physical_changed_rows:
+                    card.pop('research_baseline', None)
+            if recovered:
+                validate_recovered_projection(old)
+                # A later price edit requires a new explicit retail review.
+                prior=self.active_receipt(receipt_id)
+                if any(a.get(key)!=b.get(key) for a,b in zip(prior['cards'],old['cards']) for key in ('final_price','reviewed','price_confirmed','price_missing')):
+                    old['retail_review_required']=True
             if old.get('hosted_receive',{}).get('state')=='confirmed':
                 included=self.hosted_receiving.confirmed_cards(old,[card for card in old['cards'] if card.get('include',True)])
                 authoritative={card['row_id']:card for card in included}
@@ -630,6 +806,7 @@ class StationService:
                     card['reviewed']=False;card['research_handled']=token;alerts+=1
             if applied or alerts or verified:
                 self.prepare_pricing(receipt)
+                if receipt.get('original_trade_recovery') and (applied or alerts):receipt['retail_review_required']=True
                 self.store.save_receipt(receipt,('pricing_review',f'{applied} small price corrections applied; {alerts} discrepancies flagged. No stock changed.'))
             return {'receipt':receipt,'applied':applied,'alerts':alerts}
 
@@ -645,6 +822,7 @@ class StationService:
             card = next((c for c in receipt['cards'] if c['row_id'] == data.get('rowId')), None)
             if not card:
                 raise StationError('The card was not found in this batch.')
+            physical_key, _ = self._physical_review_state(card)
             key = Identity.from_card(price_identity(card, receipt.get('pricing_game', ''))).cache_key
             if key != data.get('key'):
                 raise StationError('The card identity changed. Research the corrected card first.')
@@ -665,8 +843,10 @@ class StationService:
             if profile=='retail':card['operator_price']=True
             card.pop('pricing_notice',None)
             card['reviewed'] = False
+            if receipt.get('original_trade_recovery'):receipt['retail_review_required']=True
             card['price_approval'] = dict(card.get('price_approval', {}), **{profile: {'key': key, 'checked_at': result['checked_at'],
-                'previous': previous, 'approved': proposed, 'at': now(), 'coverage': result['status']}})
+                'previous': previous, 'approved': proposed, 'at': now(), 'coverage': result['status'],
+                'physical_identity_version': PHYSICAL_IDENTITY_VERSION, 'physical_key': physical_key}})
             for output in ('pdf', 'zpl', 'listing', 'ticket'):
                 receipt['files'].pop(output, None)
             receipt['prepared'] = False
@@ -674,11 +854,119 @@ class StationService:
             self.store.save_receipt(receipt, ('price_approved', f'{profile.title()} price approved for {card["card_name"]}: ${previous:.2f} → ${proposed:.2f}. No stock changed.'))
             return receipt
 
+    def review_cards(self, receipt_id, data):
+        """Review explicit current saved rows; fingerprints confer no authority."""
+        if type(data) is not dict or set(data) != {'revision', 'rowIds'}:
+            raise StationError('Review the current saved cards with their receipt revision and row IDs.')
+        revision, row_ids = data['revision'], data['rowIds']
+        if type(revision) is not int:
+            raise StationError('Use the current saved receipt revision before reviewing.')
+        if (type(row_ids) is not list or not row_ids
+                or any(type(row_id) is not str or not row_id for row_id in row_ids)
+                or len(set(row_ids)) != len(row_ids)):
+            raise StationError('Choose unique current card rows to review.')
+        with self.lock:
+            current = self.active_receipt(receipt_id)
+            require_shared_editable(current)
+            if revision != current['revision']:
+                raise StationError('This receipt changed. Reopen the saved cards before reviewing.')
+            if current['inventory_status'] in ('received', 'committing', 'needs_attention'):
+                raise StationError('Receiving has locked this receipt. Review a correction batch instead.')
+            receipt = copy.deepcopy(current)
+            recovered = 'original_trade_recovery' in receipt
+            if recovered:
+                from station_trade_recovery import validate_recovered_projection
+                validate_recovered_projection(receipt)
+            cards = receipt['cards']
+            if type(cards) is not list or len(row_ids) > len(cards):
+                raise StationError('Choose current saved card rows to review.')
+            by_id = {}
+            for card in cards:
+                if (type(card) is not dict or type(card.get('row_id')) is not str
+                        or not card['row_id'] or card['row_id'] in by_id):
+                    raise StationError('The saved card rows require a fresh review.')
+                by_id[card['row_id']] = card
+            if any(row_id not in by_id for row_id in row_ids):
+                raise StationError('A selected card is no longer in this receipt. Reopen the saved cards.')
+            selected = []
+            for row_id in row_ids:
+                card = by_id[row_id]
+                current_key, required = self._physical_review_state(card)
+                if required and (card.get('sku_override') or 'square_sku_resolution' in card
+                                 or 'hosted_sku_resolution' in card):
+                    raise StationError('This card has a saved SKU override or resolution. Explicit reviewed rebinding is required before changing its physical identity.')
+                checked = self.validate_card(copy.deepcopy(card))
+                if (_physical_key(checked) != current_key or
+                        any(checked.get(key) != card.get(key) for key in
+                            ('qty', 'final_price', 'price_confirmed', 'price_missing'))):
+                    raise StationError('The saved card needs a correction. Save and reopen it before reviewing.')
+                if (checked.get('price_missing') or
+                        checked['final_price'] == 0 and checked.get('price_confirmed') is not True):
+                    raise StationError('Enter or explicitly confirm the selling price before reviewing this card.')
+                if card.get('pricing_notice') and type(card['pricing_notice']) is not dict:
+                    raise StationError('The saved pricing notice requires a fresh review.')
+                selected.append((card, current_key, required))
+            # All targets passed before any staged review metadata changes.
+            for card, current_key, required in selected:
+                card['reviewed'] = True
+                if required:
+                    if 'physical_review' not in card:
+                        card['physical_review'] = {
+                            'version': PHYSICAL_IDENTITY_VERSION, 'key': current_key}
+                    card['physical_review_required'] = False
+                if card.get('pricing_notice'):
+                    card['pricing_acknowledged'] = dict(card['pricing_notice'], at=now(),
+                                                       kept_price=card['final_price'])
+                    card.pop('pricing_notice', None)
+                    card['operator_price'] = True
+            if recovered:
+                receipt['retail_review_required'] = True
+                validate_recovered_projection(receipt)
+            self.store.save_receipt(receipt, ('cards_reviewed',
+                f'{len(selected)} saved card rows explicitly reviewed. No stock changed.'))
+            return receipt
+
+    def _physical_review_state(self, card):
+        """Validate comparison records without granting action or staff authority."""
+        current_key = _physical_key(card)
+        required = card.get('physical_review_required', False)
+        if type(required) is not bool:
+            raise StationError('Card identity requires a fresh review.')
+        if 'physical_review' in card:
+            record = card['physical_review']
+            if (type(record) is not dict or set(record) != {'version', 'key'}
+                    or not _physical_binding_matches(record.get('version'), record.get('key'), current_key)):
+                raise StationError('Card identity requires a fresh review.')
+        if 'price_approval' in card:
+            approvals = card['price_approval']
+            if type(approvals) is not dict:
+                raise StationError('Card identity requires a fresh review.')
+            for approval in approvals.values():
+                if type(approval) is not dict:
+                    raise StationError('Card identity requires a fresh review.')
+                has_version = 'physical_identity_version' in approval
+                has_key = 'physical_key' in approval
+                if (has_version or has_key) and (not has_version or not has_key or
+                        not _physical_binding_matches(approval.get('physical_identity_version'),
+                                                      approval.get('physical_key'), current_key)):
+                    raise StationError('Card identity requires a fresh review.')
+        return current_key, required
+
+    def _require_physical_review(self, card):
+        """Apply the physical hold; existing authorization gates remain separate."""
+        _, required = self._physical_review_state(card)
+        if required:
+            raise StationError('Review the changed physical card identity before continuing.')
+
     def approved_cards(self, receipt):
         require_shared_editable(receipt)
+        from station_recovery_review import require_recovery_outputs
+        require_recovery_outputs(receipt)
         cards = [self.validate_card(c) for c in receipt['cards'] if c.get('include', True)]
         if not cards:
             raise StationError('Include at least one card.')
+        for card in cards:
+            self._require_physical_review(card)
         if any(c.get('price_missing') for c in cards):
             raise StationError('Enter or explicitly confirm a selling price for every included card before labels or inventory.')
         if any(not c['reviewed'] for c in cards):
@@ -690,6 +978,7 @@ class StationService:
 
     def accept_buy(self, receipt_id, offer_type):
         with self.lock:
+            self.profile.require_legacy('local cash or credit acceptance')
             receipt = self.active_receipt(receipt_id)
             require_shared_editable(receipt)
             if centrally_bound(receipt):raise StationError('This batch belongs to central hosted intake. Use hosted trade acceptance with recent enrolled MFA; local cash/store-credit acceptance cannot replace it.')
@@ -698,6 +987,8 @@ class StationService:
             if receipt['mode'] != 'trade' or offer_type not in ('cash', 'credit'):
                 raise StationError('Choose a cash or store-credit offer on a trade-in receipt.')
             included = [c for c in receipt['cards'] if c.get('include', True)]
+            for card in included:
+                self._require_physical_review(card)
             if not included or any(not c['reviewed'] or c.get('price_missing') for c in included):
                 raise StationError('Review all included cards before recording the accepted offer.')
             retail = sum(Decimal(str(c.get('intake_value', c['final_price']))) * c['qty'] for c in included)
@@ -714,7 +1005,77 @@ class StationService:
             self.store.save_receipt(receipt, ('buy_accepted', f'Accepted {offer_type} offer: ${amount:.2f}. Payment is recorded outside this app.'))
             return receipt
 
+    def shared_trade_record(self, receipt_id, expected_session_id):
+        """Render only a confirmed hosted agreement; never recover/accept a pending one."""
+        from station_purchase_record import render
+        temporary = None;published=None;prepared=None
+        def financial_token(view):
+            proof=view.get('recordProof')
+            if proof is not None:return proof['financialToken']
+            # Recovered projections already have their strict immutable adapter.
+            receipt,trade=view['receipt'],view['trade']
+            if 'original_trade_recovery' not in receipt:raise StationError('The accepted financial proof could not be verified.')
+            facts={'purchase':receipt['purchase'],'sourceHash':receipt['shared_trade']['source_hash'],
+                'tradeId':trade['id'],'receiptHash':trade['receipt_hash'],'acceptedReceipt':trade['accepted_receipt'],'result':trade['acceptance_result']}
+            return hashlib.sha256(json.dumps(facts,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        # This is the in-process client lock, not the OS session-file lock.
+        # No network or PDF work runs while the OS session guard is held.
+        with self.cloud.lock:
+            view = self.shared_trades.record(receipt_id, expected_session_id)
+            receipt, trade = view['receipt'], view['trade']
+            original_token=financial_token(view)
+            try:
+                # Receipt IDs use the station's R<date>-<suffix> format. Hash the
+                # exact reference for a filename; never assume it is a UUID.
+                safe_id = hashlib.sha256(receipt['id'].encode('utf-8')).hexdigest()[:32]
+                root = Path(self.core.OUTPUT_DIR)
+                root.mkdir(parents=True, exist_ok=True)
+                descriptor, name = tempfile.mkstemp(prefix='.ss-agreement-', suffix='.tmp', dir=root)
+                os.close(descriptor)
+                temporary = Path(name)
+                proof = render(temporary, receipt, trade, self.core.APP_DIR)
+                with temporary.open('r+b') as stream:
+                    stream.flush(); os.fsync(stream.fileno())
+                from station_cloud import CloudError
+                try:refreshed=self.shared_trades.record(receipt_id,expected_session_id)
+                except CloudError:raise
+                except StationError as error:
+                    raise StationError('The saved agreement changed while printing. '+str(error)) from None
+                if financial_token(refreshed)!=original_token or refreshed['trade'].get('receipt_hash')!=proof['receiptHash']:
+                    raise StationError('The saved agreement changed while printing. Refresh its original receipt; no new acceptance was made.')
+                current=refreshed['receipt'];authority=refreshed['recordAuthority']
+                expected_body=self.store.record_publication_snapshot(current)
+                filename=safe_id+'-accepted-trade-'+proof['receiptHash'][:16]+'-'+uuid.uuid4().hex+'.pdf'
+                prepared=self.store.prepare_record_publication(current,filename,proof['offerType'])
+                destination=root/filename
+                def publish():
+                    nonlocal temporary,published
+                    if destination.exists():raise StationError('The new document path is already occupied. Print again to use a fresh path.')
+                    # Windows rename refuses an occupied destination; no older
+                    # valid record is ever a target for this attempt.
+                    os.rename(temporary,destination);temporary=None;published=destination
+                with self.cloud._session_guard():
+                    self.cloud.assert_record_session_unlocked(expected_session_id,authority['tenantId'],authority['store'])
+                    with self.lock:
+                        try:current=self.store.commit_record_publication(expected_body,prepared,publish)
+                        except BaseException:
+                            if published is not None:
+                                try:
+                                    if not self.store.record_publication_referenced(receipt_id,filename,prepared['detail']):published.unlink(missing_ok=True)
+                                except (OSError,sqlite3.Error,StationError):pass
+                            raise
+                return dict(refreshed,receipt=current)
+            except StationError:
+                raise
+            except (OSError, ValueError,sqlite3.Error):
+                raise StationError('The accepted agreement is saved, but its PDF could not be created. Check available storage and retry printing; do not accept the trade again.') from None
+            finally:
+                if temporary is not None and temporary.parent.resolve() == Path(self.core.OUTPUT_DIR).resolve():
+                    try:temporary.unlink(missing_ok=True)
+                    except OSError:pass
+
     def buy_receipt(self, path, receipt, cards):
+        require_ordinary_receipt(receipt)
         from reportlab.pdfgen import canvas
         from reportlab.lib.utils import simpleSplit
         c=canvas.Canvas(str(path),pagesize=(612,792))
@@ -743,6 +1104,7 @@ class StationService:
         c.save()
 
     def journal_post(self, receipt_id, key, endpoint, payload, headers):
+        self.profile.require_legacy('original local Square journal')
         with self.store.db() as db:
             row = db.execute('SELECT request,response FROM operations WHERE receipt_id=? AND key=?', (receipt_id,key)).fetchone()
             if row:
@@ -766,6 +1128,7 @@ class StationService:
     def receive(self, receipt_id):
         # Single receiving lane prevents parallel receipt commits, including repeated clicks.
         with self.lock:
+            self.profile.require_legacy('local Square receiving')
             receipt = self.active_receipt(receipt_id)
             require_shared_editable(receipt)
             if receipt['inventory_status'] == 'received':
@@ -837,29 +1200,11 @@ class StationService:
             self.store.save_receipt(receipt, (receipt['inventory_status'], receipt['error'] or 'Incoming stock confirmed in Square.'))
             return receipt
 
-    def labels(self, receipt_id, layout=None, dpi=None):
-        with self.lock:
-            receipt = self.active_receipt(receipt_id)
-            cards = self.approved_cards(receipt)
-            if receipt['mode'] == 'bulk':
-                raise StationError('Move this receipt to Price & label before printing retail labels.')
-            config = self.preferences()
-            layout, dpi = layout or config['labelLayout'], int(dpi or config['printerDpi'])
-            dimensions={}
-            if receipt.get('hosted_receive',{}).get('state')=='confirmed':
-                from hosted_labels import profile,STOCKS
-                chosen=profile(receipt['hosted_receive']['label_profile'])
-                if layout!=chosen['layout'] or dpi!=chosen['dpi']:
-                    raise StationError('Use the label stock, layout and DPI frozen in the confirmed hosted receiving plan. An uncertain or received operation cannot silently change its profile.')
-                width,height=STOCKS[chosen['stock']];dimensions={'width_in':width,'height_in':height}
-            prefix = receipt_id + '-' + uuid.uuid4().hex[:6]
-            root = Path(self.core.OUTPUT_DIR)
-            root.mkdir(parents=True, exist_ok=True)
-            self.core.generate_zebra_pdf_labels(cards,str(root/(prefix+'.pdf')),layout=layout,dpi=dpi,**dimensions)
-            self.core.generate_zebra_zpl(cards,str(root/(prefix+'.zpl')),layout=layout,dpi=dpi,**dimensions)
-            receipt['files'].update(pdf=prefix+'.pdf', zpl=prefix+'.zpl')
-            self.store.save_receipt(receipt, ('labels', f'Labels generated for {sum(c["qty"] for c in cards)} copies. No inventory changed.'))
-            return receipt
+    def labels(self, receipt_id, layout=None, dpi=None, *, copy_offset=0, copy_count=None,
+               job_id=None, expected_session_id=None):
+        from station_label_publication import OrdinaryLabels
+        return OrdinaryLabels(self).labels(receipt_id,layout,dpi,copy_offset=copy_offset,
+            copy_count=copy_count,job_id=job_id,expected_session_id=expected_session_id)
 
     def prepare_online(self, receipt_id):
         with self.lock:
@@ -1017,4 +1362,4 @@ class StationService:
                 self.store.put('export_checkpoint', checkpoint)
             errors = read_errors + [r['error'] for r in records.values() if r.get('error')]
             self.watch_status = dict(status, state='error' if errors else 'watching',
-                                     message=errors[0] if errors else 'Ready for the next export from Roca.')
+                                     message=errors[0] if errors else 'Ready for the next supported CSV export.')

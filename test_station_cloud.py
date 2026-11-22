@@ -13,6 +13,19 @@ from station_cloud import CloudClient, CloudError, ORIGIN
 TOKEN='fictional-session-token-1234567890'
 
 
+def fixture_tenant_id(store):
+    """Stable fictional store UUID, matching the real full-session contract."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,'https://store-fixture.invalid/'+store))
+
+
+def seed_historical_profile(root):
+    """A real pre-policy preferences database, only for legacy compatibility cases."""
+    from station_store import Store
+    Store(root).put('preferences',{'labelLayout':'side','printerDpi':203,'minPrice':.70,
+        'cashPercent':35,'creditPercent':50,'squareEnvironment':'sandbox',
+        'squareLocationId':'FICTIONAL-HISTORICAL-LOCATION','watchFolder':'','watchMode':'labels'})
+
+
 def response(status,body):
     result=requests.Response();result.status_code=status
     result._content=json.dumps(body).encode();result.headers['Content-Type']='application/json'
@@ -44,8 +57,10 @@ class SharedFixtureTransport:
                 if json['password']!='fixture-staff-password':return response(401,{'error':'Store, email or password is incorrect.'})
                 token='fixture-session-'+uuid.uuid4().hex
                 role='cashier' if json['email'].startswith('cashier') else 'manager'
-                self.sessions[token]={'store':json['store_slug'],'role':role}
-                return response(200,{'store':json['store_slug'],'role':role,'expires_in':28800,'access_token':token})
+                actor={'tenant_id':fixture_tenant_id(json['store_slug']),'store':json['store_slug'],'role':role,
+                       'mfa_enabled':False,'mfa_authenticated':False}
+                self.sessions[token]=actor
+                return response(200,actor|{'expires_in':28800,'access_token':token})
             token=headers.get('Authorization','').removeprefix('Bearer ')
             actor=self.sessions.get(token)
             if not actor:return response(401,{'error':'Sign in to your store.'})
@@ -90,7 +105,7 @@ class CloudTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.vault=FixtureVault(self.root)
-        self.transport=Mock();self.transport.request.return_value=response(200,{'access_token':TOKEN,'store':'fictional-store','role':'manager','expires_in':28800})
+        self.transport=Mock();self.transport.request.return_value=response(200,{'access_token':TOKEN,'store':'fictional-store','tenant_id':fixture_tenant_id('fictional-store'),'role':'manager','expires_in':28800})
         self.client=CloudClient(self.root,transport=self.transport,vault=self.vault,clock=lambda:1000)
     def login(self):return self.client.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
     def test_login_fixed_origin_no_password_or_token_in_public_result(self):
@@ -154,8 +169,13 @@ class CloudTests(unittest.TestCase):
         first.adjust(ident,entry);self.assertEqual(second.account(ident)['customer']['balance_cents'],5000)
         second.adjust(ident,{'request_key':'remove','amount_cents':2000,'kind':'adjust_remove','reference':'FIXTURE','reason':'Fixture correction','version':1})
         self.assertEqual(first.account(ident)['customer']['balance_cents'],3000)
-        second.logout();second.login(credentials|{'storeSlug':'another-store'})
-        with self.assertRaises(CloudError) as error:second.account(ident)
+        second.logout()
+        with self.assertRaises(CloudError) as bound:second.login(credentials|{'storeSlug':'another-store'})
+        self.assertEqual(bound.exception.code,'PROFILE_STORE_MISMATCH')
+        third_root=self.root/'another-store-profile';third_root.mkdir()
+        third=CloudClient(third_root,transport=remote,vault=FixtureVault(third_root))
+        third.login(credentials|{'storeSlug':'another-store'})
+        with self.assertRaises(CloudError) as error:third.account(ident)
         self.assertEqual(error.exception.status,404)
 
     def test_crash_after_server_commit_recovers_original_key_without_double_correction(self):
@@ -192,7 +212,10 @@ class CloudTests(unittest.TestCase):
         self.assertTrue(result['resolved']);self.assertFalse(result['alreadyCompleted']);self.assertEqual(len(remote.customers),1)
 
     def test_pending_actions_are_not_exposed_or_replayed_to_another_store(self):
-        remote=SharedFixtureTransport();client=CloudClient(self.root,transport=remote,vault=self.vault)
+        # Historical mixed-store journals must remain isolated even on the legacy route.
+        legacy=self.root/'historical';seed_historical_profile(legacy)
+        remote=SharedFixtureTransport();client=CloudClient(legacy,transport=remote,vault=FixtureVault(legacy))
+        self.assertEqual(client.profile.mode,'legacy_compatibility')
         credentials={'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'}
         client.login(credentials);remote.offline=True
         with self.assertRaises(CloudError):client.create_customer({'request_key':'pending-customer','display_name':'Private fictional account','permission_confirmed':True})
@@ -233,7 +256,7 @@ class CloudTests(unittest.TestCase):
         remote=SharedFixtureTransport();client=CloudClient(self.root,transport=remote,vault=self.vault)
         credentials={'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'}
         old=client.login(credentials);client.logout(expected_session_id=old['sessionId'])
-        fresh=client.login(credentials|{'storeSlug':'another-store'})
+        fresh=client.login(credentials|{'email':'second-manager@example.invalid'})
         calls=len(remote.calls)
         for action in (lambda:client.create_customer({'request_key':'stale','display_name':'Wrong store','permission_confirmed':True},expected_session_id=old['sessionId']),
                        lambda:client.customers(expected_session_id=old['sessionId']),
