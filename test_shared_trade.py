@@ -14,7 +14,7 @@ from station_cloud import CloudClient,CloudError
 from station_service import StationService
 from station_shared_trade import fingerprint,locked,lines_for
 from station_store import StationError
-from test_station_cloud import SharedFixtureTransport,response
+from test_station_cloud import SharedFixtureTransport,response,seed_historical_profile
 from hosted.trades import normalize_lines,calculate_offer
 from intake_manifest import validate_manifest,manifest_digest,semantic_fingerprint,source_lines
 
@@ -23,7 +23,7 @@ class TradeFixtureTransport(SharedFixtureTransport):
     """A strict local fixture; real hosted transactions have separate PG tests."""
     def __init__(self):
         super().__init__();self.lock=threading.RLock();self.trades={};self.drop_after=set();self.issuances=0
-        self.claims={};self.mfa_fresh=True
+        self.claims={};self.mfa_fresh=True;self.cash_agreements=0
 
     def claim_request(self,method,path,headers,body):
         if self.offline:raise requests.ConnectionError('Fictional outage')
@@ -108,7 +108,10 @@ class TradeFixtureTransport(SharedFixtureTransport):
             elif not trade:return response(404,{'error':'Trade missing'})
             elif operation=='accept':
                 if actor['role'] not in ('manager','owner'):return response(403,{'error':'Manager required'})
-                if trade['state']=='accepted_credit':result=trade['acceptance_result']
+                if trade['state'] in ('accepted_credit','accepted_cash'):
+                    if (json.get('offer_type')!=trade['selected_offer'] or json.get('expected_offer_cents')!=trade['accepted_amount_cents']
+                        or json.get('customer_id')!=trade['customer_id']):return response(409,{'error':'Already accepted different terms'})
+                    result=trade['acceptance_result']
                 else:
                     claim=self.claims.get((store,trade.get('physical_intake_id')))
                     if not claim:return response(428,{'error':'Create or recover the central physical intake','code':'PHYSICAL_INTAKE_CLAIM_REQUIRED'})
@@ -116,20 +119,37 @@ class TradeFixtureTransport(SharedFixtureTransport):
                     if claim['state']!='open':return response(409,{'error':'Physical intake already consumed','code':'PHYSICAL_INTAKE_CONFLICT','physical_intake_id':claim['physical_intake_id']})
                     if json.get('claim_reviewed') is not True:return response(428,{'error':'Review the physical intake claim','code':'PHYSICAL_INTAKE_REVIEW_REQUIRED'})
                     if trade['state']!='draft' or trade['version']!=json['version']:return response(409,{'error':'Trade changed'})
-                    if json['customer_agreed'] is not True or json['items_received'] is not True or json['customer_id']!=trade['customer_id'] or json['expected_offer_cents']!=trade['credit_offer_cents']:return response(409,{'error':'Agreement changed'})
-                    amount=trade['credit_offer_cents'];customer=self.customers[trade['customer_id']];customer['balance_cents']+=amount;customer['available_cents']+=amount;customer['version']+=1;self.issuances+=1
-                    entry=str(uuid.uuid4());evidence={'trade_schema_version':1,'trade_id':ident,'version_before_acceptance':trade['version'],
+                    kind=json.get('offer_type')
+                    if kind not in ('cash','credit'):return response(400,{'error':'Choose cash or credit'})
+                    amount=trade[kind+'_offer_cents']
+                    if (type(amount) is not int or amount<=0 or json['customer_agreed'] is not True or json['items_received'] is not True
+                        or json['customer_id']!=trade['customer_id'] or json['expected_offer_cents']!=amount):return response(409,{'error':'Agreement changed'})
+                    customer=self.customers[trade['customer_id']];entry=None
+                    if kind=='credit':
+                        customer['balance_cents']+=amount;customer['available_cents']+=amount;customer['version']+=1;self.issuances+=1;entry=str(uuid.uuid4())
+                    else:self.cash_agreements+=1
+                    policy='unreviewed' if kind=='credit' else 'not_applicable'
+                    evidence={'trade_schema_version':2,'trade_id':ident,'version_before_acceptance':trade['version'],
                         'physical_intake_id':trade['physical_intake_id'],'physical_manifest_hash':trade['physical_manifest_hash'],
                         'receipt_version':trade['version']+1,'customer':{'id':customer['id'],'display_name':customer['display_name']},
                         'title':trade['title'],'source_reference':trade['source_reference'],'currency':'USD','lines':[line for line in trade['lines'] if line['included']],
                         'lines_hash':trade['lines_hash'],'intake_total_cents':trade['intake_total_cents'],'cash_offer_cents':trade['cash_offer_cents'],
-                        'credit_offer_cents':amount,'selected_offer':'credit','accepted_amount_cents':amount,'accepted_at':'2026-10-28T18:00:00+00:00',
+                        'credit_offer_cents':trade['credit_offer_cents'],'selected_offer':kind,'accepted_amount_cents':amount,'accepted_at':'2026-10-28T18:00:00+00:00',
+                        'offer_terms':{key:trade[key] for key in ('cash_bps','credit_bps','cash_override_cents','credit_override_cents','override_reason')},
                         'accepted_by':str(uuid.uuid4()),'accepted_by_role':actor['role'],'customer_agreed':True,'items_received':True,
-                        'inventory_received':False,'cash_payment_executed':False,'credit_policy_state':'unreviewed','credit_entry_id':entry}
-                    result={'trade_id':ident,'state':'accepted_credit','version':trade['version']+1,'accepted_amount_cents':amount,'offer_type':'credit',
+                        'inventory_received':False,'cash_payment_executed':False,'credit_policy_state':policy,'credit_entry_id':entry}
+                    original={line['source_line_key']:line['quantity'] for line in source_lines(claim['source_manifest'])};selected={}
+                    for line in trade['lines']:
+                        if line['included']:selected[line['source_line_key']]=selected.get(line['source_line_key'],0)+line['quantity']
+                    evidence['physical_intake']={'id':claim['physical_intake_id'],'manifest_hash':claim['manifest_hash'],
+                        'semantic_hash':claim['semantic_hash'],'selected_quantities':selected,'original_quantities':original,
+                        'excluded_quantities':{key:quantity-selected.get(key,0) for key,quantity in original.items()},
+                        'all_original_rows_claimed':True,'excluded_rows_reusable':False,'claim_reviewed':True}
+                    result={'trade_id':ident,'state':'accepted_'+kind,'version':trade['version']+1,'accepted_amount_cents':amount,'offer_type':kind,
                         'receipt_hash':fingerprint(evidence),'credit_entry_id':entry,'cash_payment_executed':False,'inventory_received':False,
-                        'credit_policy_state':'unreviewed','checkout_eligible':False,'balance_after_cents':customer['balance_cents']}
-                    trade.update(state='accepted_credit',version=trade['version']+1,accepted_amount_cents=amount,receipt_hash=result['receipt_hash'],accepted_receipt=evidence,acceptance_result=result)
+                        'credit_policy_state':policy,'checkout_eligible':False,'balance_after_cents':customer['balance_cents']}
+                    trade.update(state='accepted_'+kind,version=trade['version']+1,selected_offer=kind,ledger_entry_id=entry,
+                        accepted_amount_cents=amount,receipt_hash=result['receipt_hash'],accepted_receipt=evidence,acceptance_result=result)
                     claim.update(state='consumed',bound_trade_id=ident,version=claim['version']+1)
             elif operation=='void':
                 if trade['state']!='draft' or trade['version']!=json['version']:return response(409,{'error':'Cannot void current state'})
@@ -145,6 +165,13 @@ class SharedTradeTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
         self.settings=patch.object(core,'SETTINGS_FILE',str(self.root/'settings.json'));self.settings.start();self.addCleanup(self.settings.stop)
         self.outputs=patch.object(core,'OUTPUT_DIR',str(self.root/'outputs'));self.outputs.start();self.addCleanup(self.outputs.stop)
+        # These three cases exercise old local-wallet/mixed-store compatibility.
+        # All other cases still start with the real hosted default.
+        if self._testMethodName in {
+            'test_pending_intent_blocks_save_manual_add_prices_delete_local_accept_and_outputs',
+            'test_wrong_store_or_stale_session_cannot_recover_or_change_trade',
+            'test_confirmed_shared_purchase_cannot_be_issued_into_local_wallet'}:
+            seed_historical_profile(self.root/'station_data')
         self.remote=TradeFixtureTransport();self.service=self.restart()
         self.service.store.put('preferences',self.service.preferences()|{'pricingEnabled':False})
         self.session=self.service.cloud.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
@@ -166,7 +193,9 @@ class SharedTradeTests(unittest.TestCase):
         return self.service.shared_trades.prepare(receipt['id'],{'revision':receipt['revision'],'customerId':self.customer},self.session['sessionId'])
 
     def accept(self,prepared):
-        return self.service.shared_trades.accept(prepared['receipt']['id'],{'confirmationHash':prepared['confirmationHash'],'customerAgreed':True,'itemsReceived':True,'claimReviewed':True},self.session['sessionId'])
+        return self.service.shared_trades.accept(prepared['receipt']['id'],{'offerType':'credit',
+            'confirmationHash':prepared.get('offers',{}).get('credit',{}).get('confirmationHash',prepared['confirmationHash']),
+            'customerAgreed':True,'itemsReceived':True,'claimReviewed':True},self.session['sessionId'])
 
     def assert_no_local_credit(self):
         with self.service.store.db() as db:
@@ -246,8 +275,11 @@ class SharedTradeTests(unittest.TestCase):
 
     def test_customer_agreement_items_and_manager_role_are_all_required(self):
         prepared=self.prepare();ident=prepared['receipt']['id']
+        valid={'offerType':'credit','confirmationHash':prepared['offers']['credit']['confirmationHash'],'claimReviewed':True}
         for fields in ({'customerAgreed':False,'itemsReceived':True},{'customerAgreed':True,'itemsReceived':False}):
-            with self.assertRaises(StationError):self.service.shared_trades.accept(ident,fields|{'confirmationHash':prepared['confirmationHash']},self.session['sessionId'])
+            with self.assertRaisesRegex(StationError,'Confirm customer agreement and physical receipt'):
+                self.service.shared_trades.accept(ident,valid|fields,self.session['sessionId'])
+        self.assertNotIn('accept_key',self.service.store.receipt(ident)['shared_trade'])
         self.service.cloud.logout();self.session=self.service.cloud.login({'storeSlug':'fictional-store','email':'buyer@example.invalid','password':'fixture-staff-password'})
         with self.assertRaises(CloudError) as caught:self.accept(prepared)
         self.assertEqual(caught.exception.status,403);self.assertEqual(self.remote.issuances,0)

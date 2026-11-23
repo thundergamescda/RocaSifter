@@ -125,7 +125,7 @@ class Research:
                 if prior['state'] in ('queued', 'running') or (fresh and not force):
                     return key
             fields = ('game', 'game_label', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language',
-                      'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')
+                      'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'sport', 'league', 'manufacturer', 'team', 'player')
             db.execute('INSERT OR REPLACE INTO price_jobs VALUES (?,?,?,?,?,NULL)',
                        (key, json.dumps({k: target.get(k, '') for k in fields}), 'queued', now(), None))
         self.wake.set()
@@ -151,7 +151,7 @@ class Research:
                     if prior['state'] in ('queued', 'running') or (fresh and not force):
                         continue
                 fields = ('game', 'game_label', 'card_name', 'card_set', 'card_num', 'printing', 'condition', 'language',
-                          'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'manufacturer', 'team', 'player')
+                          'grader', 'grade', 'grade_qualifier', 'cert_number', 'serial_number', 'year', 'sport', 'league', 'manufacturer', 'team', 'player')
                 db.execute('INSERT OR REPLACE INTO price_jobs VALUES (?,?,?,?,?,NULL)',
                            (key, json.dumps({k: target.get(k, '') for k in fields}), 'queued', now(), None))
         self.wake.set()
@@ -229,7 +229,7 @@ class Research:
                 result.update(status='needs_identity', message='Confirm the game, exact set, collector number, finish, condition and language.')
             elif target.game not in ('pokemon', 'magic'):
                 result.update(status='unavailable', message='Automatic source access for this game is not connected. Use the exact game and item details to research and verify a price manually.')
-            elif any(card.get(key) for key in ('serial_number','year','manufacturer','team','player')):
+            elif target.has_specialized_variant:
                 result.update(status='unavailable', message='This item has sports or serial-specific details. Verify comparable variants manually before choosing its price.')
             elif target.is_graded:
                 result.update(status='unavailable', message='Slab pricing needs verified same-grader/grade sold or guide data. Raw-card prices are never used for slabs.')
