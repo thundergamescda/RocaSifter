@@ -1,4 +1,4 @@
-# Server versions observed in passed hosted run44152563236, plus browser pins.
+# Baseline versions: passed hosted run44152563236, plus browser pins. Psycopg3.3.9 security patch requires separate new acceptance.
 # This file is a source candidate. Nothing has been installed or executed here.
 blinker==1.9.0
 certifi==2026.10.23
@@ -13,8 +13,8 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.4
 packaging==26.3
-psycopg==3.3.6
-psycopg-binary==3.3.6
+psycopg==3.3.9
+psycopg-binary==3.3.9
 psycopg-pool==3.3.3
 pycparser==3.12
 requests==2.34.2

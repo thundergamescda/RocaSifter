@@ -119,6 +119,8 @@ class Identity:
     player: str = ''
     custom_game_label: str = ''
     ambiguous_grading: str = ''
+    sport: str = ''
+    league: str = ''
 
     @classmethod
     def from_card(cls, card):
@@ -132,7 +134,8 @@ class Identity:
                    grader, grade, qualifier, str(card.get('cert_number') or '').strip(),
                    text(card.get('serial_number')), text(card.get('year')), text(card.get('manufacturer')),
                    text(card.get('team')), text(card.get('player')),
-                   text(label) if selected_game.startswith('other:') else '', ambiguous)
+                   text(label) if selected_game.startswith('other:') else '', ambiguous,
+                   text(card.get('sport')), text(card.get('league')))
 
     @property
     def complete(self):
@@ -146,11 +149,13 @@ class Identity:
 
     @property
     def has_specialized_variant(self):
-        return self.game == 'sports' or any((self.serial_number, self.year, self.manufacturer, self.team, self.player))
+        return self.game == 'sports' or any((self.serial_number, self.year, self.manufacturer, self.team, self.player, self.sport, self.league))
 
     @property
     def cache_key(self):
-        return hashlib.sha256(json.dumps(self.__dict__, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        # Preserve old cache addresses when the newly retained facts are absent.
+        fields = {key: value for key, value in self.__dict__.items() if key not in ('sport', 'league') or value}
+        return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def lookup_links(card):
@@ -161,7 +166,7 @@ def lookup_links(card):
     prefix = {'magic': 'Magic The Gathering', 'pokemon': 'Pokemon'}.get(target.game,
               GAME_LABELS.get(target.game) or supplied_label)
     details = [str(card.get(k) or '').strip() for k in
-               ('card_name', 'card_set', 'card_num', 'printing', 'language', 'year', 'manufacturer', 'team', 'player', 'serial_number')]
+               ('card_name', 'card_set', 'card_num', 'printing', 'language', 'year', 'sport', 'league', 'manufacturer', 'team', 'player', 'serial_number')]
     base = ' '.join(part for part in [prefix, *details] if part)
     slab = target.is_graded or target.grader == '?' or bool(re.match(r'^(psa|bgs|cgc|sgc|tag|ace)\b',text(card.get('condition'))))
     descriptor = ' '.join((target.grader, target.grade_qualifier, target.grade)) if target.is_graded else str(card.get('condition') or '')

@@ -21,7 +21,7 @@ from station_cloud import CloudClient,CloudError
 from station_service import StationService
 from station_store import StationError
 from test_shared_trade import TradeFixtureTransport
-from test_station_cloud import response
+from test_station_cloud import response,seed_historical_profile
 
 
 class ReceivingFixtureTransport(TradeFixtureTransport):
@@ -31,25 +31,31 @@ class ReceivingFixtureTransport(TradeFixtureTransport):
 
     def project(self,store,body,ident,revision=0):
         domain=normalize_plan({key:item for key,item in body.items() if key!='revision'});claim=self.claims[(store,domain['physical_intake_id'])]
-        accepted={}
+        accepted={};budget={row['source_line_key']:row['quantity'] for row in source_lines(claim['source_manifest'])}
         if domain['workflow_kind']=='accepted_trade':
             trade=self.trades[(store,domain['accepted_trade_id'])]
             accepted={row['id']:row for row in trade['accepted_receipt']['lines']}
+            budget={}
+            for row in trade['accepted_receipt']['lines']:
+                key=row['source_line_key'];budget[key]=budget.get(key,0)+row['quantity']
         targets=[];selected={}
         for row in domain['lines']:
             identity=accepted[row['accepted_line_id']]['identity'] if accepted else row['identity']
             sku=self.target_skus.get(identity['name'],'SS-'+source_line_id(identity)[:8])
             target={key:copy.deepcopy(row[key]) for key in ('review_line_id','source_line_key','quantity','selling_cents')}
             if accepted:target['accepted_line_id']=row['accepted_line_id']
+            if 'physical_ownership_version' in domain:
+                target['physical_ownership']=copy.deepcopy(row['physical_ownership'])
             target.update(identity_hash=source_line_id(identity),binding_id=str(uuid.uuid4()),binding_version=0,
                 binding_evidence_hash='b'*64,source_sku=sku,target_sku=sku,variation_id='VAR-'+str(len(targets)),
                 parent_id='PARENT-'+str(len(targets)),currency='USD',action='reuse_existing')
             targets.append(target);selected[row['source_line_key']]=selected.get(row['source_line_key'],0)+row['quantity']
             if self.opaque:target.update(variation_id='VAR:/opaque?x=%2F',parent_id='PARENT:/opaque#exact')
         value={key:domain.get(key) for key in ('physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind','accepted_trade_id','accepted_receipt_hash','client_label_profile')}
+        if 'physical_ownership_version' in domain:value['physical_ownership_version']=domain['physical_ownership_version']
         value.update(receiving_id=ident,revision=revision,state='ready',plan_hash=fingerprint(domain),
             provider={'merchant_id':'FIXTURE-MERCHANT','environment':'sandbox','application_id':'FIXTURE-APP','location_id':domain['location_id']},
-            targets=targets,selected_quantities=selected,excluded_quantities={row['source_line_key']:row['quantity']-selected.get(row['source_line_key'],0) for row in source_lines(claim['source_manifest'])},
+            targets=targets,selected_quantities=selected,excluded_quantities={key:quantity-selected.get(key,0) for key,quantity in budget.items()},
             inventory_confirmed=False,receipt=None,blocked_reasons=[])
         value.update(catalog_confirmed=False,catalog_proof=None,catalog_proof_hash=None,catalog_resolutions=[],catalog_resolutions_hash=None)
         if self.opaque:value['provider'].update(merchant_id='MERCHANT:/opaque?x=%2F',application_id='APP:/opaque#exact')
@@ -58,8 +64,9 @@ class ReceivingFixtureTransport(TradeFixtureTransport):
     def complete(self,value):
         value.update(state='received',inventory_confirmed=True)
         proof={key:copy.deepcopy(value.get(key)) for key in ('receiving_id','revision','plan_hash','physical_intake_id','physical_manifest_hash','source_snapshot_hash','workflow_kind','accepted_trade_id','accepted_receipt_hash','provider','selected_quantities','excluded_quantities','client_label_profile')}
-        proof.update(receipt_schema_version=1,confirmed_targets=[dict(row,confirmed_quantity=row['quantity']) for row in value['targets']],
+        proof.update(receipt_schema_version=1,confirmed_targets=[dict(copy.deepcopy(row),confirmed_quantity=row['quantity']) for row in value['targets']],
             inventory_confirmed=True,catalog_write_performed=False,received_at='2026-10-30T18:00:00+00:00',provider_proof_hash='e'*64)
+        if 'physical_ownership_version' in value:proof['physical_ownership_version']=value['physical_ownership_version']
         proof['receipt_hash']=fingerprint(proof);value['receipt']=proof
 
     def request(self,method,url,*,headers,json=None,**options):
@@ -72,7 +79,7 @@ class ReceivingFixtureTransport(TradeFixtureTransport):
             if not actor:return response(401,{'error':'Sign in'})
             if actor['role'] not in ('owner','manager'):return response(403,{'error':'Manager required'})
             store=actor['store']
-            if path=='/api/receiving/readiness':return response(200,{'protocol_version':1,'write_enabled':self.write_enabled,
+            if path=='/api/receiving/readiness':return response(200,{'protocol_version':1,'physical_ownership_versions':[1,2],'write_enabled':self.write_enabled,
                 'server_write_enabled':self.write_enabled,'tenant_write_enabled':self.write_enabled,'same_price_existing_supported':True,
                 'new_price_supported':False,'new_parent_enabled':False,'fresh_mfa_required':True,'max_targets':100,
                 'location_selection_required':True,'grants_verified':False,'required_scopes':['ITEMS_READ','INVENTORY_WRITE']})
@@ -133,6 +140,10 @@ class HostedReceivingTests(unittest.TestCase):
         for key,name in (('SETTINGS_FILE','settings.json'),('OUTPUT_DIR','outputs')):
             item=patch.object(core,key,str(self.root/name));item.start();self.addCleanup(item.stop)
         item=patch('requests.sessions.Session.request',side_effect=AssertionError('No real provider HTTP'));item.start();self.addCleanup(item.stop)
+        if self._testMethodName=='test_source_profile_session_and_store_changes_cannot_transfer_intent':
+            # Preserve the original mixed-store legacy journal isolation check;
+            # fresh hosted binding rejection is separately tested at sign-in.
+            seed_historical_profile(self.root/'station_data')
         self.remote=self.transport_type();self.service=self.restart()
         self.service.store.put('preferences',self.service.preferences()|{'pricingEnabled':False})
         self.session=self.service.cloud.login({'storeSlug':'fictional-store','email':'manager@example.invalid','password':'fixture-staff-password'})
@@ -189,8 +200,8 @@ class HostedReceivingTests(unittest.TestCase):
     def test_intent_and_encrypted_journal_failures_prevent_mutation(self):
         for boundary in ('intent','journal'):
             receipt=self.claim(self.receipt());before=len([item for item in self.remote.sent if item[0]!='GET'])
-            target=self.service.store if boundary=='intent' else self.service.cloud.receiving.vault
-            with patch.object(target,'save_receipt' if boundary=='intent' else 'set',side_effect=OSError('Fictional disk failure')),self.assertRaises(OSError):self.prepare(receipt)
+            target=self.service.store if boundary=='intent' else self.service.cloud.receiving.storage
+            with patch.object(target,'save_receipt' if boundary=='intent' else '_commit',side_effect=OSError('Fictional disk failure')),self.assertRaises(OSError):self.prepare(receipt)
             self.assertEqual(len([item for item in self.remote.sent if item[0]!='GET']),before)
 
     def test_terminal_result_retained_until_local_mirror_is_durable(self):
@@ -235,7 +246,7 @@ class HostedReceivingTests(unittest.TestCase):
 
     def test_corrupt_journal_is_owner_recovery_not_token_replacement(self):
         value=self.prepare()
-        with patch.object(self.service.cloud.receiving.vault,'read',side_effect=StationError('DPAPI failed')):
+        with patch.object(self.service.cloud.receiving.vault,'decode_bytes',side_effect=StationError('DPAPI failed')):
             with self.assertRaises(CloudError) as caught:self.service.cloud.pending()
         self.assertTrue(caught.exception.pending);self.assertIn('Windows account',str(caught.exception));self.assertNotIn('Save replacement',str(caught.exception))
         self.assertEqual(self.remote.stock_calls,0)
@@ -288,7 +299,7 @@ class HostedReceivingTests(unittest.TestCase):
         receipt=self.receipt();receipt['mode']='trade';receipt['requires_purchase']=True;self.service.store.save_receipt(receipt);receipt=self.claim(receipt)
         customer=self.service.cloud.create_customer({'request_key':'fixture-trade-customer','display_name':'Fictional Customer','permission_confirmed':True})['customer_id']
         draft=self.service.shared_trades.prepare(receipt['id'],{'revision':receipt['revision'],'customerId':customer},self.session['sessionId'])
-        accepted=self.service.shared_trades.accept(receipt['id'],{'confirmationHash':draft['confirmationHash'],'customerAgreed':True,'itemsReceived':True,'claimReviewed':True},self.session['sessionId'])
+        accepted=self.service.shared_trades.accept(receipt['id'],{'offerType':'credit','confirmationHash':draft['offers']['credit']['confirmationHash'],'customerAgreed':True,'itemsReceived':True,'claimReviewed':True},self.session['sessionId'])
         plan=self.prepare(accepted['receipt'],workflowKind='accepted_trade');body=plan['receipt']['hosted_receive']['plan_body']
         self.assertTrue(all('accepted_line_id' in row and 'identity' not in row for row in body['lines']))
         result=self.commit(plan);self.assertEqual(result['receipt']['purchase'],accepted['receipt']['purchase']);self.assertEqual(self.remote.issuances,1)
@@ -382,8 +393,9 @@ class HostedReceivingTests(unittest.TestCase):
         self.assertNotIn('hosted_receive',self.service.store.receipt(receipt['id']));self.assertFalse(self.service.cloud.receiving.read())
         other=self.claim(self.receipt('Name,Game,Price,Quantity\nZero Confirmation,Magic,2,1\n'))
         other['cards'][0].update(final_price=0,price_confirmed=False,price_missing=False,reviewed=True);self.service.store.save_receipt(other)
-        with self.assertRaisesRegex(StationError,'confirm each zero'):self.prepare(other)
+        with self.assertRaisesRegex(StationError,r'confirm (each|a) zero'):self.prepare(other)
         self.assertNotIn('hosted_receive',self.service.store.receipt(other['id']))
+        self.assertFalse(self.service.cloud.receiving.read())
 
 
 if __name__=='__main__':unittest.main()

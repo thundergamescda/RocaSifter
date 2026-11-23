@@ -391,7 +391,7 @@ class CloudClient:
                     raise
                 return {'status':200,'body':{key:value[key] for key in keys if key in value}}
             square=metadata('/api/square/status',('oauth_configured','connected','connection_status','environment','saved_environment',
-                            'requested_profile','grants_verified','write_checkout_enabled','scopes','requested_scopes'))
+                            'requested_profile','grants_verified','write_checkout_enabled','scopes','requested_scopes','renewal'))
             receiving=metadata('/api/receiving/readiness',('protocol_version','write_enabled','server_write_enabled','tenant_write_enabled',
                                'same_price_existing_supported','new_price_supported','new_price_write_enabled','new_parent_enabled',
                                'location_selection_required','fresh_mfa_required','max_targets','grants_verified','required_scopes'))

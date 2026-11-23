@@ -9,6 +9,7 @@ import io
 import json
 import uuid
 from station_store import StationError, now
+from station_profile import initialize_profile, ProfilePolicy, ProfilePolicyError
 
 
 def cents(value):
@@ -24,6 +25,11 @@ def cents(value):
 class Tracker:
     def __init__(self, service):
         self.service, self.store = service, service.store
+        supplied = getattr(service, 'profile', None)
+        if supplied is not None and not isinstance(supplied, ProfilePolicy):
+            raise ProfilePolicyError('The local wallet profile authority could not be verified.', 'PROFILE_RECOVERY_REQUIRED')
+        self.profile = supplied or initialize_profile(self.store.root, store_root=self.store.root)
+        self._require_local('local wallet construction')
         with self.store.db() as db:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS credit_customers (
@@ -38,7 +44,11 @@ class Tracker:
               id TEXT PRIMARY KEY, customer_id TEXT, cents INTEGER, state TEXT, order_id TEXT UNIQUE, at TEXT);
             ''')
 
+    def _require_local(self, action):
+        self.profile.require_legacy(action)
+
     def _begin(self, db):
+        self._require_local('local wallet transaction')
         db.execute('BEGIN IMMEDIATE')
 
     def _customer(self, db, ident):
@@ -75,10 +85,12 @@ class Tracker:
         return signature, json.loads(existing['response']) if existing else None
 
     def _save_request(self,db,key,signature,result):
+        self._require_local('local wallet request journal')
         db.execute('INSERT INTO credit_requests VALUES (?,?,?)',(key,signature,json.dumps(result)))
         return result
 
     def add_customer(self,data):
+        self._require_local('local wallet customer creation')
         name=str(data.get('name','')).strip()
         if not name or len(name)>200:
             raise StationError('Enter a customer name, at most 200 characters.')
@@ -96,6 +108,7 @@ class Tracker:
             return self._save_request(db,data['requestId'],sig,self._customer(db,ident))
 
     def _entry(self,db,ident,amount,kind,reference,note,source):
+        self._require_local('local wallet ledger entry')
         c=self._customer(db,ident)
         if c['available_cents'] + amount < 0:
             raise StationError('Insufficient available credit, including active reservations.')
@@ -105,6 +118,7 @@ class Tracker:
                    (ident,now(),kind,amount,balance,reference,note,source))
 
     def transaction(self,data):
+        self._require_local('local wallet balance mutation')
         # Password/session authorization belongs to the HTTP boundary, not persisted payloads.
         body={k:data.get(k) for k in ('customerId','kind','amount','receiptId','reference','note','version')}
         ident,kind=body['customerId'],body['kind']
@@ -146,6 +160,7 @@ class Tracker:
             return self._save_request(db,data['requestId'],sig,result)
 
     def reserve(self,ident,amount,key,order_id):
+        self._require_local('local wallet reservation')
         amount=cents(amount)
         if not isinstance(order_id,str) or not order_id.strip():
             raise StationError('Link a checkout order before reserving credit.')
@@ -168,6 +183,7 @@ class Tracker:
 
         Not exposed to browsers. A future signed hosted adapter must retrieve the order.
         """
+        self._require_local('local wallet settlement')
         with self.store.db() as db:
             self._begin(db)
             row=db.execute('SELECT * FROM credit_reservations WHERE order_id=?',(order.get('id'),)).fetchone()
@@ -192,6 +208,7 @@ class Tracker:
             return self._account(db,c['id'])
 
     def restore(self,order_id,amount,refund_id,note):
+        self._require_local('local wallet refund restoration')
         amount=cents(amount)
         if not refund_id or not note:raise StationError('Verified refund reference and reason are required.')
         with self.store.db() as db:
