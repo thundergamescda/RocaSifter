@@ -1,0 +1,439 @@
+name: Recover existing PG job log 139553513689
+run-name: Recover existing public log 139553513689 without rerunning tests
+on:
+  push:
+    branches:
+      - 'stock-sleeve-log-recovery-45713468888-*'
+permissions:
+  actions: read
+concurrency:
+  group: fixed-log-recovery-139553513689
+  cancel-in-progress: false
+jobs:
+  fetch:
+    if: github.repository == 'thundergamescda/RocaSifter' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.fetch.outputs.matrix }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      manifest_sha256: ${{ steps.fetch.outputs.manifest_sha256 }}
+    steps:
+      - name: Preserve the fixed existing log and prepare verified chunks
+        id: fetch
+        env:
+          RECOVERY_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +x
+          set -Eeuo pipefail
+          python3 -I -S -B - <<'SS_FIXED_LOG_FETCH_SOURCE'
+          """SOURCE ONLY. Recover one existing public GitHub job log; never execute tests."""
+          import os
+          for trust_override in ('SSL_CERT_FILE', 'SSL_CERT_DIR', 'OPENSSL_CONF', 'OPENSSL_MODULES'):
+              os.environ.pop(trust_override, None)
+          import codecs
+          import gzip
+          import hashlib
+          import http.client
+          import json
+          from pathlib import Path
+          import re
+          import resource
+          import ssl
+          import stat
+          import sys
+          import tempfile
+          import time
+          from urllib.parse import urlsplit
+          
+          REPOSITORY = 'thundergamescda/RocaSifter'
+          RUN_ID = 45713468888
+          JOB_ID = 139553513689
+          HEAD_SHA = 'a4934e36dfcdad5eb00e2aba197a59a12f7cf07d'
+          MAX_ORIGINAL = 67108864
+          MAX_GZIP = 33554432
+          CHUNK = 262144
+          START = time.monotonic()
+          
+          
+          def need(value, code):
+              if not value:
+                  raise ValueError(code)
+          
+          
+          def remaining():
+              value = 90 - (time.monotonic() - START)
+              need(value > 0, 'RECOVERY_DEADLINE')
+              return min(10, value)
+          
+          
+          def exclusive(path, value):
+              with path.open('xb') as stream:
+                  stream.write(value)
+                  stream.flush()
+                  os.fsync(stream.fileno())
+          
+          
+          def fetch(host, target, headers, destination=None, redirect=False):
+              # Direct HTTPS ignores proxy environment. Redirects are never automatic.
+              connection = http.client.HTTPSConnection(host, timeout=remaining(), context=TLS)
+              try:
+                  connection.request('GET', target, headers=headers)
+                  response = connection.getresponse()
+                  if redirect:
+                      need(response.status == 302, 'RECOVERY_EXPECTED_API_REDIRECT')
+                      locations = [value for key, value in response.getheaders() if key.lower() == 'location']
+                      need(len(locations) == 1 and 0 < len(locations[0]) <= 8192,
+                           'RECOVERY_LOCATION_FORM')
+                      return locations[0]
+                  need(response.status == 200, 'RECOVERY_HTTP_STATUS')
+                  need(response.getheader('Content-Encoding', 'identity').lower() == 'identity',
+                       'RECOVERY_CONTENT_ENCODING')
+                  cap = MAX_ORIGINAL if destination is not None else 1048576
+                  size_header = response.getheader('Content-Length')
+                  if size_header is not None:
+                      need(re.fullmatch('[0-9]{1,10}', size_header) and int(size_header) <= cap,
+                           'RECOVERY_CONTENT_LENGTH')
+                  total = 0
+                  digest = hashlib.sha256()
+                  prefix = bytearray()
+                  content = bytearray()
+                  decoder = codecs.getincrementaldecoder('utf-8')(errors='strict') if destination else None
+                  stream = destination.open('xb') if destination else None
+                  try:
+                      while True:
+                          socket_timeout = remaining()
+                          if connection.sock is not None:
+                              connection.sock.settimeout(socket_timeout)
+                          block = response.read(65536)
+                          if not block:
+                              break
+                          total += len(block)
+                          need(total <= cap, 'RECOVERY_BODY_BOUND')
+                          digest.update(block)
+                          if stream is None:
+                              content.extend(block)
+                          else:
+                              decoder.decode(block, final=False)
+                              if len(prefix) < 3:
+                                  prefix.extend(block[:3 - len(prefix)])
+                              stream.write(block)
+                      if size_header is not None:
+                          need(total == int(size_header), 'RECOVERY_BODY_TRUNCATED')
+                      if stream is not None:
+                          decoder.decode(b'', final=True)
+                          stream.flush()
+                          os.fsync(stream.fileno())
+                  finally:
+                      if stream is not None:
+                          stream.close()
+                  need(total > 0, 'RECOVERY_EMPTY_BODY')
+                  return (total, digest.hexdigest(), bytes(prefix) == b'\xef\xbb\xbf') if destination else bytes(content)
+              finally:
+                  connection.close()
+          
+          
+          def main():
+              global TLS
+              need(sys.platform == 'linux' and sys.flags.isolated and sys.flags.no_site
+                   and sys.flags.ignore_environment and sys.dont_write_bytecode, 'RECOVERY_START_FLAGS')
+              resource.setrlimit(resource.RLIMIT_AS, (402653184, 402653184))
+              resource.setrlimit(resource.RLIMIT_FSIZE, (83886080, 83886080))
+              resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+              resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+              need(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY
+                   and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'RECOVERY_RUN_SCOPE')
+              token = os.environ.pop('RECOVERY_TOKEN', '')
+              need(0 < len(token) <= 4096 and '\r' not in token and '\n' not in token, 'RECOVERY_TOKEN_FORM')
+              # Use runner system trust, without ambient user CA/crypto configuration.
+              for name in ('SSL_CERT_FILE', 'SSL_CERT_DIR', 'OPENSSL_CONF', 'OPENSSL_MODULES'):
+                  os.environ.pop(name, None)
+              TLS = ssl.create_default_context()
+              api_headers = {'Authorization': 'Bearer ' + token,
+                             'Accept': 'application/vnd.github+json',
+                             'X-GitHub-Api-Version': '2026-03-10',
+                             'User-Agent': 'StockAndSleeve-fixed-job-log-recovery',
+                             'Accept-Encoding': 'identity'}
+              base = '/repos/' + REPOSITORY + '/actions/'
+              run = json.loads(fetch('api.github.com', base + 'runs/' + str(RUN_ID), api_headers))
+              need(run['id'] == RUN_ID and run['run_attempt'] == 1 and run['head_sha'] == HEAD_SHA
+                   and run['status'] == 'completed' and run['conclusion'] == 'success', 'RECOVERY_ORIGINAL_RUN')
+              job = json.loads(fetch('api.github.com', base + 'jobs/' + str(JOB_ID), api_headers))
+              need(job['id'] == JOB_ID and job['run_id'] == RUN_ID and job['head_sha'] == HEAD_SHA
+                   and job['status'] == 'completed' and job['conclusion'] == 'success', 'RECOVERY_ORIGINAL_JOB')
+              location = fetch('api.github.com', base + 'jobs/' + str(JOB_ID) + '/logs',
+                               api_headers, redirect=True)
+              parts = urlsplit(location)
+              need(parts.scheme == 'https' and parts.port in (None, 443)
+                   and parts.username is None and parts.password is None and '#' not in location
+                   and parts.hostname is not None
+                   and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.blob\.core\.windows\.net', parts.hostname)
+                   and parts.path.startswith('/') and len(parts.path) <= 4096
+                   and not any(ord(char) < 33 or ord(char) > 126 for char in location),
+                   'RECOVERY_STORAGE_DESTINATION')
+              temp = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              need(temp.is_dir() and temp.stat().st_uid == os.getuid(), 'RECOVERY_TEMP_OWNER')
+              root = Path(tempfile.mkdtemp(prefix='ss-fixed-job-log-', dir=temp))
+              os.chmod(root, 0o700)
+              original = root / 'original-job.log'
+              # Construct a NEW header dictionary: Authorization never reaches storage.
+              storage_headers = {'User-Agent': 'StockAndSleeve-fixed-job-log-recovery',
+                                 'Accept-Encoding': 'identity'}
+              target = parts.path + ('?' + parts.query if parts.query else '')
+              size, original_sha, bom = fetch(parts.hostname, target, storage_headers, original)
+              del location, parts, target, token, api_headers
+              compressed = root / 'original-job.log.gz'
+              with original.open('rb') as source, compressed.open('xb') as output:
+                  with gzip.GzipFile(fileobj=output, filename='', mode='wb', mtime=0, compresslevel=6) as compressor:
+                      while True:
+                          remaining()
+                          block = source.read(65536)
+                          if not block:
+                              break
+                          compressor.write(block)
+                          need(output.tell() <= MAX_GZIP, 'RECOVERY_GZIP_BOUND')
+                  output.flush()
+                  os.fsync(output.fileno())
+              need(0 < compressed.stat().st_size <= MAX_GZIP, 'RECOVERY_GZIP_FINAL_BOUND')
+              # Rehash original bytes independently after compression; UTF8 BOM is not stripped.
+              check = hashlib.sha256()
+              with original.open('rb') as source:
+                  while True:
+                      remaining()
+                      block = source.read(65536)
+                      if not block:
+                          break
+                      check.update(block)
+              need(original.stat().st_size == size and check.hexdigest() == original_sha,
+                   'RECOVERY_ORIGINAL_CHANGED')
+              directory = root / 'chunks'
+              directory.mkdir(mode=0o700)
+              rows = []
+              gzip_digest = hashlib.sha256()
+              offset = 0
+              with compressed.open('rb') as source:
+                  while True:
+                      remaining()
+                      block = source.read(CHUNK)
+                      if not block:
+                          break
+                      index = len(rows)
+                      need(index < 128, 'RECOVERY_CHUNK_COUNT')
+                      name = str(index).zfill(3) + '.data'
+                      exclusive(directory / name, block)
+                      rows.append({'index': index, 'name': name, 'offset': offset,
+                                   'bytes': len(block), 'sha256': hashlib.sha256(block).hexdigest()})
+                      gzip_digest.update(block)
+                      offset += len(block)
+              manifest = {'format': 'stock-and-sleeve:fixed-public-job-log-recovery:v1',
+                          'repository': REPOSITORY, 'original_run_id': RUN_ID, 'original_attempt': 1,
+                          'original_job_id': JOB_ID, 'original_head_sha': HEAD_SHA,
+                          'original_bytes': size, 'original_sha256': original_sha, 'original_utf8_bom': bom,
+                          'gzip_bytes': offset, 'gzip_sha256': gzip_digest.hexdigest(),
+                          'gzip_mtime': 0, 'chunk_bytes_max': CHUNK, 'chunks': rows,
+                          'test_rerun': False, 'credential_forwarded_to_storage': False,
+                          'only_existing_public_job_log': True}
+              encoded = (json.dumps(manifest, sort_keys=True, separators=(',', ':'), allow_nan=False) + '\n').encode()
+              need(len(encoded) <= 32768, 'RECOVERY_MANIFEST_BOUND')
+              exclusive(directory / 'manifest.json', encoded)
+              digest = hashlib.sha256(encoded).hexdigest()
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+                  output.write('matrix=' + json.dumps({'index': list(range(len(rows)))}, separators=(',', ':')) + '\n')
+                  output.write('chunk_directory=' + str(directory) + '\nmanifest_sha256=' + digest + '\n')
+              print(json.dumps({'original_job_id': JOB_ID, 'original_bytes': size,
+                                'original_sha256': original_sha, 'gzip_bytes': offset,
+                                'chunks': len(rows), 'manifest_sha256': digest}, sort_keys=True))
+          
+          
+          if __name__ == '__main__':
+              try:
+                  main()
+              except Exception as error:
+                  code = str(error)
+                  if not re.fullmatch('[A-Z][A-Z0-9_]{0,127}', code):
+                      code = 'RECOVERY_REDACTED_FAILURE'
+                  print(json.dumps({'successful': False, 'code': code}, separators=(',', ':')))
+                  raise SystemExit(1)
+          SS_FIXED_LOG_FETCH_SOURCE
+      - name: Carry only the bounded public-log chunks to the delivery jobs
+        id: upload
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # official v7.0.0
+        with:
+          name: fixed-public-log-139553513689-${{ github.run_id }}
+          path: ${{ steps.fetch.outputs.chunk_directory }}
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
+          compression-level: 0
+  deliver:
+    needs: fetch
+    if: github.repository == 'thundergamescda/RocaSifter' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.fetch.outputs.matrix) }}
+    name: Deliver original-log chunk ${{ matrix.index }}
+    steps:
+      - name: Download exactly this recovery run's immutable artifact
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # official v8.0.0
+        with:
+          artifact-ids: ${{ needs.fetch.outputs.artifact_id }}
+          path: ${{ runner.temp }}/recovered-pg-chunks
+          digest-mismatch: error
+      - name: Emit one complete verified chunk through the normal job-log API
+        env:
+          RECOVERY_CHUNK_INDEX: ${{ matrix.index }}
+          RECOVERY_MANIFEST_SHA256: ${{ needs.fetch.outputs.manifest_sha256 }}
+        shell: bash
+        run: |
+          set +x
+          set -Eeuo pipefail
+          python3 -I -S -B - <<'SS_FIXED_LOG_EMIT_SOURCE'
+          """SOURCE ONLY. Verify and emit one bounded chunk of one existing public job log."""
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import resource
+          import stat
+          import sys
+          
+          
+          def need(value, code):
+              if not value:
+                  raise ValueError(code)
+          
+          
+          def raw(path, cap):
+              before = path.lstat()
+              need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 0 < before.st_size <= cap,
+                   'RECOVERY_ARTIFACT_FILE_FORM')
+              descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+              try:
+                  with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+                      value = stream.read(cap + 1)
+                  after = os.fstat(descriptor)
+                  current = path.lstat()
+                  identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+                  need(identity(before) == identity(after) == identity(current)
+                       and len(value) == before.st_size, 'RECOVERY_ARTIFACT_FILE_CHANGED')
+                  return value
+              finally:
+                  os.close(descriptor)
+          
+          
+          def unique(pairs):
+              result = {}
+              for key, value in pairs:
+                  need(key not in result, 'RECOVERY_MANIFEST_DUPLICATE_KEY')
+                  result[key] = value
+              return result
+          
+          
+          def emit_lines(value):
+              encoded = base64.b64encode(value).decode('ascii')
+              for offset in range(0, len(encoded), 512):
+                  print(encoded[offset:offset + 512])
+          
+          
+          def main():
+              need(sys.platform == 'linux' and sys.flags.isolated and sys.flags.no_site
+                   and sys.flags.ignore_environment and sys.dont_write_bytecode, 'RECOVERY_EMIT_FLAGS')
+              resource.setrlimit(resource.RLIMIT_AS, (134217728, 134217728))
+              resource.setrlimit(resource.RLIMIT_NOFILE, (32, 32))
+              resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+              need(os.environ.get('GITHUB_REPOSITORY') == 'thundergamescda/RocaSifter'
+                   and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'RECOVERY_EMIT_RUN_SCOPE')
+              index_text = os.environ['RECOVERY_CHUNK_INDEX']
+              expected = os.environ['RECOVERY_MANIFEST_SHA256']
+              need(re.fullmatch('[0-9]{1,3}', index_text) and re.fullmatch('[a-f0-9]{64}', expected),
+                   'RECOVERY_EMIT_SELECTOR')
+              root = Path(os.environ['RUNNER_TEMP']) / 'recovered-pg-chunks'
+              need(root.resolve(strict=True) == root and root.is_dir() and not root.is_symlink(),
+                   'RECOVERY_ARTIFACT_DIRECTORY')
+              encoded = raw(root / 'manifest.json', 32768)
+              need(hashlib.sha256(encoded).hexdigest() == expected, 'RECOVERY_MANIFEST_SHA')
+              manifest = json.loads(encoded.decode('utf-8', errors='strict'), object_pairs_hook=unique,
+                                    parse_constant=lambda _: need(False, 'RECOVERY_NONFINITE_JSON'))
+              need(set(manifest) == {'format', 'repository', 'original_run_id', 'original_attempt',
+                                    'original_job_id', 'original_head_sha', 'original_bytes', 'original_sha256',
+                                    'original_utf8_bom', 'gzip_bytes', 'gzip_sha256', 'gzip_mtime',
+                                    'chunk_bytes_max', 'chunks', 'test_rerun', 'credential_forwarded_to_storage',
+                                    'only_existing_public_job_log'}, 'RECOVERY_MANIFEST_FIELDS')
+              need(manifest['format'] == 'stock-and-sleeve:fixed-public-job-log-recovery:v1'
+                   and manifest['repository'] == 'thundergamescda/RocaSifter'
+                   and manifest['original_run_id'] == 45713468888 and manifest['original_attempt'] == 1
+                   and manifest['original_job_id'] == 139553513689
+                   and manifest['original_head_sha'] == 'a4934e36dfcdad5eb00e2aba197a59a12f7cf07d'
+                   and manifest['test_rerun'] is False
+                   and manifest['credential_forwarded_to_storage'] is False
+                   and manifest['only_existing_public_job_log'] is True
+                   and type(manifest['original_utf8_bom']) is bool
+                   and manifest['gzip_mtime'] == 0 and manifest['chunk_bytes_max'] == 262144,
+                   'RECOVERY_MANIFEST_SCOPE')
+              for name, cap in (('original_bytes', 67108864), ('gzip_bytes', 33554432)):
+                  need(type(manifest[name]) is int and 0 < manifest[name] <= cap, 'RECOVERY_MANIFEST_BOUNDS')
+              for name in ('original_sha256', 'gzip_sha256'):
+                  need(type(manifest[name]) is str and re.fullmatch('[a-f0-9]{64}', manifest[name]),
+                       'RECOVERY_MANIFEST_DIGEST_FORM')
+              rows = manifest['chunks']
+              need(type(rows) is list and 1 <= len(rows) <= 128, 'RECOVERY_MANIFEST_CHUNKS')
+              chosen = int(index_text)
+              need(chosen < len(rows), 'RECOVERY_CHUNK_INDEX')
+              need({path.name for path in root.iterdir()} == {'manifest.json'} | {
+                  str(index).zfill(3) + '.data' for index in range(len(rows))}, 'RECOVERY_ARTIFACT_EXACT_MEMBERS')
+              offset = 0
+              digest = hashlib.sha256()
+              selected = None
+              for index, row in enumerate(rows):
+                  need(type(row) is dict and set(row) == {'index', 'name', 'offset', 'bytes', 'sha256'}
+                       and type(row['index']) is int and row['index'] == index
+                       and row['name'] == str(index).zfill(3) + '.data'
+                       and type(row['offset']) is int and row['offset'] == offset
+                       and type(row['bytes']) is int and 0 < row['bytes'] <= 262144
+                       and (index == len(rows) - 1 or row['bytes'] == 262144)
+                       and type(row['sha256']) is str and re.fullmatch('[a-f0-9]{64}', row['sha256']),
+                       'RECOVERY_CHUNK_DESCRIPTOR')
+                  data = raw(root / row['name'], 262144)
+                  need(len(data) == row['bytes'] and hashlib.sha256(data).hexdigest() == row['sha256'],
+                       'RECOVERY_CHUNK_BYTES_SHA')
+                  digest.update(data)
+                  offset += len(data)
+                  need(offset <= 33554432, 'RECOVERY_AGGREGATE_BOUND')
+                  if index == chosen:
+                      selected = data
+              need(offset == manifest['gzip_bytes'] and digest.hexdigest() == manifest['gzip_sha256']
+                   and selected is not None, 'RECOVERY_COMPLETE_GZIP_SHA')
+              # Precharge framing plus a conservative64 provider-prefix bytes/line and32KiB setup reserve.
+              manifest_b64_chars = 4 * ((len(encoded) + 2) // 3)
+              chunk_b64_chars = 4 * ((len(selected) + 2) // 3)
+              lines = (manifest_b64_chars + 511) // 512 + (chunk_b64_chars + 511) // 512
+              need(manifest_b64_chars + chunk_b64_chars + lines * 65 + 2048 <= 500 * 1024 - 32768,
+                   'RECOVERY_DELIVERY_LOG_BUDGET')
+              # No output payload until the complete artifact membership and hashes passed.
+              print('SS_LOG_RECOVERY_V1_MANIFEST_BEGIN bytes=' + str(len(encoded)) + ' sha256=' + expected)
+              emit_lines(encoded)
+              print('SS_LOG_RECOVERY_V1_MANIFEST_END bytes=' + str(len(encoded)) + ' sha256=' + expected)
+              selected_sha = hashlib.sha256(selected).hexdigest()
+              details = ' index=' + str(chosen) + ' bytes=' + str(len(selected)) + ' sha256=' + selected_sha
+              print('SS_LOG_RECOVERY_V1_CHUNK_BEGIN' + details)
+              emit_lines(selected)
+              print('SS_LOG_RECOVERY_V1_CHUNK_END' + details)
+              print('SS_LOG_RECOVERY_V1_CHUNK_COMPLETE index=' + str(chosen))
+          
+          
+          if __name__ == '__main__':
+              try:
+                  main()
+              except Exception as error:
+                  code = str(error)
+                  if not re.fullmatch('[A-Z][A-Z0-9_]{0,127}', code):
+                      code = 'RECOVERY_EMIT_REDACTED_FAILURE'
+                  print(json.dumps({'successful': False, 'code': code}, separators=(',', ':')))
+                  raise SystemExit(1)
+          SS_FIXED_LOG_EMIT_SOURCE
