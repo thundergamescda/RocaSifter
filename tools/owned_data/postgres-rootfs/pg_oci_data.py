@@ -1031,7 +1031,7 @@ def main():
     import strict_debian_tar_data as shared_core
     import ci_elf_data as elf_reader
     CORE = shared_core
-    require(core['sha256'] == 'df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485',
+    require(core['sha256'] == 'fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a',
             'EXACT_SHARED_STRICT_TAR_CORE')
     bootstrap = bootstrap_receipt()
     save('bootstrap-receipt.json', bootstrap)
@@ -1150,7 +1150,15 @@ if __name__ == '__main__':
         # Preserve data/partial outputs. Never print raw path, blob, config or URI errors.
         accepted_types = (DataFailure,) if CORE is None else (DataFailure, CORE.DataFailure)
         code = str(error) if type(error) in accepted_types and re.fullmatch('[A-Z0-9_]{1,100}', str(error)) else 'DATA_FAILURE_REDACTED'
-        save('data-failure.json', {'passed': False, 'error_type': type(error).__name__, 'error_code': code,
-                                 'created_files': CREATED, 'payload_execution': False, 'automatic_retry': False})
-        print('DATA_FAILURE_TYPE=' + type(error).__name__)
+        failure = {'profile_id': 'postgres-rootfs', 'successful': False,
+                   'error_type': type(error).__name__, 'error_code': code,
+                   'raw_payload_or_exception_detail_printed': False}
+        sys.stderr.write('SS_DATA_PROFILE_FAILURE ' +
+            json.dumps(failure, sort_keys=True, separators=(',', ':')) + '\n')
+        sys.stderr.flush()
+        try:
+            save('data-failure.json', {'passed': False, 'error_type': type(error).__name__, 'error_code': code,
+                                     'created_files': CREATED, 'payload_execution': False, 'automatic_retry': False})
+        except Exception:
+            pass  # Typed failure above survives even if private storage is full.
         raise SystemExit(1)

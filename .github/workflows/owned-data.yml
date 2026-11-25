@@ -24,9 +24,9 @@ jobs:
       matrix:
         include:
           - profile: debian-archives
-            profile_sha256: 56705f3fa1de105ac19516a526da6bd40258b5f81ed3c8c5c7c313fafd4f4a3e
+            profile_sha256: a1eda0fe7c455627b2aee9eae4036049073b6ecb1d30d03e388801f95a52bc24
           - profile: postgres-rootfs
-            profile_sha256: 9dfdff82cd8450182a82031d3d94024d4df9ad62976f49f980a97597f930906b
+            profile_sha256: 61a2a26365de160a6905d644551151af3eb93e035282cc6e1a493bac8b5c0c6d
     steps:
       - name: Check out exact source and its single parent
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803

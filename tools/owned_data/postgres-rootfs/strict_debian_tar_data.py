@@ -33,9 +33,9 @@ class BoundedTarInfo(tarfile.TarInfo):
     terminal_seen = False
 
     @classmethod
-    def frombuf(cls, buf, encoding, errors):
+    def _frombuf(cls, buf, encoding, errors, *, dircheck=True):
         try:
-            member = super().frombuf(buf, encoding, errors)
+            member = super()._frombuf(buf, encoding, errors, dircheck=dircheck)
         except tarfile.EOFHeaderError:
             # Only one complete all-zero block may terminate iteration. The
             # second block and all trailer bytes are checked through the tar

@@ -528,7 +528,7 @@ def collect(args):
         require(type(header) is dict and set(header) == fields and header['encoding'] == 'gzip+base64', 'FRAME_SCHEMA')
         name = safe_name(header['name'])
         require(name not in headers and (name in COMMON or name in c['extra_report_names']
-                or re.fullmatch('elf-[a-f0-9]{64}\.json', name)), 'DERIVED_REPORT_ALLOWLIST')
+                or re.fullmatch(r'elf-[a-f0-9]{64}\.json', name)), 'DERIVED_REPORT_ALLOWLIST')
         decoded_size = integer(header['decoded_bytes'], 2, MAX_RAW)
         gzip_size = integer(header['compressed_bytes'], 20, MAX_GZIP_TOTAL)
         payload_size = integer(header['payload_bytes'], 1, MAX_LOG)

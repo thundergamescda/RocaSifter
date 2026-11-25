@@ -7,7 +7,7 @@
   "bootstrap": {
     "image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
     "config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
-    "scope": "Explicit root restricted DATA-only immutable Python/stdlib/codecs admission, bound by the root grant SHA. Observe full actual stdlib and mapped providers before decode and rehash at export. No foreign image/vendor/native/application import or maintainer execution.",
+    "scope": "Explicit root restricted corrected-source DATA-only immutable Python/stdlib/codecs admission under the exact root grant. Full actual module/provider observations before decode and final rehash; no foreign/vendor/app native import.",
     "uid": 10001,
     "gid": 10001,
     "network": "none",
@@ -17,14 +17,14 @@
     "readonly_root_source_inputs": true,
     "drop_all_capabilities": true,
     "no_new_privileges": true,
-    "source_go_sha256": "ecc741bcd7e05e774ff92dd1340b057f68212e2a9f7989b21d22e7c82fa54379",
-    "root_data_job_admission_sha256": "e88ca277b9ad55a75cefcfa3f47e10932927d7ecef1ee37b503376b8bb34ea40"
+    "source_go_sha256": "45a0a0242edd0a10732e501a3fac8b9a4e965462fde3446c96ac3dd893c9bb13",
+    "root_data_job_admission_sha256": "7dc24973f7480bb98a752dec8e29d9071321d720224adcbd68cd8509a65063cd"
   },
   "strict_tar_core": {
     "filename": "strict_debian_tar_data.py",
-    "bytes": 4615,
-    "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485",
-    "shared_source_review_sha256": "bf20b7ee34fd99c893203e8ef342037a23fff63d3375f4ab11601b53ff4ed9fd",
+    "bytes": 4654,
+    "sha256": "fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a",
+    "shared_source_review_sha256": "45a0a0242edd0a10732e501a3fac8b9a4e965462fde3446c96ac3dd893c9bb13",
     "original_source_sha256": "775a2cb163cc937160198990577c536cbe078f0bc4b09de7e1d89c4c65f7ea1f",
     "source_go_not_runtime_or_profile_go": true,
     "aggregate_caps": {

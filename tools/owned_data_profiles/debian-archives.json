@@ -2,7 +2,7 @@
   "format": "stock-and-sleeve:owned-data-host-profile:v1",
   "profile_id": "debian-archives",
   "execution_hold": null,
-  "expected_parent": "80040566350500c9f48689a4171599a6e02be366",
+  "expected_parent": "9d8ccab1d3c13f1e50928c82bf2b9b2d5dccb096",
   "base_image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
   "base_image_config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
   "code_files": [
@@ -10,13 +10,13 @@
       "name": "debian_data.py",
       "repo_path": "tools/owned_data/debian-archives/debian_data.py",
       "bytes": 57208,
-      "sha256": "30bc3474a8f1a9133136cffc7bd14feeb29113da5198698bac2aec0cb0ef570b"
+      "sha256": "3fc5779b215832da447d17bac8c283ab35428716d2061939b636ab757f90f6d8"
     },
     {
       "name": "strict_debian_tar_data.py",
       "repo_path": "tools/owned_data/debian-archives/strict_debian_tar_data.py",
-      "bytes": 4615,
-      "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485"
+      "bytes": 4654,
+      "sha256": "fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a"
     },
     {
       "name": "ci_elf_data.py",
@@ -27,8 +27,8 @@
     {
       "name": "admission.json",
       "repo_path": "tools/owned_data/debian-archives/admission.json",
-      "bytes": 3917,
-      "sha256": "183bff51eb4f2e005af838e485d9df48d990338769581664188329752efc209c"
+      "bytes": 3918,
+      "sha256": "5f6fa4daa91fc5b8740be6e0ee12ae52c726606e9f4940f39d535f6af538280d"
     },
     {
       "name": "input-spec.json",
@@ -40,7 +40,7 @@
       "name": "source-manifest.json",
       "repo_path": "tools/owned_data/debian-archives/source-manifest.json",
       "bytes": 907,
-      "sha256": "741f79a41ed3922f8a64952f53c8cce52a09ee4657e682b5a5d47feb74440a47"
+      "sha256": "89e395b2f7afc604c1e1b0f955b07c84277d7ab8d0db1a5d1c97d5bc5f112e08"
     }
   ],
   "input_count": 6,
@@ -53,8 +53,8 @@
     },
     {
       "repo_path": "tools/owned_data_host.py",
-      "bytes": 37867,
-      "sha256": "132b143cc28d59dc39fa207d4d1e567f5290998bfaa8ca55356ae7df83616a1b"
+      "bytes": 37868,
+      "sha256": "ec0c356f6e483317ad82b47c6516ac40bfe969a0578a123f4fcc9f003b8c97df"
     },
     {
       "repo_path": "tools/ci_evidence_transport.sh",
