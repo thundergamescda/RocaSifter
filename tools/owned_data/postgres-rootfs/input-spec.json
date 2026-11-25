@@ -1,0 +1,159 @@
+{
+  "format": "stock-and-sleeve:postgres-rootfs-normalized-inputs:v1",
+  "profile_id": "postgres-rootfs",
+  "total_bytes": 168558897,
+  "inputs": [
+    {
+      "id": "historical-config",
+      "name": "8bca9649e52d948114ccc8164b55b7ab26b64e729893e420114bb5c87bf7c7cc.blob-data",
+      "bytes": 10046,
+      "sha256": "8bca9649e52d948114ccc8164b55b7ab26b64e729893e420114bb5c87bf7c7cc",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:8bca9649e52d948114ccc8164b55b7ab26b64e729893e420114bb5c87bf7c7cc",
+      "kind": "historical_config_only",
+      "digest": "sha256:8bca9649e52d948114ccc8164b55b7ab26b64e729893e420114bb5c87bf7c7cc",
+      "media_type": "application/vnd.oci.image.config.v1+json"
+    },
+    {
+      "id": "proposed-config",
+      "name": "22fac36945da9a4145a11bc9a6198ebc00975b8323c8d454740e477c4e84593a.blob-data",
+      "bytes": 10072,
+      "sha256": "22fac36945da9a4145a11bc9a6198ebc00975b8323c8d454740e477c4e84593a",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:22fac36945da9a4145a11bc9a6198ebc00975b8323c8d454740e477c4e84593a",
+      "kind": "proposed_config",
+      "digest": "sha256:22fac36945da9a4145a11bc9a6198ebc00975b8323c8d454740e477c4e84593a",
+      "media_type": "application/vnd.oci.image.config.v1+json"
+    },
+    {
+      "id": "layer-00",
+      "name": "37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41.blob-data",
+      "bytes": 29856132,
+      "sha256": "37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41",
+      "kind": "proposed_layer",
+      "digest": "sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 0
+    },
+    {
+      "id": "layer-01",
+      "name": "0fbd9729f0d07af5ee5d3152b9fb9c0a777b8bdf58c3b4576dd02f0b6eef11be.blob-data",
+      "bytes": 1327,
+      "sha256": "0fbd9729f0d07af5ee5d3152b9fb9c0a777b8bdf58c3b4576dd02f0b6eef11be",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:0fbd9729f0d07af5ee5d3152b9fb9c0a777b8bdf58c3b4576dd02f0b6eef11be",
+      "kind": "proposed_layer",
+      "digest": "sha256:0fbd9729f0d07af5ee5d3152b9fb9c0a777b8bdf58c3b4576dd02f0b6eef11be",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 1
+    },
+    {
+      "id": "layer-02",
+      "name": "09b93095874b54b45905133ac119998a57b304408ef6a9faf5618430cf6eb47b.blob-data",
+      "bytes": 6442952,
+      "sha256": "09b93095874b54b45905133ac119998a57b304408ef6a9faf5618430cf6eb47b",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:09b93095874b54b45905133ac119998a57b304408ef6a9faf5618430cf6eb47b",
+      "kind": "proposed_layer",
+      "digest": "sha256:09b93095874b54b45905133ac119998a57b304408ef6a9faf5618430cf6eb47b",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 2
+    },
+    {
+      "id": "layer-03",
+      "name": "8c4393616907ef1cfd05c68983996e928f3b6c9ea60d6da41119b2021b2bb68c.blob-data",
+      "bytes": 1258027,
+      "sha256": "8c4393616907ef1cfd05c68983996e928f3b6c9ea60d6da41119b2021b2bb68c",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:8c4393616907ef1cfd05c68983996e928f3b6c9ea60d6da41119b2021b2bb68c",
+      "kind": "proposed_layer",
+      "digest": "sha256:8c4393616907ef1cfd05c68983996e928f3b6c9ea60d6da41119b2021b2bb68c",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 3
+    },
+    {
+      "id": "layer-04",
+      "name": "7b5527ff7489a0c105cdf8a7e68748ec8dfc567f4de9fff7ab1f078aac59e614.blob-data",
+      "bytes": 8203765,
+      "sha256": "7b5527ff7489a0c105cdf8a7e68748ec8dfc567f4de9fff7ab1f078aac59e614",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:7b5527ff7489a0c105cdf8a7e68748ec8dfc567f4de9fff7ab1f078aac59e614",
+      "kind": "proposed_layer",
+      "digest": "sha256:7b5527ff7489a0c105cdf8a7e68748ec8dfc567f4de9fff7ab1f078aac59e614",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 4
+    },
+    {
+      "id": "layer-05",
+      "name": "335cde62193e3a84135d3c7327f52130de1889f555a421e625fba5a45bd3fea5.blob-data",
+      "bytes": 1311665,
+      "sha256": "335cde62193e3a84135d3c7327f52130de1889f555a421e625fba5a45bd3fea5",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:335cde62193e3a84135d3c7327f52130de1889f555a421e625fba5a45bd3fea5",
+      "kind": "proposed_layer",
+      "digest": "sha256:335cde62193e3a84135d3c7327f52130de1889f555a421e625fba5a45bd3fea5",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 5
+    },
+    {
+      "id": "layer-06",
+      "name": "9f5cf0b65151def44fbc1bf5307df4060465ebda8288ca8a65917fcab1f5a2f1.blob-data",
+      "bytes": 116,
+      "sha256": "9f5cf0b65151def44fbc1bf5307df4060465ebda8288ca8a65917fcab1f5a2f1",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:9f5cf0b65151def44fbc1bf5307df4060465ebda8288ca8a65917fcab1f5a2f1",
+      "kind": "proposed_layer",
+      "digest": "sha256:9f5cf0b65151def44fbc1bf5307df4060465ebda8288ca8a65917fcab1f5a2f1",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 6
+    },
+    {
+      "id": "layer-07",
+      "name": "3e6fbba58ab6636dc951c2370d6b47a66882a82faedadf2ab24549fd7c8c37b6.blob-data",
+      "bytes": 3145,
+      "sha256": "3e6fbba58ab6636dc951c2370d6b47a66882a82faedadf2ab24549fd7c8c37b6",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:3e6fbba58ab6636dc951c2370d6b47a66882a82faedadf2ab24549fd7c8c37b6",
+      "kind": "proposed_layer",
+      "digest": "sha256:3e6fbba58ab6636dc951c2370d6b47a66882a82faedadf2ab24549fd7c8c37b6",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 7
+    },
+    {
+      "id": "layer-08",
+      "name": "dad2840f1c78a56e98683373a76eb87410d33ab8f8afb18adb2c094606eb2451.blob-data",
+      "bytes": 121435939,
+      "sha256": "dad2840f1c78a56e98683373a76eb87410d33ab8f8afb18adb2c094606eb2451",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:dad2840f1c78a56e98683373a76eb87410d33ab8f8afb18adb2c094606eb2451",
+      "kind": "proposed_layer",
+      "digest": "sha256:dad2840f1c78a56e98683373a76eb87410d33ab8f8afb18adb2c094606eb2451",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 8
+    },
+    {
+      "id": "layer-09",
+      "name": "1837bb99b431c038312f2c727634b2d7488049010baac4db5b7d289714455fea.blob-data",
+      "bytes": 19425,
+      "sha256": "1837bb99b431c038312f2c727634b2d7488049010baac4db5b7d289714455fea",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:1837bb99b431c038312f2c727634b2d7488049010baac4db5b7d289714455fea",
+      "kind": "proposed_layer",
+      "digest": "sha256:1837bb99b431c038312f2c727634b2d7488049010baac4db5b7d289714455fea",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 9
+    },
+    {
+      "id": "layer-10",
+      "name": "00f4238ff416c2266649d02d4ed9f4bf47479e4664220ba5e131e172dfa9fd0b.blob-data",
+      "bytes": 6102,
+      "sha256": "00f4238ff416c2266649d02d4ed9f4bf47479e4664220ba5e131e172dfa9fd0b",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:00f4238ff416c2266649d02d4ed9f4bf47479e4664220ba5e131e172dfa9fd0b",
+      "kind": "proposed_layer",
+      "digest": "sha256:00f4238ff416c2266649d02d4ed9f4bf47479e4664220ba5e131e172dfa9fd0b",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 10
+    },
+    {
+      "id": "layer-11",
+      "name": "62f716619e2e5061d2d810001b97580dc2bfeb595eb8f9e4c4f510f0575fe0b6.blob-data",
+      "bytes": 184,
+      "sha256": "62f716619e2e5061d2d810001b97580dc2bfeb595eb8f9e4c4f510f0575fe0b6",
+      "url": "https://registry-1.docker.io/v2/library/postgres/blobs/sha256:62f716619e2e5061d2d810001b97580dc2bfeb595eb8f9e4c4f510f0575fe0b6",
+      "kind": "proposed_layer",
+      "digest": "sha256:62f716619e2e5061d2d810001b97580dc2bfeb595eb8f9e4c4f510f0575fe0b6",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "layer_index": 11
+    }
+  ]
+}

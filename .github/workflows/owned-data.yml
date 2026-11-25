@@ -1,0 +1,42 @@
+name: Owned vendor data inspection only
+run-name: Owned data source ${{ github.sha }}
+
+'on':
+  push:
+    branches:
+      - 'stock-sleeve-owned-data-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owned-data-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  data:
+    if: github.repository == 'thundergamescda/RocaSifter' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - profile: debian-archives
+            profile_sha256: 56705f3fa1de105ac19516a526da6bd40258b5f81ed3c8c5c7c313fafd4f4a3e
+          - profile: postgres-rootfs
+            profile_sha256: 9dfdff82cd8450182a82031d3d94024d4df9ad62976f49f980a97597f930906b
+    steps:
+      - name: Check out exact source and its single parent
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Run one owned offline data inspection
+        env:
+          SS_DATA_SOURCE_SHA: ${{ github.sha }}
+          SS_DATA_PROFILE_SHA256: ${{ matrix.profile_sha256 }}
+          SS_DATA_PROFILE_PATH: tools/owned_data_profiles/${{ matrix.profile }}.json
+        run: bash tools/run_owned_data_ci.sh

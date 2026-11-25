@@ -1,0 +1,60 @@
+{
+  "format": "stock-and-sleeve:debian-data-input-spec:v1",
+  "profile_id": "debian-archives",
+  "total_bytes": 124397424,
+  "inputs": [
+    {
+      "id": "chromium",
+      "name": "9325777fb842eafa3f992209ee6f1b69bad76c3311a88efd4d7772cec22e3795.blob-data",
+      "bytes": 91684936,
+      "sha256": "9325777fb842eafa3f992209ee6f1b69bad76c3311a88efd4d7772cec22e3795",
+      "url": "https://deb.debian.org/debian/pool/main/c/chromium/chromium_156.0.8078.79-1~deb13u1_amd64.deb",
+      "kind": "deb"
+    },
+    {
+      "id": "chromium-common",
+      "name": "29d9a33123bcc5aba47746eb89a72d973bf7a737e3820425c7496904f7235fbd.blob-data",
+      "bytes": 31731400,
+      "sha256": "29d9a33123bcc5aba47746eb89a72d973bf7a737e3820425c7496904f7235fbd",
+      "url": "https://deb.debian.org/debian/pool/main/c/chromium/chromium-common_156.0.8078.79-1~deb13u1_amd64.deb",
+      "kind": "deb"
+    },
+    {
+      "id": "chromium-sandbox",
+      "name": "5a265f12abaefe0c700ab6b4e5956b7e1b8f713720aaa253d7a3319631969898.blob-data",
+      "bytes": 161728,
+      "sha256": "5a265f12abaefe0c700ab6b4e5956b7e1b8f713720aaa253d7a3319631969898",
+      "url": "https://deb.debian.org/debian/pool/main/c/chromium/chromium-sandbox_156.0.8078.79-1~deb13u1_amd64.deb",
+      "kind": "deb"
+    },
+    {
+      "id": "security-index",
+      "name": "1caca5883330e8e422b31d243606b2ed3ef9225cc7946599acc7559b7f6d9740.blob-data",
+      "bytes": 309332,
+      "sha256": "1caca5883330e8e422b31d243606b2ed3ef9225cc7946599acc7559b7f6d9740",
+      "url": "https://deb.debian.org/debian-security/dists/trixie-security/main/binary-amd64/by-hash/SHA256/1caca5883330e8e422b31d243606b2ed3ef9225cc7946599acc7559b7f6d9740",
+      "kind": "xz-index",
+      "expanded_bytes": 2249761,
+      "expanded_sha256": "dae32ddcd3aa2b9f334e5383fbe473b69f6536e9a7c5791080bf840bf91faa54"
+    },
+    {
+      "id": "updates-index",
+      "name": "eea860c5dea11680e64299adb2736c2367c4235763a66f2b70ca61ce1b51978a.blob-data",
+      "bytes": 1108,
+      "sha256": "eea860c5dea11680e64299adb2736c2367c4235763a66f2b70ca61ce1b51978a",
+      "url": "https://deb.debian.org/debian/dists/trixie-updates/main/binary-amd64/by-hash/SHA256/eea860c5dea11680e64299adb2736c2367c4235763a66f2b70ca61ce1b51978a",
+      "kind": "xz-index",
+      "expanded_bytes": 2351,
+      "expanded_sha256": "7f1dd99bbd1a0416d39499892ec12ff38d80637029114d234c38972bba8ae041"
+    },
+    {
+      "id": "debian-source",
+      "name": "1374b79c15a37b72c38d643d153d865567a61855a98414e726accfbeddbd30bf.blob-data",
+      "bytes": 508920,
+      "sha256": "1374b79c15a37b72c38d643d153d865567a61855a98414e726accfbeddbd30bf",
+      "url": "https://deb.debian.org/debian-security/pool/updates/main/c/chromium/chromium_156.0.8078.79-1~deb13u1.debian.tar.xz",
+      "kind": "xz-source-tar"
+    }
+  ],
+  "metadata_only": true
+}

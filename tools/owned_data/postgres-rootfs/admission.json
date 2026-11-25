@@ -1,0 +1,87 @@
+{
+  "format": "stock-and-sleeve:postgres-rootfs-data-profile-admission:v1",
+  "profile_id": "postgres-rootfs",
+  "execution_admission": "REVIEWED_DATA_ONLY_ROOTFS_JOB",
+  "raw_artifact_publication_admitted": false,
+  "application_or_vendor_native_execution_admitted": false,
+  "bootstrap": {
+    "image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
+    "config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
+    "scope": "Explicit root restricted DATA-only immutable Python/stdlib/codecs admission, bound by the root grant SHA. Observe full actual stdlib and mapped providers before decode and rehash at export. No foreign image/vendor/native/application import or maintainer execution.",
+    "uid": 10001,
+    "gid": 10001,
+    "network": "none",
+    "no_site": true,
+    "isolated": true,
+    "no_bytecode": true,
+    "readonly_root_source_inputs": true,
+    "drop_all_capabilities": true,
+    "no_new_privileges": true,
+    "source_go_sha256": "ecc741bcd7e05e774ff92dd1340b057f68212e2a9f7989b21d22e7c82fa54379",
+    "root_data_job_admission_sha256": "e88ca277b9ad55a75cefcfa3f47e10932927d7ecef1ee37b503376b8bb34ea40"
+  },
+  "strict_tar_core": {
+    "filename": "strict_debian_tar_data.py",
+    "bytes": 4615,
+    "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485",
+    "shared_source_review_sha256": "bf20b7ee34fd99c893203e8ef342037a23fff63d3375f4ab11601b53ff4ed9fd",
+    "original_source_sha256": "775a2cb163cc937160198990577c536cbe078f0bc4b09de7e1d89c4c65f7ea1f",
+    "source_go_not_runtime_or_profile_go": true,
+    "aggregate_caps": {
+      "raw_headers": 20000,
+      "extended_metadata_headers": 128,
+      "extended_metadata_bytes_each": 65536,
+      "raw_member_bytes": 402653184,
+      "deadline_seconds": 180
+    },
+    "begin_tar_dataset": "Resetterminal_seenonly; no header/metadata/deadline resets. PGcodec/virtual/admission separate."
+  },
+  "elf_core": {
+    "filename": "ci_elf_data.py",
+    "bytes": 19929,
+    "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44",
+    "shared_source_review_sha256": "18a2c3b1bc6e04103a415b82264cf1c1ac1ddc79ca14485903d1170c176dd0c6",
+    "api": "inspect_elf(path, identity)",
+    "source_go_not_native_or_corpus_or_abi_go": true
+  },
+  "sealed_inputs": {
+    "input_spec_sha256": "9a9ad0ac3eb3ce7a75cc61b650bf21bd04a352dd88d57b0b9be5b07855bcb2b0",
+    "files": 14,
+    "bytes": 168558897,
+    "ordered_new_gzip_layers": 12,
+    "reference_configs": 2,
+    "proposed_image_manifest": "sha256:ec003ee60c23d320d1b81868f255a6fc724ac06d8f1ced4468532f7d8593f357"
+  },
+  "derived_export_policy": {
+    "common_required": [
+      "bootstrap-receipt.json",
+      "data-inventory.json",
+      "output-manifest.json"
+    ],
+    "profile_required": [
+      "config-facts.json",
+      "layer-verification-summary.json",
+      "final-virtual-rootfs.json",
+      "native-elf-data.json",
+      "os-package-notice-data.json",
+      "gosu-go-build-facts.json",
+      "output-inventory.json",
+      "data-corpus.json"
+    ],
+    "additional_pattern": "elf-[a-f0-9]{64}\\.json",
+    "failure_only": [
+      "data-failure.json"
+    ],
+    "decoded_bytes_per_file": 33554432,
+    "decoded_bytes_total": 134217728,
+    "gzip_bytes_total": 16777216,
+    "export_file_count": 1024,
+    "payload": "OnlyRoot-reviewedUTF8JSONderivedfacts, deterministicboundedgzip/base64frames; independentlyrehashallsource/input/outputbeforeprint; registerexactnames/rawsize/hash inoutput-manifest; selfexcluded; no truncation.",
+    "raw_opaque_files": "PRIVATE EPHEMERAL ONLY. Neverprint/copy/upload/vendorbinaryarchive; outputtmpfsremovedwithownedcontainer."
+  },
+  "still_required": [
+    "FinalPGscanner/commonexportblock/copy/input/controller/cleanup/source-specific independentreview and explicitRoot DATAjobadmission.",
+    "Complete actualDATAcorpus header/trailer/gzip/diffID/virtual/ELF/OSpkg/gosu/OpenSSL/copyright/provider/advisory results remainUNRUN.",
+    "No549PG,99unit,21browser or customerready inference from source/data work."
+  ]
+}

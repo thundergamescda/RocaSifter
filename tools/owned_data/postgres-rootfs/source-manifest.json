@@ -1,0 +1,31 @@
+{
+  "format": "stock-and-sleeve:owned-data-source-manifest:v1",
+  "profile_id": "postgres-rootfs",
+  "files": [
+    {
+      "name": "admission.json",
+      "bytes": 4170,
+      "sha256": "c7998ecb5eb0111a2cc6e422a885c85f8dad752cd97d909c90dff46f48f6b51b"
+    },
+    {
+      "name": "ci_elf_data.py",
+      "bytes": 19929,
+      "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44"
+    },
+    {
+      "name": "input-spec.json",
+      "bytes": 8566,
+      "sha256": "9a9ad0ac3eb3ce7a75cc61b650bf21bd04a352dd88d57b0b9be5b07855bcb2b0"
+    },
+    {
+      "name": "pg_oci_data.py",
+      "bytes": 67537,
+      "sha256": "7ed99c9096e0f3c373870f3df778976a65f92c379cf55cf91021c614e70ce03c"
+    },
+    {
+      "name": "strict_debian_tar_data.py",
+      "bytes": 4615,
+      "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485"
+    }
+  ]
+}

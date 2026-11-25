@@ -1,0 +1,80 @@
+{
+  "format": "stock-and-sleeve:owned-data-host-profile:v1",
+  "profile_id": "postgres-rootfs",
+  "execution_hold": null,
+  "expected_parent": "80040566350500c9f48689a4171599a6e02be366",
+  "base_image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
+  "base_image_config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
+  "code_files": [
+    {
+      "name": "pg_oci_data.py",
+      "repo_path": "tools/owned_data/postgres-rootfs/pg_oci_data.py",
+      "bytes": 67537,
+      "sha256": "7ed99c9096e0f3c373870f3df778976a65f92c379cf55cf91021c614e70ce03c"
+    },
+    {
+      "name": "strict_debian_tar_data.py",
+      "repo_path": "tools/owned_data/postgres-rootfs/strict_debian_tar_data.py",
+      "bytes": 4615,
+      "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485"
+    },
+    {
+      "name": "ci_elf_data.py",
+      "repo_path": "tools/owned_data/postgres-rootfs/ci_elf_data.py",
+      "bytes": 19929,
+      "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44"
+    },
+    {
+      "name": "admission.json",
+      "repo_path": "tools/owned_data/postgres-rootfs/admission.json",
+      "bytes": 4170,
+      "sha256": "c7998ecb5eb0111a2cc6e422a885c85f8dad752cd97d909c90dff46f48f6b51b"
+    },
+    {
+      "name": "input-spec.json",
+      "repo_path": "tools/owned_data/postgres-rootfs/input-spec.json",
+      "bytes": 8566,
+      "sha256": "9a9ad0ac3eb3ce7a75cc61b650bf21bd04a352dd88d57b0b9be5b07855bcb2b0"
+    },
+    {
+      "name": "source-manifest.json",
+      "repo_path": "tools/owned_data/postgres-rootfs/source-manifest.json",
+      "bytes": 906,
+      "sha256": "5f415d4d4cc215d05406c064fe644cc11e88b732bd85aa36948e02fe13eeeaa4"
+    }
+  ],
+  "input_count": 14,
+  "input_total_bytes": 168558897,
+  "host_tools": [
+    {
+      "repo_path": "tools/run_owned_data_ci.sh",
+      "bytes": 14960,
+      "sha256": "a744bb443cb8186658a103be6b82c1bcdbc775e16ce69e770fd75ce6a53679c0"
+    },
+    {
+      "repo_path": "tools/owned_data_host.py",
+      "bytes": 37867,
+      "sha256": "132b143cc28d59dc39fa207d4d1e567f5290998bfaa8ca55356ae7df83616a1b"
+    },
+    {
+      "repo_path": "tools/ci_evidence_transport.sh",
+      "bytes": 5686,
+      "sha256": "870c8d0ef39bc5f80d9ebfdd5f02ecc41a587d431f0fadaf52d0cf0adf250206"
+    }
+  ],
+  "required_reports": [
+    "bootstrap-receipt.json",
+    "data-inventory.json",
+    "output-manifest.json"
+  ],
+  "extra_report_names": [
+    "config-facts.json",
+    "layer-verification-summary.json",
+    "final-virtual-rootfs.json",
+    "native-elf-data.json",
+    "os-package-notice-data.json",
+    "gosu-go-build-facts.json",
+    "output-inventory.json",
+    "data-corpus.json"
+  ]
+}

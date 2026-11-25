@@ -1,0 +1,31 @@
+{
+  "format": "stock-and-sleeve:debian-data-source-manifest:v1",
+  "profile_id": "debian-archives",
+  "files": [
+    {
+      "name": "debian_data.py",
+      "bytes": 57208,
+      "sha256": "30bc3474a8f1a9133136cffc7bd14feeb29113da5198698bac2aec0cb0ef570b"
+    },
+    {
+      "name": "strict_debian_tar_data.py",
+      "bytes": 4615,
+      "sha256": "df702f7dfacc93a5632c6037b27b11ea9c5f9c96fe155ecb8d1224e7d8114485"
+    },
+    {
+      "name": "ci_elf_data.py",
+      "bytes": 19929,
+      "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44"
+    },
+    {
+      "name": "admission.json",
+      "bytes": 3917,
+      "sha256": "183bff51eb4f2e005af838e485d9df48d990338769581664188329752efc209c"
+    },
+    {
+      "name": "input-spec.json",
+      "bytes": 2879,
+      "sha256": "ce5c844ca5715a350c57b7830338195de777c35eb8e280cf39ceaae289ff87a4"
+    }
+  ]
+}
