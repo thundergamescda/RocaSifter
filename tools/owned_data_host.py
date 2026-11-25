@@ -239,7 +239,36 @@ def parse_sources(repo, spec):
     return code, inputs
 
 
-def fetcher():
+def validate_redirect_metadata(value):
+    fields = {'format', 'profile_id', 'input_id', 'input_sha256', 'scheme', 'hostname', 'port',
+              'userinfo_present', 'fragment_present', 'exact_digest_path', 'path_bytes', 'path_sha256',
+              'query_keys', 'observation_phase', 'target_request_started_at_observation',
+              'authorization_forwarded_at_observation', 'signed_query_values_saved'}
+    require(type(value) is dict and set(value) == fields
+            and value['format'] == 'stock-and-sleeve:registry-redirect-metadata:v1'
+            and value['profile_id'] == 'postgres-rootfs', 'REDIRECT_METADATA_SCHEMA')
+    require(len(safe_name(value['input_id'])) <= 96, 'REDIRECT_METADATA_INPUT')
+    hex_string(value['input_sha256'])
+    require(value['scheme'] in ('https', 'http', 'other') and type(value['hostname']) is str
+            and 1 <= len(value['hostname']) <= 253
+            and re.fullmatch('[A-Za-z0-9.-]+', value['hostname']), 'REDIRECT_METADATA_ORIGIN')
+    require(value['port'] is None or type(value['port']) is int and 1 <= value['port'] <= 65535,
+            'REDIRECT_METADATA_PORT')
+    for name in ('userinfo_present', 'fragment_present', 'exact_digest_path'):
+        require(type(value[name]) is bool, 'REDIRECT_METADATA_BOOLEAN')
+    integer(value['path_bytes'], 0, 32768)
+    hex_string(value['path_sha256'])
+    require(type(value['query_keys']) is list and len(value['query_keys']) <= 32
+            and all(type(key) is str and re.fullmatch('[A-Za-z0-9_.-]{1,64}', key)
+                    for key in value['query_keys']), 'REDIRECT_METADATA_KEYS')
+    require(value['observation_phase'] == 'before_destination_validation_and_request'
+            and value['target_request_started_at_observation'] is False
+            and value['authorization_forwarded_at_observation'] is False
+            and value['signed_query_values_saved'] is False, 'REDIRECT_METADATA_PRIVACY')
+    return value
+
+
+def fetcher(observe_redirect):
     # Host-only public byte acquisition, never used inside the network-none job.
     import ssl
     import urllib.error
@@ -295,8 +324,34 @@ def fetcher():
             require(registry and error.code == 307, 'PUBLIC_HTTP_FAILURE')
             location = error.headers.get('Location', '')
             error.close()
+            require(type(location) is str and 0 < len(location) <= 8192, 'CDN_LOCATION_BOUND')
             target = urllib.parse.urlsplit(location)
             expected = '/registry-v2/docker/registry/v2/blobs/sha256/' + row['sha256'][:2] + '/' + row['sha256'] + '/data'
+            # Record only bounded public URI facts, before rejecting a Location.
+            # Signed query values, userinfo, paths and complete URLs never persist.
+            observed_host = target.hostname or 'INVALID-HOST'
+            if not re.fullmatch('[A-Za-z0-9.-]{1,253}', observed_host):
+                observed_host = 'INVALID-HOST'
+            observed_port = target.port
+            path_bytes = target.path.encode('utf-8', errors='strict')
+            query_parts = target.query.split('&') if target.query else []
+            require(len(query_parts) <= 32, 'CDN_QUERY_METADATA_BOUND')
+            query_keys = []
+            for part in query_parts:
+                key = urllib.parse.unquote(part.split('=', 1)[0])
+                query_keys.append(key if re.fullmatch('[A-Za-z0-9_.-]{1,64}', key) else 'INVALID-KEY')
+            facts = {'format': 'stock-and-sleeve:registry-redirect-metadata:v1',
+                     'profile_id': 'postgres-rootfs', 'input_id': row['id'], 'input_sha256': row['sha256'],
+                     'scheme': target.scheme if target.scheme in ('https', 'http') else 'other',
+                     'hostname': observed_host, 'port': observed_port,
+                     'userinfo_present': target.username is not None or target.password is not None,
+                     'fragment_present': '#' in location, 'exact_digest_path': target.path == expected,
+                     'path_bytes': len(path_bytes), 'path_sha256': digest(path_bytes),
+                     'query_keys': sorted(query_keys),
+                     'observation_phase': 'before_destination_validation_and_request',
+                     'target_request_started_at_observation': False,
+                     'authorization_forwarded_at_observation': False, 'signed_query_values_saved': False}
+            observe_redirect(validate_redirect_metadata(facts))
             require(target.scheme == 'https' and target.hostname == 'production.cloudfront.docker.com'
                     and target.port in (None, 443) and not target.username and not target.password
                     and not target.fragment and target.path == expected, 'CDN_LOCATION_SCOPE')
@@ -349,7 +404,14 @@ def prepare(args):
     for name, value in code.items():
         save(stage / 'code' / name, value)
     # Source and input specs are fully validated before the first HTTP request.
-    acquire = fetcher()
+    redirect_dir = run / 'registry-redirect-metadata'
+    redirect_dir.mkdir(mode=0o700)
+
+    def observe_redirect(facts):
+        require(spec['profile_id'] == 'postgres-rootfs', 'REGISTRY_PROFILE_SCOPE')
+        save(redirect_dir / (safe_name(facts['input_id']) + '.json'), facts, 4096)
+
+    acquire = fetcher(observe_redirect)
     observed = [acquire(row, stage / 'input' / row['name']) for row in inputs['inputs']]
     # Plain COPY preserves safe regular-file modes. Keep directory search bits;
     # uniform COPY --chmod=0444 would also remove traversal from directories.
@@ -646,8 +708,23 @@ def failure_details(args):
                 failures.append({'profile_id': profile_id, 'successful': False, 'error_type': value,
                                  'error_code': 'UNAVAILABLE_TYPE_ONLY',
                                  'raw_payload_or_exception_detail_printed': False})
-    save(Path(args.out), {'format': 'stock-and-sleeve:owned-data-typed-failure-details:v1',
+    redirect_metadata = []
+    redirect_dir = run / 'registry-redirect-metadata'
+    if redirect_dir.exists():
+        require(redirect_dir.is_dir() and not redirect_dir.is_symlink()
+                and redirect_dir.stat().st_uid == os.getuid(), 'REDIRECT_METADATA_DIRECTORY')
+        paths = sorted(redirect_dir.iterdir())
+        require(len(paths) <= INPUT_COUNTS['postgres-rootfs'], 'REDIRECT_METADATA_FILE_BOUND')
+        seen_inputs = set()
+        for path in paths:
+            require(path.suffix == '.json' and path.stem not in seen_inputs, 'REDIRECT_METADATA_FILE_NAME')
+            value = validate_redirect_metadata(strict_json(raw(path, 4096)))
+            require(value['input_id'] == path.stem, 'REDIRECT_METADATA_FILE_ID')
+            seen_inputs.add(path.stem)
+            redirect_metadata.append(value)
+    save(Path(args.out), {'format': 'stock-and-sleeve:owned-data-typed-failure-details:v2',
          'profile_id': profile_id, 'host_codes': host_codes, 'profile_failures': failures,
+         'registry_redirect_metadata': redirect_metadata,
          'unrecognized_private_diagnostics': unavailable, 'raw_logs_or_paths_or_urls_published': False,
          'changes_terminal_result': False, 'scope': 'Diagnostic collection only; does not change terminal success predicates.'})
 

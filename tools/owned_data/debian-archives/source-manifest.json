@@ -4,8 +4,8 @@
   "files": [
     {
       "name": "debian_data.py",
-      "bytes": 57208,
-      "sha256": "3fc5779b215832da447d17bac8c283ab35428716d2061939b636ab757f90f6d8"
+      "bytes": 61529,
+      "sha256": "6cba939bc02aec71d5d4accc6bace63adf06fb0b26c9ccc6ed737e7fa126d5c6"
     },
     {
       "name": "strict_debian_tar_data.py",
@@ -14,13 +14,13 @@
     },
     {
       "name": "ci_elf_data.py",
-      "bytes": 19929,
-      "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44"
+      "bytes": 20195,
+      "sha256": "5c226678de6e5f066a9294aa34d755745243d7339c308827fdb0383a33b86cca"
     },
     {
       "name": "admission.json",
-      "bytes": 3918,
-      "sha256": "5f6fa4daa91fc5b8740be6e0ee12ae52c726606e9f4940f39d535f6af538280d"
+      "bytes": 3936,
+      "sha256": "219aade50ef13ee50b78a06738da87b92e3b00da4397c9841e72d1474a64f3ab"
     },
     {
       "name": "input-spec.json",

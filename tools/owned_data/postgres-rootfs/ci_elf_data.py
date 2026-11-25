@@ -260,7 +260,7 @@ def _inspect(view):
                     require((index + 1 == count and onward == 0) or
                             (index + 1 < count and onward >= 16), 'ELF_VERNEED_AUX_CHAIN')
                     aux += onward
-                minimum = aux + 16 - at
+                minimum = 16
             else:
                 require(at + 20 <= len(raw), 'ELF_VERDEF_HEADER_BOUND')
                 revision, flags, version_index, count, hashed, aux_at, next_at = \
@@ -282,10 +282,14 @@ def _inspect(view):
                         'ELF_DEFINED_VERSION_INDEX_UNIQUENESS')
                 defined_by_index[record['index']] = record
                 version_def.append(record)
-                minimum = aux + 8 - at
+                minimum = 20
             if next_at == 0:
                 break
-            require(next_at >= minimum and at + next_at < len(raw), 'ELF_VERSION_RECORD_PROGRESS')
+            # vn_next/vd_next advance between headers. Valid producers may
+            # place every header before the separate auxiliary array; the
+            # next header need not follow this header's auxiliary records.
+            require(next_at >= minimum and at + next_at <= len(raw) - minimum
+                    and at + next_at not in visited, 'ELF_VERSION_RECORD_PROGRESS')
             at += next_at
         require(row['info'] in (0, records), 'ELF_VERSION_SECTION_COUNT')
 

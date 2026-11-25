@@ -7,7 +7,7 @@
   "bootstrap": {
     "image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
     "config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
-    "scope": "Explicit root restricted corrected-source DATA-only immutable Python/stdlib/codecs admission under the exact root grant. Full actual module/provider observations before decode and final rehash; no foreign/vendor/app native import.",
+    "scope": "Explicit root restricted combined-source DATA-only immutable Python/stdlib/codecs admission under exact root grant. OriginalPG23cases/typedfailure andfixedTAR retained; fullmodule/provider observations beforedecode and finalrehash. No vendor/application native import.",
     "uid": 10001,
     "gid": 10001,
     "network": "none",
@@ -17,8 +17,8 @@
     "readonly_root_source_inputs": true,
     "drop_all_capabilities": true,
     "no_new_privileges": true,
-    "source_go_sha256": "45a0a0242edd0a10732e501a3fac8b9a4e965462fde3446c96ac3dd893c9bb13",
-    "root_data_job_admission_sha256": "7dc24973f7480bb98a752dec8e29d9071321d720224adcbd68cd8509a65063cd"
+    "source_go_sha256": "d1e46bf4a5094953c915fa5850aaee2da74ac7d03dff50d6ccc405eb0118857b",
+    "root_data_job_admission_sha256": "e4ecb949e0d7017b3d9b5828cd326de4e62928ceaeb80671323f3d8a21438437"
   },
   "strict_tar_core": {
     "filename": "strict_debian_tar_data.py",
@@ -38,9 +38,9 @@
   },
   "elf_core": {
     "filename": "ci_elf_data.py",
-    "bytes": 19929,
-    "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44",
-    "shared_source_review_sha256": "18a2c3b1bc6e04103a415b82264cf1c1ac1ddc79ca14485903d1170c176dd0c6",
+    "bytes": 20195,
+    "sha256": "5c226678de6e5f066a9294aa34d755745243d7339c308827fdb0383a33b86cca",
+    "shared_source_review_sha256": "eede130e29eac0a070fbe1b366ef3dec86b7f233b5c42e64975821ef4d91ab17",
     "api": "inspect_elf(path, identity)",
     "source_go_not_native_or_corpus_or_abi_go": true
   },

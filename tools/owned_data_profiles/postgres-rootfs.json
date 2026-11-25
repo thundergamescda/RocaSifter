@@ -2,7 +2,7 @@
   "format": "stock-and-sleeve:owned-data-host-profile:v1",
   "profile_id": "postgres-rootfs",
   "execution_hold": null,
-  "expected_parent": "9d8ccab1d3c13f1e50928c82bf2b9b2d5dccb096",
+  "expected_parent": "16518eff9983bb2f82b5c8be90c5f16c2fec2de1",
   "base_image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
   "base_image_config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
   "code_files": [
@@ -21,14 +21,14 @@
     {
       "name": "ci_elf_data.py",
       "repo_path": "tools/owned_data/postgres-rootfs/ci_elf_data.py",
-      "bytes": 19929,
-      "sha256": "742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44"
+      "bytes": 20195,
+      "sha256": "5c226678de6e5f066a9294aa34d755745243d7339c308827fdb0383a33b86cca"
     },
     {
       "name": "admission.json",
       "repo_path": "tools/owned_data/postgres-rootfs/admission.json",
-      "bytes": 4136,
-      "sha256": "ba4065d28740d4d9f79ddb45f26aef2a1e705881c845974403ba7b0f8d42f508"
+      "bytes": 4174,
+      "sha256": "092bfc0d622835961ff43b4b5e29c185b3b9f09cde35f50d07fb6547ec452cb1"
     },
     {
       "name": "input-spec.json",
@@ -40,7 +40,7 @@
       "name": "source-manifest.json",
       "repo_path": "tools/owned_data/postgres-rootfs/source-manifest.json",
       "bytes": 906,
-      "sha256": "6182bc677df400b6df0092f9a4ccff8a400108020a867a96246018c69bf85fe7"
+      "sha256": "aed3a3e3b4ebef5d1ef442cb0a6d6e4c3e98d3378f8ff4014adf2b07c1b90b93"
     }
   ],
   "input_count": 14,
@@ -53,8 +53,8 @@
     },
     {
       "repo_path": "tools/owned_data_host.py",
-      "bytes": 37868,
-      "sha256": "ec0c356f6e483317ad82b47c6516ac40bfe969a0578a123f4fcc9f003b8c97df"
+      "bytes": 42979,
+      "sha256": "fa7f00961c34bf6f9229aa4f7472de4b69cd25b0856e7caf7195853f860b854d"
     },
     {
       "repo_path": "tools/ci_evidence_transport.sh",

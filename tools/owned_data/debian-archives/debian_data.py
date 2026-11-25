@@ -297,7 +297,7 @@ def bootstrap():
     RAW.mkdir(mode=0o700)
     REPORTS.mkdir(mode=0o700)
     actual_source = {Path(row['path']).name: row['sha256'] for row in sources}
-    require(actual_source['ci_elf_data.py'] == '742a1a45f3c47f0dd04f93b32bb7f881b9d53234631b4e1bb06b5d61df70aa44'
+    require(actual_source['ci_elf_data.py'] == '5c226678de6e5f066a9294aa34d755745243d7339c308827fdb0383a33b86cca'
             and actual_source['strict_debian_tar_data.py'] ==
             'fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a', 'EXACT_REVIEWED_SHARED_MODULES')
     elf_module = load_owned_module('ci_elf_data', actual_source['ci_elf_data.py'])
@@ -805,7 +805,89 @@ def parser_corpus(elf_module, strict):
             'data': struct.pack('<HHIII', 1, 1, 0, 16, 0) + struct.pack('<IHHII', 0, 0, index + 2, 0, 0),
             'link': '.str' + str(index), 'info': 1})
     elf_case('elf_overlapping_string_cache_budget', section_elf(aliases), {'ELF_AGGREGATE_STRING_CACHE_BOUND'})
-    require(len(rows) == 15 and all(row['status'] == 'PASS' for row in rows), 'EXACT_CORPUS_SCOPE')
+    # Additive version-header/auxiliary-layout regression vectors. The old15
+    # vectors above remain literal byte-equal. These are synthetic data only.
+    version_strings = b'\x00libA.so\x00libB.so\x00VER_A\x00VER_B\x00'
+
+    def version_fixture(kind, value, records=2):
+        return section_elf([
+            {'name': '.dynstr', 'type': 3, 'data': version_strings},
+            {'name': '.gnu.version_r' if kind == 0x6ffffffe else '.gnu.version_d',
+             'type': kind, 'data': value, 'link': '.dynstr', 'info': records}])
+
+    # LLVM's need writer packs the two16-byte headers before both16-byte
+    # auxiliaries: the first vn_next16 precedes its own vn_aux32.
+    packed_need = (
+        struct.pack('<HHIII', 1, 1, 1, 32, 16) +
+        struct.pack('<HHIII', 1, 1, 9, 32, 0) +
+        struct.pack('<IHHII', 0, 0, 2, 17, 0) +
+        struct.pack('<IHHII', 0, 0, 3, 23, 0))
+    packed_def = (
+        struct.pack('<HHHHIII', 1, 0, 1, 1, 0, 40, 20) +
+        struct.pack('<HHHHIII', 1, 0, 2, 1, 0, 28, 0) +
+        struct.pack('<II', 17, 0) + struct.pack('<II', 23, 0))
+
+    def need_facts(facts):
+        return facts['required_symbol_versions'] == [
+            {'provider': 'libA.so', 'version': 'VER_A', 'flags': 0,
+             'hash': 0, 'index_raw': 2, 'index': 2},
+            {'provider': 'libB.so', 'version': 'VER_B', 'flags': 0,
+             'hash': 0, 'index_raw': 3, 'index': 3}]
+
+    def def_facts(facts):
+        return facts['defined_version_records'] == [
+            {'index_raw': 1, 'index': 1, 'flags': 0, 'hash': 0,
+             'name': 'VER_A', 'parents': []},
+            {'index_raw': 2, 'index': 2, 'flags': 0, 'hash': 0,
+             'name': 'VER_B', 'parents': []}]
+
+    elf_case('elf_packed_verneed_headers_before_auxiliaries',
+             version_fixture(0x6ffffffe, packed_need), verify=need_facts)
+    elf_case('elf_packed_verdef_headers_before_auxiliaries',
+             version_fixture(0x6ffffffd, packed_def), verify=def_facts)
+    interleaved_need = (
+        struct.pack('<HHIII', 1, 1, 1, 16, 32) +
+        struct.pack('<IHHII', 0, 0, 2, 17, 0) +
+        struct.pack('<HHIII', 1, 1, 9, 16, 0) +
+        struct.pack('<IHHII', 0, 0, 3, 23, 0))
+    elf_case('elf_interleaved_verneed_layout_still_supported',
+             version_fixture(0x6ffffffe, interleaved_need), verify=need_facts)
+
+    def changed_field(value, offset, format, replacement):
+        changed = bytearray(value)
+        struct.pack_into(format, changed, offset, replacement)
+        return bytes(changed)
+
+    elf_case('elf_verneed_next_shorter_than_header_denied',
+             version_fixture(0x6ffffffe, changed_field(packed_need, 12, '<I', 8)),
+             {'ELF_VERSION_RECORD_PROGRESS'})
+    elf_case('elf_verdef_next_shorter_than_header_denied',
+             version_fixture(0x6ffffffd, changed_field(packed_def, 16, '<I', 16)),
+             {'ELF_VERSION_RECORD_PROGRESS'})
+    elf_case('elf_verneed_next_full_header_out_of_range_denied',
+             version_fixture(0x6ffffffe, changed_field(packed_need, 12, '<I', 56)),
+             {'ELF_VERSION_RECORD_PROGRESS'})
+    elf_case('elf_verdef_next_full_header_out_of_range_denied',
+             version_fixture(0x6ffffffd, changed_field(packed_def, 16, '<I', 48)),
+             {'ELF_VERSION_RECORD_PROGRESS'})
+    elf_case('elf_verneed_backward_unsigned_offset_denied',
+             version_fixture(0x6ffffffe, changed_field(packed_need, 12, '<I', 0xfffffff0)),
+             {'ELF_VERSION_RECORD_PROGRESS'})
+    short_aux = changed_field(packed_need, 2, '<H', 2)
+    short_aux = changed_field(short_aux, 44, '<I', 8)
+    elf_case('elf_packed_verneed_short_auxiliary_progress_denied',
+             version_fixture(0x6ffffffe, short_aux), {'ELF_VERNEED_AUX_CHAIN'})
+    elf_case('elf_packed_verneed_duplicate_index_denied',
+             version_fixture(0x6ffffffe, changed_field(packed_need, 54, '<H', 2)),
+             {'ELF_REQUIRED_VERSION_INDEX_UNIQUENESS'})
+    elf_case('elf_packed_verdef_auxiliary_out_of_range_denied',
+             version_fixture(0x6ffffffd, changed_field(packed_def, 12, '<I', 52)),
+             {'ELF_VERDEF_AUX_BOUND'})
+    elf_case('elf_packed_verneed_early_termination_count_denied',
+             version_fixture(0x6ffffffe, changed_field(packed_need, 12, '<I', 0)),
+             {'ELF_VERSION_SECTION_COUNT'})
+
+    require(len(rows) == 27 and all(row['status'] == 'PASS' for row in rows), 'EXACT_CORPUS_SCOPE')
     return {'status': 'PASS', 'native_execution': False, 'vectors': rows,
             'owned_synthetic_files_removed_after_identity_check': True}
 
