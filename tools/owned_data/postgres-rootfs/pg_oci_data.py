@@ -254,7 +254,7 @@ def inspect_layer(path, pin, expected_diff_id, index, TarInfo):
                     deadline()
                     require(len(rows) < 20000 and 0 <= member.size <= MAX_MEMBER and not member.sparse,
                             'MEMBER_COUNT_SIZE_OR_SPARSE')
-                    name = CORE.canonical_member(member.name, member.isdir())
+                    name = CORE.canonical_member(member.name, member.isdir(), allow_posix_colon=True)
                     require(name not in seen, 'LAYER_DUPLICATE_CANONICAL_PATH')
                     seen.add(name)
                     require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
@@ -499,9 +499,149 @@ def domain_corpus():
          'INVALID_WHITEOUT_TARGET_COMPONENT')
     case('PGD23_dotdot_whiteout_target_denied', lambda: virtual([row('keep', 0)], [row('d/.wh...', 1, text='')]),
          'INVALID_WHITEOUT_TARGET_COMPONENT')
-    require(len(cases) == 23 and len({item['id'] for item in cases}) == 23, 'EXACT_DOMAIN_CORPUS_IDS')
+    # Additive POSIX-colon DATA vectors after the unchanged original23 cases.
+    constructed_expanded_start, constructed_output_start = EXPANDED_BYTES, OUTPUT_BYTES
+    def canonical(name, is_directory=False, **options):
+        try:
+            return CORE.canonical_member(name, is_directory, **options)
+        except CORE.DataFailure as error:
+            raise DataFailure(str(error)) from None  # Fixed owned core code only.
+
+    posix_name = 'var/lib/dpkg/info/fictional:amd64.list'
+    case('PGD24_default_colon_metadata_denied', lambda: canonical(posix_name), 'TAR_PATH_FORM')
+    case('PGD25_explicit_false_colon_metadata_denied',
+         lambda: canonical(posix_name, allow_posix_colon=False), 'TAR_PATH_FORM')
+    case('PGD26_explicit_posix_colon_metadata_preserved',
+         lambda: canonical(posix_name, allow_posix_colon=True) == posix_name)
+    case('PGD27_posix_absolute_path_still_denied',
+         lambda: canonical('/owned:pkg', allow_posix_colon=True), 'TAR_PATH_FORM')
+    case('PGD28_posix_backslash_still_denied',
+         lambda: canonical('owned\\pkg:name', allow_posix_colon=True), 'TAR_PATH_FORM')
+    case('PGD29_posix_nul_still_denied',
+         lambda: canonical('owned\x00pkg:name', allow_posix_colon=True), 'TAR_PATH_FORM')
+    case('PGD30_posix_parent_component_still_denied',
+         lambda: canonical('owned:pkg/../escape', allow_posix_colon=True), 'TAR_PATH_COMPONENT')
+    case('PGD31_posix_regular_root_still_denied',
+         lambda: canonical('.', allow_posix_colon=True), 'TAR_ROOT_KIND')
+    case('PGD32_posix_directory_root_still_valid',
+         lambda: canonical('./', True, allow_posix_colon=True) == '.')
+
+    def exact_boolean_opt_in():
+        for value in (0, 1, None, 'true', [], {}):
+            try:
+                CORE.canonical_member(posix_name, False, allow_posix_colon=value)
+            except CORE.DataFailure as error:
+                require(str(error) == 'TAR_PATH_COLON_POLICY', 'CORPUS_COLON_POLICY_WRONG_REJECTION')
+            else:
+                return False
+        return True
+    case('PGD33_nonboolean_posix_opt_in_denied', exact_boolean_opt_in)
+
+    def strict_utf8_unchanged():
+        try:
+            CORE.canonical_member('owned:\ud800', False, allow_posix_colon=True)
+        except UnicodeEncodeError:
+            return True
+        return False
+    case('PGD34_posix_strict_utf8_guard_retained', strict_utf8_unchanged)
+
+    def full_layer(member_name, *, is_directory=False):
+        # Inert gzip/TAR input with a generated hash-only private basename.
+        # No archive member name is ever used as a host filesystem path.
+        global OUTPUT_BYTES, EXPANDED_BYTES
+        payload = b'' if is_directory else b'owned fictional package declaration\n'
+        member = CORE.tarfile.TarInfo(member_name)
+        member.type = CORE.tarfile.DIRTYPE if is_directory else CORE.tarfile.REGTYPE
+        member.size, member.mode, member.uid, member.gid, member.mtime = len(payload), 0o600, 10001, 10001, 0
+        tar_bytes = member.tobuf(format=CORE.tarfile.USTAR_FORMAT) + payload + bytes((-len(payload)) % 512) + bytes(1024)
+        gzip_bytes = packed(tar_bytes)
+        require(len(gzip_bytes) <= 8192, 'CORPUS_PRIVATE_FIXTURE_BOUND')
+        expanded_before = EXPANDED_BYTES
+        require(expanded_before + len(tar_bytes) <= MAX_EXPANDED, 'CORPUS_EXPANSION_BUDGET')
+        digest = hashlib.sha256(gzip_bytes).hexdigest()
+        input_name = digest + '.data'
+        data_name = hashlib.sha256(('4096\0' + member_name).encode('utf-8')).hexdigest() + '.data'
+        allowed = {input_name: (len(gzip_bytes), digest), data_name: (len(payload), hashlib.sha256(payload).hexdigest())}
+        prior_created = tuple(dict(item) for item in CREATED)
+        path = OUTPUT / input_name
+        try:
+            OUTPUT_BYTES += len(gzip_bytes)
+            require(OUTPUT_BYTES <= MAX_OUTPUT, 'CORPUS_PRIVATE_INPUT_BOUND')
+            with output_file(input_name) as stream:
+                stream.write(gzip_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            input_identity = dict(CREATED[-1], bytes=len(gzip_bytes), sha256=digest)
+            require(private_payload({'data_path': input_name, 'bytes': len(gzip_bytes),
+                    'payload_identity': input_identity}, 8192) == gzip_bytes, 'CORPUS_INPUT_READBACK')
+            try:
+                result = inspect_layer(path, {'bytes': len(gzip_bytes), 'digest': 'sha256:' + digest},
+                    'sha256:' + hashlib.sha256(tar_bytes).hexdigest(), 4096, CORE.BoundedTarInfo)
+            except CORE.DataFailure as error:
+                raise DataFailure(str(error)) from None
+            require(result['complete_gzip_consumption'] is True and result['two_zero_blocks_and_aligned_zero_trailer'] is True
+                    and result['expanded_bytes'] == len(tar_bytes) and len(result['members']) == 1,
+                    'CORPUS_FULL_LAYER_COMPLETION')
+            actual = result['members'][0]
+            require(actual['path'] == ('.' if is_directory and member_name in ('.', './') else member_name)
+                    and actual['source_name'] == member_name
+                    and actual['type'] == ('directory' if is_directory else 'regular')
+                    and actual['mode_recorded_not_applied'] == 0o600
+                    and actual['uid_recorded_not_applied'] == actual['gid_recorded_not_applied'] == 10001,
+                    'CORPUS_FULL_LAYER_EXACT_METADATA')
+            if not is_directory:
+                require(actual['sha256'] == hashlib.sha256(payload).hexdigest()
+                        and actual['data_path'] == data_name and private_payload(actual, 8192) == payload,
+                        'CORPUS_FULL_LAYER_EXACT_PRIVATE_PAYLOAD')
+            return True
+        finally:
+            # inspect_layer charges its successful stream. For a deliberately
+            # rejected synthetic layer, conservatively charge its full known
+            # plaintext bound rather than refunding or losing partial work.
+            require(EXPANDED_BYTES in (expanded_before, expanded_before + len(tar_bytes)),
+                    'CORPUS_EXPANSION_CHARGE_BASIS')
+            if EXPANDED_BYTES == expanded_before:
+                EXPANDED_BYTES += len(tar_bytes)
+            # Only files registered after this fixture began may be removed,
+            # after exact generated-name/device/inode/size/content validation.
+            additions = tuple(CREATED[len(prior_created):])
+            for created in additions:
+                require(created['path'] in allowed, 'CORPUS_UNEXPECTED_PRIVATE_FILE')
+                owned = OUTPUT / created['path']
+                info = owned.lstat()
+                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                        and (info.st_dev, info.st_ino) == (created['device'], created['inode'])
+                        and info.st_size == allowed[created['path']][0],
+                        'CORPUS_PRIVATE_FILE_CHANGED')
+                identity = dict(created, bytes=allowed[created['path']][0], sha256=allowed[created['path']][1])
+                private_payload({'data_path': created['path'], 'bytes': identity['bytes'], 'payload_identity': identity}, 8192)
+                named = owned.lstat()
+                require(stat.S_ISREG(named.st_mode) and named.st_nlink == 1
+                        and (named.st_dev, named.st_ino, named.st_size) == (identity['device'], identity['inode'], identity['bytes']),
+                        'CORPUS_CLEANUP_NAMED_IDENTITY')
+                owned.unlink()
+            del CREATED[len(prior_created):]
+            require(tuple(CREATED) == prior_created, 'CORPUS_PRIOR_OUTPUT_REGISTRY_CHANGED')
+            # Shared header/metadata counters, both deadlines, OUTPUT_BYTES and
+            # successful EXPANDED_BYTES remain monotonic; never reset budgets.
+
+    case('PGD35_full_layer_posix_package_metadata_positive',
+         lambda: full_layer(posix_name))
+    case('PGD36_full_layer_absolute_path_denied',
+         lambda: full_layer('/owned:pkg'), 'TAR_PATH_FORM')
+    case('PGD37_full_layer_parent_component_denied',
+         lambda: full_layer('owned:pkg/../escape'), 'TAR_PATH_COMPONENT')
+    case('PGD38_full_layer_regular_root_denied',
+         lambda: full_layer('.'), 'TAR_ROOT_KIND')
+    case('PGD39_full_layer_directory_root_positive',
+         lambda: full_layer('.', is_directory=True))
+
+    require(len(cases) == 39 and len({item['id'] for item in cases}) == 39, 'EXACT_DOMAIN_CORPUS_IDS')
     return {'profile_id': 'postgres-rootfs', 'successful': True, 'cases': cases,
-            'case_count': 23, 'native_or_image_execution': False, 'filesystem_member_application': False,
+            'case_count': 39, 'native_or_image_execution': False, 'filesystem_member_application': False,
+            'constructed_layer_expanded_budget_bytes': EXPANDED_BYTES - constructed_expanded_start,
+            'constructed_private_output_budget_bytes': OUTPUT_BYTES - constructed_output_start,
+            'private_fixture_files_removed': True,
             'shared_tar_counters_reset': False, 'constructed_payload_bytes': len(raw)}
 
 
@@ -1031,7 +1171,7 @@ def main():
     import strict_debian_tar_data as shared_core
     import ci_elf_data as elf_reader
     CORE = shared_core
-    require(core['sha256'] == 'fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a',
+    require(core['sha256'] == '837ba3df9fc30b6f34a21c4aa2e3491c8874a9d7219d2ec2add36fc2f498c821',
             'EXACT_SHARED_STRICT_TAR_CORE')
     bootstrap = bootstrap_receipt()
     save('bootstrap-receipt.json', bootstrap)
@@ -1040,7 +1180,8 @@ def main():
     # First stdout record: detects lost/rolled prefixes before any archive decoding.
     print('SS_DATA_JSON_STREAM ' + json.dumps({'profile_id': 'postgres-rootfs', 'source_sha': source_sha},
           sort_keys=True, separators=(',', ':'), ensure_ascii=True), flush=True)
-    save('data-corpus.json', domain_corpus())
+    corpus = domain_corpus()
+    save('data-corpus.json', corpus)
     layers = [row for row in spec['inputs'] if row['kind'] == 'proposed_layer']
     config_pin = next(row for row in spec['inputs'] if row['kind'] == 'proposed_config')
     historical_pin = next(row for row in spec['inputs'] if row['kind'] == 'historical_config_only')
@@ -1088,12 +1229,21 @@ def main():
     input_after = {row['digest']: readonly_file(INPUT / row['name'],
                      row['bytes'], row['sha256']) for row in spec['inputs']}
     require(before == after and input_before == input_after, 'SOURCE_OR_INPUT_CHANGED')
+    retained = {row['data_path']: row['payload_identity'] for layer in scanned for row in layer['members']
+                if row.get('data_path') is not None}
+    registered = {item['path']: item for item in CREATED}
+    require(all(name in registered and all(registered[name][key] == identity[key] for key in ('device', 'inode'))
+                for name, identity in retained.items()), 'RETAINED_REAL_LAYER_REGISTRATION')
     save('data-inventory.json', {'profile_id': 'postgres-rootfs', 'successful': True,
          'status': 'EXACT12_LAYER_DATA_INVENTORY_ONLY_NATIVE_OS_CRYPTO_ADVISORY_UNPROVEN',
          'passed': True, 'pid': os.getpid(), 'python': sys.version, 'zlib_compiled': zlib.ZLIB_VERSION,
          'zlib_runtime': zlib.ZLIB_RUNTIME_VERSION, 'interfaces': sorted(interfaces), 'uid': os.getuid(),
          'source_before': before, 'source_after': after, 'input_before': input_before, 'input_after': input_after,
-         'layer_count': 12, 'expanded_bytes': EXPANDED_BYTES, 'retained_payload_bytes': OUTPUT_BYTES,
+         'layer_count': 12, 'expanded_bytes': sum(layer['expanded_bytes'] for layer in scanned),
+         'retained_payload_bytes': sum(identity['bytes'] for identity in retained.values()),
+         'expanded_budget_bytes': EXPANDED_BYTES, 'private_output_budget_bytes': OUTPUT_BYTES,
+         'constructed_layer_expanded_budget_bytes': corpus['constructed_layer_expanded_budget_bytes'],
+         'constructed_private_output_budget_bytes': corpus['constructed_private_output_budget_bytes'],
          'final_member_count': rootfs['member_count'], 'created_files': CREATED,
          'no_image_or_native_payload_or_provider_execution': True})
     inventory = output_inventory(scanned)

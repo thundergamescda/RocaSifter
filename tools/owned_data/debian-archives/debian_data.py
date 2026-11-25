@@ -299,7 +299,7 @@ def bootstrap():
     actual_source = {Path(row['path']).name: row['sha256'] for row in sources}
     require(actual_source['ci_elf_data.py'] == '5c226678de6e5f066a9294aa34d755745243d7339c308827fdb0383a33b86cca'
             and actual_source['strict_debian_tar_data.py'] ==
-            'fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a', 'EXACT_REVIEWED_SHARED_MODULES')
+            '837ba3df9fc30b6f34a21c4aa2e3491c8874a9d7219d2ec2add36fc2f498c821', 'EXACT_REVIEWED_SHARED_MODULES')
     elf_module = load_owned_module('ci_elf_data', actual_source['ci_elf_data.py'])
     codec_dir = Path('/usr/local/lib/python3.12/lib-dynload')
     require(Path(sysconfig.get_config_var('DESTSHARED')).resolve() == codec_dir,
@@ -354,7 +354,7 @@ def bootstrap():
     baseline_native = {row['module']: row['file'] for row in foundation
                        if 'file' in row and row['file']['path'].endswith('.so')}
     strict = load_owned_module('strict_debian_tar_data',
-        'fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a')
+        '837ba3df9fc30b6f34a21c4aa2e3491c8874a9d7219d2ec2add36fc2f498c821')
     # Explicitly load the complete known decoder/export transitive stdlib set
     # AFTER its extension bytes/providers were read, but BEFORE archive/corpus
     # decoding. Native modules not preprobed or in the trusted foundation fail.

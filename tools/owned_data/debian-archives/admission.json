@@ -7,7 +7,7 @@
   "bootstrap_scope": {
     "admitted": true,
     "policy": "EXACT_IMMUTABLE_PYTHON_IMAGE_DECLARED_STDLIB",
-    "source_go_sha256": "d1e46bf4a5094953c915fa5850aaee2da74ac7d03dff50d6ccc405eb0118857b",
+    "source_go_sha256": "33e92ec31db4fe3feafd8a3c650260ad72379fc8160cd3e33c7cb766f6a9eadb",
     "foundation": "Exact pinned Python3.12.16 interpreter/image with json/hashlib/struct/io/os/pathlib/sysconfig/importlib foundation. Root must explicitly admit this scope; standard library can contain native code.",
     "new_native_modules_read_before_import": [
       "_lzma",
@@ -39,13 +39,13 @@
     "pwd_runtime_classification": "Use actual find_spec origin: built-in exact image foundation, or exact lib-dynload pwd extension pre-read before import. Template configuration is not runtime proof.",
     "complete_module_inventory": "Capture foundation then all reviewed decoder/export imports before any corpus/archive decode, require new native extensions were preprobed, and enforce identical complete origin/file/cached-file inventory at final rehash.",
     "trusted_interpreter_receipt": "Actual /proc/self/exe and sys.executable must resolve to /usr/local/bin/python3.12; record SHA256/identity and startup flags, final rehash. This is an explicitly Root-trusted base, not an authorization produced by its own receipt.",
-    "root_data_job_admission_sha256": "e4ecb949e0d7017b3d9b5828cd326de4e62928ceaeb80671323f3d8a21438437"
+    "root_data_job_admission_sha256": "01bcd30d20be02ede32e335bb6b040a625ac09dc256802c312a3ee3a82f6e0d1"
   },
   "reviewed_shared_sources": {
     "strict_debian_tar_data.py": {
-      "bytes": 4654,
-      "sha256": "fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a",
-      "source_go_sha256": "45a0a0242edd0a10732e501a3fac8b9a4e965462fde3446c96ac3dd893c9bb13"
+      "bytes": 4787,
+      "sha256": "837ba3df9fc30b6f34a21c4aa2e3491c8874a9d7219d2ec2add36fc2f498c821",
+      "source_go_sha256": "33e92ec31db4fe3feafd8a3c650260ad72379fc8160cd3e33c7cb766f6a9eadb"
     },
     "ci_elf_data.py": {
       "bytes": 20195,
@@ -77,5 +77,5 @@
   "raw_publication_admitted": false,
   "signature_authenticated": false,
   "product_or_browser_acceptance": false,
-  "limit": "Restricted owned Linux DATA-only combined-source activation subject to exact root grant and final activation/canonical review. All original15cases retained plus12 additions; no request allowlist expansion or vendor/app/native/deployment/security/legal/Square approval."
+  "limit": "Restricted owned Linux DATA-only opt-in-core source activation under exact Root grant. Original27 Debian cases and default colon denial retained; PG has39 additive/current cases. No request allowlist expansion, vendor/app native execution, deployment or customer approval."
 }

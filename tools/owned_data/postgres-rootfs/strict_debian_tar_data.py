@@ -64,9 +64,11 @@ class BoundedTarInfo(tarfile.TarInfo):
         return member
 
 
-def canonical_member(name, is_directory):
+def canonical_member(name, is_directory, *, allow_posix_colon=False):
+    require(type(allow_posix_colon) is bool, 'TAR_PATH_COLON_POLICY')
     require(type(name) is str and 0 < len(name) <= 2048
-            and '\x00' not in name and '\\' not in name and ':' not in name
+            and '\x00' not in name and '\\' not in name
+            and (allow_posix_colon or ':' not in name)
             and not name.startswith('/'), 'TAR_PATH_FORM')
     while name.startswith('./'):
         name = name[2:]

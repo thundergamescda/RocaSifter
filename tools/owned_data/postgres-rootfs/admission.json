@@ -7,7 +7,7 @@
   "bootstrap": {
     "image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
     "config": "sha256:78976a69c067520ef8be34cde307ef9f6fea6dcefa50edb57039773d241ca0db",
-    "scope": "Explicit root restricted combined-source DATA-only immutable Python/stdlib/codecs admission under exact root grant. OriginalPG23cases/typedfailure andfixedTAR retained; fullmodule/provider observations beforedecode and finalrehash. No vendor/application native import.",
+    "scope": "Exact reviewed immutable Python/stdlib/codecs for bounded DATA only. Retain original23 PG cases plus16 full-path/guard additions. Private hash-named fixtures retain monotonic budget charges and exact own cleanup; final source/input/module/native/derived bookends remain. No vendor/application native import.",
     "uid": 10001,
     "gid": 10001,
     "network": "none",
@@ -17,14 +17,14 @@
     "readonly_root_source_inputs": true,
     "drop_all_capabilities": true,
     "no_new_privileges": true,
-    "source_go_sha256": "d1e46bf4a5094953c915fa5850aaee2da74ac7d03dff50d6ccc405eb0118857b",
-    "root_data_job_admission_sha256": "e4ecb949e0d7017b3d9b5828cd326de4e62928ceaeb80671323f3d8a21438437"
+    "source_go_sha256": "33e92ec31db4fe3feafd8a3c650260ad72379fc8160cd3e33c7cb766f6a9eadb",
+    "root_data_job_admission_sha256": "01bcd30d20be02ede32e335bb6b040a625ac09dc256802c312a3ee3a82f6e0d1"
   },
   "strict_tar_core": {
     "filename": "strict_debian_tar_data.py",
-    "bytes": 4654,
-    "sha256": "fc7e5249ad90d016f88c09baebd86daed0fb2e1b7e21dadf254971e479f4d19a",
-    "shared_source_review_sha256": "45a0a0242edd0a10732e501a3fac8b9a4e965462fde3446c96ac3dd893c9bb13",
+    "bytes": 4787,
+    "sha256": "837ba3df9fc30b6f34a21c4aa2e3491c8874a9d7219d2ec2add36fc2f498c821",
+    "shared_source_review_sha256": "33e92ec31db4fe3feafd8a3c650260ad72379fc8160cd3e33c7cb766f6a9eadb",
     "original_source_sha256": "775a2cb163cc937160198990577c536cbe078f0bc4b09de7e1d89c4c65f7ea1f",
     "source_go_not_runtime_or_profile_go": true,
     "aggregate_caps": {
@@ -80,8 +80,8 @@
     "raw_opaque_files": "PRIVATE EPHEMERAL ONLY. Neverprint/copy/upload/vendorbinaryarchive; outputtmpfsremovedwithownedcontainer."
   },
   "still_required": [
-    "FinalPGscanner/commonexportblock/copy/input/controller/cleanup/source-specific independentreview and explicitRoot DATAjobadmission.",
-    "Complete actualDATAcorpus header/trailer/gzip/diffID/virtual/ELF/OSpkg/gosu/OpenSSL/copyright/provider/advisory results remainUNRUN.",
-    "No549PG,99unit,21browser or customerready inference from source/data work."
+    "Current complete39-case PG corpus and12-layer data inventory need actual new job evidence; previous failures remain unchanged.",
+    "Full OS/provider/ABI/crypto/advisory/license and application/native execution acceptance remain separate.",
+    "No549PG/99unit/9Gunicorn/21browser/customer-ready inference from this DATA grant."
   ]
 }
