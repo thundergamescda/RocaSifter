@@ -1,0 +1,1238 @@
+{
+  "architecture": "ELF64/le/amd64",
+  "native_files": [
+    {
+      "archive": "cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl",
+      "path": "cryptography/hazmat/bindings/_rust.abi3.so",
+      "bytes": 14434376,
+      "sha256": "1e5d23fa66915204b9b67202a46993844d81cda56f6ad52cead2def37617ee29",
+      "soname": null,
+      "needed": [
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libgcc_s.so.1",
+          "version": "GCC_3.0"
+        },
+        {
+          "provider": "libgcc_s.so.1",
+          "version": "GCC_3.3"
+        },
+        {
+          "provider": "libgcc_s.so.1",
+          "version": "GCC_4.2.0"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.2"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.7"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.12"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.18"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.25"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.28"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.30"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.33"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.34"
+        },
+        {
+          "provider": "ld-linux-x86-64.so.2",
+          "version": "GLIBC_2.3"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary/_psycopg.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 812657,
+      "sha256": "9cefe0af5a5275941698d4807d3b238def06a1acb876929f0a8879415e7481c6",
+      "soname": null,
+      "needed": [
+        "libpq-e9b5c9ac.so.5.18",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN/../psycopg_binary.libs"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary/pq.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 353985,
+      "sha256": "16468c67fd85b13951d1b95ea0207ba693ec485bd840f67c200051fd8bd13882",
+      "soname": null,
+      "needed": [
+        "libpq-e9b5c9ac.so.5.18",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN/../psycopg_binary.libs"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libcom_err-2abe824b.so.2.1",
+      "bytes": 17497,
+      "sha256": "5426dcb54dd01c9eedda05e2179f0e47114e8b48a534ffe9e94916e79471b257",
+      "soname": "libcom_err-2abe824b.so.2.1",
+      "needed": [
+        "libpthread.so.0",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "ld-linux-x86-64.so.2",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libcom_err-55c5739a.so.3.0",
+      "bytes": 25257,
+      "sha256": "c4455194ec84307401ae1dc0049e53703d383c1f1094e613e4a54b19f90094e3",
+      "soname": "libcom_err-55c5739a.so.3.0",
+      "needed": [
+        "libkrb5support-93fbab13.so.0.1",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libkrb5support-93fbab13.so.0.1",
+          "version": "krb5support_0_MIT"
+        }
+      ],
+      "exported_versions": [
+        "com_err_3_MIT",
+        "HIDDEN",
+        "libcom_err.so.3"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libcrypt-bc2db45e.so.1",
+      "bytes": 221657,
+      "sha256": "e2a6f6ff300e287a60dfc0c6fdb76ee01e333068df7c60b4e87453d942ccda65",
+      "soname": "libcrypt-bc2db45e.so.1",
+      "needed": [
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        }
+      ],
+      "exported_versions": [
+        "GLIBC_2.2.5",
+        "libcrypt.so.1"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libcrypto-3a0647ea.so.3",
+      "bytes": 5863273,
+      "sha256": "e1a48391f48cb5f8392140b43ef9f2fa52f58321f8eadd8a83dc20f7fe398b9e",
+      "soname": "libcrypto-3a0647ea.so.3",
+      "needed": [
+        "libz.so.1",
+        "libdl.so.2",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libdl.so.2",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.3.2"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.12"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.7"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.16"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [
+        "libcrypto.so.3",
+        "OPENSSL_3.0.0",
+        "OPENSSL_3.0.3",
+        "OPENSSL_3.0.8",
+        "OPENSSL_3.0.9",
+        "OPENSSL_3.1.0",
+        "OPENSSL_3.2.0",
+        "OPENSSL_3.3.0",
+        "OPENSSL_3.4.0",
+        "OPENSSL_3.5.0"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libgssapi_krb5-923083ce.so.2.2",
+      "bytes": 329425,
+      "sha256": "7355c441d02abe41d34959c6f51caa5fac17014799935673ad3cb987b03226e4",
+      "soname": "libgssapi_krb5-923083ce.so.2.2",
+      "needed": [
+        "libkrb5-f18b4d11.so.3.3",
+        "libk5crypto-459efceb.so.3.1",
+        "libcom_err-55c5739a.so.3.0",
+        "libkrb5support-93fbab13.so.0.1",
+        "libdl.so.2",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libcom_err-55c5739a.so.3.0",
+          "version": "com_err_3_MIT"
+        },
+        {
+          "provider": "libk5crypto-459efceb.so.3.1",
+          "version": "k5crypto_3_MIT"
+        },
+        {
+          "provider": "libkrb5support-93fbab13.so.0.1",
+          "version": "krb5support_0_MIT"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libkrb5-f18b4d11.so.3.3",
+          "version": "krb5_3_MIT"
+        }
+      ],
+      "exported_versions": [
+        "gssapi_krb5_2_MIT",
+        "HIDDEN",
+        "libgssapi_krb5.so.2"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libk5crypto-459efceb.so.3.1",
+      "bytes": 178817,
+      "sha256": "f4901987c99506969fb156c455d3774fad5aad7bff950fd572dfab8a59a901a6",
+      "soname": "libk5crypto-459efceb.so.3.1",
+      "needed": [
+        "libkrb5support-93fbab13.so.0.1",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libkrb5support-93fbab13.so.0.1",
+          "version": "krb5support_0_MIT"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [
+        "HIDDEN",
+        "k5crypto_3_MIT",
+        "libk5crypto.so.3"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libkeyutils-dfe70bd6.so.1.5",
+      "bytes": 17913,
+      "sha256": "c29e41b03cf4b2dffbfb4960946e2b42f82c0ca5d53d231d3f0fc597ba274488",
+      "soname": "libkeyutils-dfe70bd6.so.1.5",
+      "needed": [
+        "libdl.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.7"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [
+        "KEYUTILS_0.3",
+        "KEYUTILS_1.0",
+        "KEYUTILS_1.3",
+        "KEYUTILS_1.4",
+        "KEYUTILS_1.5",
+        "libkeyutils.so.1"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "bytes": 821993,
+      "sha256": "066e6f8c94967fa3f91f0c723834bde429a18a387e8ec791d34ac56c05bf975b",
+      "soname": "libkrb5-f18b4d11.so.3.3",
+      "needed": [
+        "libk5crypto-459efceb.so.3.1",
+        "libcom_err-55c5739a.so.3.0",
+        "libkrb5support-93fbab13.so.0.1",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libcom_err-55c5739a.so.3.0",
+          "version": "com_err_3_MIT"
+        },
+        {
+          "provider": "libresolv.so.2",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libresolv.so.2",
+          "version": "GLIBC_2.9"
+        },
+        {
+          "provider": "libk5crypto-459efceb.so.3.1",
+          "version": "k5crypto_3_MIT"
+        },
+        {
+          "provider": "libkrb5support-93fbab13.so.0.1",
+          "version": "krb5support_0_MIT"
+        },
+        {
+          "provider": "libkeyutils-dfe70bd6.so.1.5",
+          "version": "KEYUTILS_1.0"
+        },
+        {
+          "provider": "libkeyutils-dfe70bd6.so.1.5",
+          "version": "KEYUTILS_1.5"
+        },
+        {
+          "provider": "libkeyutils-dfe70bd6.so.1.5",
+          "version": "KEYUTILS_0.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        }
+      ],
+      "exported_versions": [
+        "HIDDEN",
+        "krb5_3_MIT",
+        "libkrb5.so.3"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libkrb5support-93fbab13.so.0.1",
+      "bytes": 55905,
+      "sha256": "3404c3db9216ffbbe10f13e5b65b122e1ac6744082c639891f69f0ef28711a2f",
+      "soname": "libkrb5support-93fbab13.so.0.1",
+      "needed": [
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libdl.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libdl.so.2",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [
+        "HIDDEN",
+        "krb5support_0_MIT",
+        "libkrb5support.so.0"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/liblber-7b3e3cc5.so.2.0.200",
+      "bytes": 56881,
+      "sha256": "42e1b323980f325b3fc45b888d026a8fd8cb669997b54885f863f50e48f8f6ef",
+      "soname": "liblber-7b3e3cc5.so.2.0.200",
+      "needed": [
+        "libresolv.so.2",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [
+        "liblber.so.2",
+        "OPENLDAP_2.200"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libldap-fb847fea.so.2.0.200",
+      "bytes": 402281,
+      "sha256": "841d1b8a667ab165835b08203fb10cf18904e161d5c3a8b1e4b2c623b04ad505",
+      "soname": "libldap-fb847fea.so.2.0.200",
+      "needed": [
+        "liblber-7b3e3cc5.so.2.0.200",
+        "libresolv.so.2",
+        "libsasl2-84219a89.so.3.0.0",
+        "libssl-6a9b88ec.so.3",
+        "libcrypto-3a0647ea.so.3",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libresolv.so.2",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.0.0"
+        },
+        {
+          "provider": "liblber-7b3e3cc5.so.2.0.200",
+          "version": "OPENLDAP_2.200"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.3.2"
+        },
+        {
+          "provider": "libssl-6a9b88ec.so.3",
+          "version": "OPENSSL_3.0.0"
+        }
+      ],
+      "exported_versions": [
+        "libldap.so.2",
+        "OPENLDAP_2.200"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "bytes": 420153,
+      "sha256": "ee8ad7e6497816c693acc1a9691528e3600db2dc0f5f97634653ec5c025ac565",
+      "soname": "libpq-e9b5c9ac.so.5.18",
+      "needed": [
+        "libssl-6a9b88ec.so.3",
+        "libcrypto-3a0647ea.so.3",
+        "libgssapi_krb5-923083ce.so.2.2",
+        "libm.so.6",
+        "libldap-fb847fea.so.2.0.200",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libgssapi_krb5-923083ce.so.2.2",
+          "version": "gssapi_krb5_2_MIT"
+        },
+        {
+          "provider": "libm.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.0.0"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libssl-6a9b88ec.so.3",
+          "version": "OPENSSL_3.0.0"
+        },
+        {
+          "provider": "libldap-fb847fea.so.2.0.200",
+          "version": "OPENLDAP_2.200"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libsasl2-84219a89.so.3.0.0",
+      "bytes": 142953,
+      "sha256": "a01821d4716316892f28751616ad586f679ec66bc18a775205e1a0fab579f00b",
+      "soname": "libsasl2-84219a89.so.3.0.0",
+      "needed": [
+        "libdl.so.2",
+        "libresolv.so.2",
+        "libcrypt-bc2db45e.so.1",
+        "libgssapi_krb5-923083ce.so.2.2",
+        "libkrb5-f18b4d11.so.3.3",
+        "libk5crypto-459efceb.so.3.1",
+        "libcom_err-2abe824b.so.2.1",
+        "libkrb5support-93fbab13.so.0.1",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libdl.so.2",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.15"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.4"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3.4"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "psycopg_binary-3.3.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "bytes": 1048985,
+      "sha256": "5b9d9f1923a0ffd4fd2666819846d61c5bad31f1bf3a16c65bf1fccf5aa37d17",
+      "soname": "libssl-6a9b88ec.so.3",
+      "needed": [
+        "libcrypto-3a0647ea.so.3",
+        "libz.so.1",
+        "libdl.so.2",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [
+        "$ORIGIN"
+      ],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.17"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.3.2"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.3.0"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.0.3"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.4.0"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.2.0"
+        },
+        {
+          "provider": "libcrypto-3a0647ea.so.3",
+          "version": "OPENSSL_3.0.0"
+        }
+      ],
+      "exported_versions": [
+        "libssl.so.3",
+        "OPENSSL_3.0.0",
+        "OPENSSL_3.2.0",
+        "OPENSSL_3.3.0",
+        "OPENSSL_3.4.0",
+        "OPENSSL_3.5.0"
+      ],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "path": "charset_normalizer/cd.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 178648,
+      "sha256": "c2f3063d035647a23fd2ac5243dbf6925056c3aba636696a980293516d240eca",
+      "soname": null,
+      "needed": [
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "path": "charset_normalizer/md.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 340528,
+      "sha256": "f20c7da02510ade7b0968eda061d2cb1d6eb29ccaa77af92ddea82b326bc8c3b",
+      "soname": null,
+      "needed": [
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "path": "_cffi_backend.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 348856,
+      "sha256": "9bc1d08072255a5ec2db10fc75df1dd9e73097a75cd9150cfe875ebd6712f17c",
+      "soname": null,
+      "needed": [
+        "libpthread.so.0",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "ld-linux-x86-64.so.2",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libpthread.so.0",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.3"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    },
+    {
+      "archive": "markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "path": "markupsafe/_speedups.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 44072,
+      "sha256": "0ed5c27bc96bc511b307081fb18d33785eb976044c8812ef9189579f053de80d",
+      "soname": null,
+      "needed": [
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "rpath_or_runpath": [],
+      "required_symbol_versions": [
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "provider": "libc.so.6",
+          "version": "GLIBC_2.14"
+        }
+      ],
+      "exported_versions": [],
+      "inspection": "Data only; no dynamic loader, ldd, readelf or native execution"
+    }
+  ],
+  "provided_sonames": [
+    "_cffi_backend.cpython-312-x86_64-linux-gnu.so",
+    "_psycopg.cpython-312-x86_64-linux-gnu.so",
+    "_rust.abi3.so",
+    "_speedups.cpython-312-x86_64-linux-gnu.so",
+    "cd.cpython-312-x86_64-linux-gnu.so",
+    "libcom_err-2abe824b.so.2.1",
+    "libcom_err-55c5739a.so.3.0",
+    "libcrypt-bc2db45e.so.1",
+    "libcrypto-3a0647ea.so.3",
+    "libgssapi_krb5-923083ce.so.2.2",
+    "libk5crypto-459efceb.so.3.1",
+    "libkeyutils-dfe70bd6.so.1.5",
+    "libkrb5-f18b4d11.so.3.3",
+    "libkrb5support-93fbab13.so.0.1",
+    "liblber-7b3e3cc5.so.2.0.200",
+    "libldap-fb847fea.so.2.0.200",
+    "libpq-e9b5c9ac.so.5.18",
+    "libsasl2-84219a89.so.3.0.0",
+    "libssl-6a9b88ec.so.3",
+    "md.cpython-312-x86_64-linux-gnu.so",
+    "pq.cpython-312-x86_64-linux-gnu.so"
+  ],
+  "external_sonames": [
+    "ld-linux-x86-64.so.2",
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libpthread.so.0",
+    "libresolv.so.2",
+    "libz.so.1"
+  ],
+  "external_symbol_requirements": [
+    {
+      "soname": "ld-linux-x86-64.so.2",
+      "required_versions": [
+        "GLIBC_2.3"
+      ]
+    },
+    {
+      "soname": "libc.so.6",
+      "required_versions": [
+        "GLIBC_2.12",
+        "GLIBC_2.14",
+        "GLIBC_2.15",
+        "GLIBC_2.16",
+        "GLIBC_2.17",
+        "GLIBC_2.18",
+        "GLIBC_2.2.5",
+        "GLIBC_2.25",
+        "GLIBC_2.28",
+        "GLIBC_2.3",
+        "GLIBC_2.3.2",
+        "GLIBC_2.3.4",
+        "GLIBC_2.30",
+        "GLIBC_2.33",
+        "GLIBC_2.34",
+        "GLIBC_2.4",
+        "GLIBC_2.7"
+      ]
+    },
+    {
+      "soname": "libdl.so.2",
+      "required_versions": [
+        "GLIBC_2.2.5"
+      ]
+    },
+    {
+      "soname": "libgcc_s.so.1",
+      "required_versions": [
+        "GCC_3.0",
+        "GCC_3.3",
+        "GCC_4.2.0"
+      ]
+    },
+    {
+      "soname": "libm.so.6",
+      "required_versions": [
+        "GLIBC_2.2.5"
+      ]
+    },
+    {
+      "soname": "libpthread.so.0",
+      "required_versions": [
+        "GLIBC_2.2.5",
+        "GLIBC_2.3.2"
+      ]
+    },
+    {
+      "soname": "libresolv.so.2",
+      "required_versions": [
+        "GLIBC_2.2.5",
+        "GLIBC_2.9"
+      ]
+    },
+    {
+      "soname": "libz.so.1",
+      "required_versions": []
+    }
+  ],
+  "bundled_symbol_checks": [
+    {
+      "consumer": "psycopg_binary.libs/libcom_err-55c5739a.so.3.0",
+      "provider": "libkrb5support-93fbab13.so.0.1",
+      "version": "krb5support_0_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libgssapi_krb5-923083ce.so.2.2",
+      "provider": "libcom_err-55c5739a.so.3.0",
+      "version": "com_err_3_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libgssapi_krb5-923083ce.so.2.2",
+      "provider": "libk5crypto-459efceb.so.3.1",
+      "version": "k5crypto_3_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libgssapi_krb5-923083ce.so.2.2",
+      "provider": "libkrb5support-93fbab13.so.0.1",
+      "version": "krb5support_0_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libgssapi_krb5-923083ce.so.2.2",
+      "provider": "libkrb5-f18b4d11.so.3.3",
+      "version": "krb5_3_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libk5crypto-459efceb.so.3.1",
+      "provider": "libkrb5support-93fbab13.so.0.1",
+      "version": "krb5support_0_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libcom_err-55c5739a.so.3.0",
+      "version": "com_err_3_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libk5crypto-459efceb.so.3.1",
+      "version": "k5crypto_3_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libkrb5support-93fbab13.so.0.1",
+      "version": "krb5support_0_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libkeyutils-dfe70bd6.so.1.5",
+      "version": "KEYUTILS_1.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libkeyutils-dfe70bd6.so.1.5",
+      "version": "KEYUTILS_1.5",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libkrb5-f18b4d11.so.3.3",
+      "provider": "libkeyutils-dfe70bd6.so.1.5",
+      "version": "KEYUTILS_0.3",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libldap-fb847fea.so.2.0.200",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.0.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libldap-fb847fea.so.2.0.200",
+      "provider": "liblber-7b3e3cc5.so.2.0.200",
+      "version": "OPENLDAP_2.200",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libldap-fb847fea.so.2.0.200",
+      "provider": "libssl-6a9b88ec.so.3",
+      "version": "OPENSSL_3.0.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "provider": "libgssapi_krb5-923083ce.so.2.2",
+      "version": "gssapi_krb5_2_MIT",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.0.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "provider": "libssl-6a9b88ec.so.3",
+      "version": "OPENSSL_3.0.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "provider": "libldap-fb847fea.so.2.0.200",
+      "version": "OPENLDAP_2.200",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.3.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.0.3",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.4.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.2.0",
+      "verified": true
+    },
+    {
+      "consumer": "psycopg_binary.libs/libssl-6a9b88ec.so.3",
+      "provider": "libcrypto-3a0647ea.so.3",
+      "version": "OPENSSL_3.0.0",
+      "verified": true
+    }
+  ],
+  "pth_files": [],
+  "model_assets": [],
+  "base_availability": "UNKNOWN until admitted Linux data-only native preflight",
+  "inspection": "No install/import/load/readelf/ldd/test/runtime"
+}

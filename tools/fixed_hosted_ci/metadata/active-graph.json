@@ -1,0 +1,910 @@
+{
+  "format": "stock-and-sleeve:maintained-hosted-marker-data:v1",
+  "target": {
+    "python_version": "3.12",
+    "python_full_version": "3.12.16",
+    "implementation_name": "cpython",
+    "platform_python_implementation": "CPython",
+    "sys_platform": "linux",
+    "platform_machine": "x86_64"
+  },
+  "selected_extras": {
+    "psycopg": [
+      "binary",
+      "pool"
+    ]
+  },
+  "distribution_count": 20,
+  "active_edge_count": 18,
+  "requires_dist": [
+    {
+      "from": "flask",
+      "raw_requires_dist": "blinker>=1.9.0",
+      "target": "blinker",
+      "constraint": ">=1.9.0",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "1.9.0",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "click>=8.1.3",
+      "target": "click",
+      "constraint": ">=8.1.3",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "8.5.1",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "importlib-metadata>=3.6.0; python_version < '3.10'",
+      "target": "importlib-metadata",
+      "constraint": ">=3.6.0",
+      "marker": " python_version < '3.10'",
+      "active": false,
+      "reason": "CPython3.12.16 is not below3.10",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "itsdangerous>=2.2.0",
+      "target": "itsdangerous",
+      "constraint": ">=2.2.0",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "2.2.0",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "jinja2>=3.1.2",
+      "target": "jinja2",
+      "constraint": ">=3.1.2",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.1.6",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "markupsafe>=2.1.1",
+      "target": "markupsafe",
+      "constraint": ">=2.1.1",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.0.4",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "werkzeug>=3.1.0",
+      "target": "werkzeug",
+      "constraint": ">=3.1.0",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.1.9",
+      "satisfied": true
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "asgiref>=3.2 ; extra == \"async\"",
+      "target": "asgiref",
+      "constraint": ">=3.2",
+      "marker": " extra == \"async\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "flask",
+      "raw_requires_dist": "python-dotenv ; extra == \"dotenv\"",
+      "target": "python-dotenv",
+      "constraint": "",
+      "marker": " extra == \"dotenv\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "typing-extensions>=4.6; python_version < \"3.13\"",
+      "target": "typing-extensions",
+      "constraint": ">=4.6",
+      "marker": " python_version < \"3.13\"",
+      "active": true,
+      "reason": "CPython3.12.16 is below3.13",
+      "selected_version": "4.16.0",
+      "satisfied": true
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "tzdata; sys_platform == \"win32\"",
+      "target": "tzdata",
+      "constraint": "",
+      "marker": " sys_platform == \"win32\"",
+      "active": false,
+      "reason": "target sys_platform linux",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "psycopg-c==3.3.9; implementation_name != \"pypy\" and extra == \"c\"",
+      "target": "psycopg-c",
+      "constraint": "==3.3.9",
+      "marker": " implementation_name != \"pypy\" and extra == \"c\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "psycopg-binary==3.3.9; implementation_name != \"pypy\" and extra == \"binary\"",
+      "target": "psycopg-binary",
+      "constraint": "==3.3.9",
+      "marker": " implementation_name != \"pypy\" and extra == \"binary\"",
+      "active": true,
+      "reason": "explicit psycopg binary/pool extra onCPython",
+      "selected_version": "3.3.9",
+      "satisfied": true
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "psycopg-pool; extra == \"pool\"",
+      "target": "psycopg-pool",
+      "constraint": "",
+      "marker": " extra == \"pool\"",
+      "active": true,
+      "reason": "explicit psycopg binary/pool extra onCPython",
+      "selected_version": "3.3.3",
+      "satisfied": true
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "anyio>=4.0; extra == \"test\"",
+      "target": "anyio",
+      "constraint": ">=4.0",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "mypy>=2.1.0; implementation_name != \"pypy\" and extra == \"test\"",
+      "target": "mypy",
+      "constraint": ">=2.1.0",
+      "marker": " implementation_name != \"pypy\" and extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "pproxy>=2.7; extra == \"test\"",
+      "target": "pproxy",
+      "constraint": ">=2.7",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "pytest>=6.2.5; extra == \"test\"",
+      "target": "pytest",
+      "constraint": ">=6.2.5",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "pytest-cov>=3.0; extra == \"test\"",
+      "target": "pytest-cov",
+      "constraint": ">=3.0",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "pytest-randomly>=3.5; extra == \"test\"",
+      "target": "pytest-randomly",
+      "constraint": ">=3.5",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "ast-comments>=1.1.2; extra == \"dev\"",
+      "target": "ast-comments",
+      "constraint": ">=1.1.2",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "black>=26.1.0; extra == \"dev\"",
+      "target": "black",
+      "constraint": ">=26.1.0",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "codespell>=2.2; extra == \"dev\"",
+      "target": "codespell",
+      "constraint": ">=2.2",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "cython-lint>=0.21; extra == \"dev\"",
+      "target": "cython-lint",
+      "constraint": ">=0.21",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "dnspython>=2.1; extra == \"dev\"",
+      "target": "dnspython",
+      "constraint": ">=2.1",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "flake8>=4.0; extra == \"dev\"",
+      "target": "flake8",
+      "constraint": ">=4.0",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "isort[colors]>=6.0; extra == \"dev\"",
+      "target": "isort",
+      "constraint": ">=6.0",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "isort-psycopg>=0.0.3; extra == \"dev\"",
+      "target": "isort-psycopg",
+      "constraint": ">=0.0.3",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "mypy>=2.1.0; extra == \"dev\"",
+      "target": "mypy",
+      "constraint": ">=2.1.0",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "pre-commit>=4.0.1; extra == \"dev\"",
+      "target": "pre-commit",
+      "constraint": ">=4.0.1",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "types-setuptools>=57.4; extra == \"dev\"",
+      "target": "types-setuptools",
+      "constraint": ">=57.4",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "types-shapely>=2.0; extra == \"dev\"",
+      "target": "types-shapely",
+      "constraint": ">=2.0",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "wheel>=0.37; extra == \"dev\"",
+      "target": "wheel",
+      "constraint": ">=0.37",
+      "marker": " extra == \"dev\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "Sphinx>=9.1; extra == \"docs\"",
+      "target": "sphinx",
+      "constraint": ">=9.1",
+      "marker": " extra == \"docs\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "furo==2025.12.19; extra == \"docs\"",
+      "target": "furo",
+      "constraint": "==2025.12.19",
+      "marker": " extra == \"docs\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "sphinx-autobuild>=2025.8.25; extra == \"docs\"",
+      "target": "sphinx-autobuild",
+      "constraint": ">=2025.8.25",
+      "marker": " extra == \"docs\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg",
+      "raw_requires_dist": "sphinx-autodoc-typehints>=3.10.2; extra == \"docs\"",
+      "target": "sphinx-autodoc-typehints",
+      "constraint": ">=3.10.2",
+      "marker": " extra == \"docs\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "typing-extensions>=4.6",
+      "target": "typing-extensions",
+      "constraint": ">=4.6",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "4.16.0",
+      "satisfied": true
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "anyio>=4.0; extra == \"test\"",
+      "target": "anyio",
+      "constraint": ">=4.0",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "mypy>=2.1.0; extra == \"test\"",
+      "target": "mypy",
+      "constraint": ">=2.1.0",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "pproxy>=2.7; extra == \"test\"",
+      "target": "pproxy",
+      "constraint": ">=2.7",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "pytest>=6.2.5; extra == \"test\"",
+      "target": "pytest",
+      "constraint": ">=6.2.5",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "pytest-cov>=3.0; extra == \"test\"",
+      "target": "pytest-cov",
+      "constraint": ">=3.0",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "psycopg-pool",
+      "raw_requires_dist": "pytest-randomly>=3.5; extra == \"test\"",
+      "target": "pytest-randomly",
+      "constraint": ">=3.5",
+      "marker": " extra == \"test\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "cryptography",
+      "raw_requires_dist": "cffi>=2.0.0 ; platform_python_implementation != 'PyPy'",
+      "target": "cffi",
+      "constraint": ">=2.0.0",
+      "marker": " platform_python_implementation != 'PyPy'",
+      "active": true,
+      "reason": "target implementation CPython",
+      "selected_version": "2.1.1",
+      "satisfied": true
+    },
+    {
+      "from": "cryptography",
+      "raw_requires_dist": "typing-extensions>=4.13.2 ; python_full_version < '3.11'",
+      "target": "typing-extensions",
+      "constraint": ">=4.13.2",
+      "marker": " python_full_version < '3.11'",
+      "active": false,
+      "reason": "3.12.16 is not below3.11",
+      "selected_version": "4.16.0",
+      "satisfied": null
+    },
+    {
+      "from": "cryptography",
+      "raw_requires_dist": "bcrypt>=3.1.5 ; extra == 'ssh'",
+      "target": "bcrypt",
+      "constraint": ">=3.1.5",
+      "marker": " extra == 'ssh'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "charset_normalizer<4,>=2",
+      "target": "charset-normalizer",
+      "constraint": "<4,>=2",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.5.2",
+      "satisfied": true
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "idna<4,>=2.5",
+      "target": "idna",
+      "constraint": "<4,>=2.5",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.20",
+      "satisfied": true
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "urllib3<3,>=1.26",
+      "target": "urllib3",
+      "constraint": "<3,>=1.26",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "2.8.0",
+      "satisfied": true
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "certifi>=2023.5.7",
+      "target": "certifi",
+      "constraint": ">=2023.5.7",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "2026.10.23",
+      "satisfied": true
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "PySocks!=1.5.7,>=1.5.6; extra == \"socks\"",
+      "target": "pysocks",
+      "constraint": "!=1.5.7,>=1.5.6",
+      "marker": " extra == \"socks\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "requests",
+      "raw_requires_dist": "chardet<8,>=3.0.2; extra == \"use-chardet-on-py3\"",
+      "target": "chardet",
+      "constraint": "<8,>=3.0.2",
+      "marker": " extra == \"use-chardet-on-py3\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "ruff >= 0.16.0 ; extra == \"all\"",
+      "target": "ruff",
+      "constraint": ">= 0.16.0",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "mypy >= 1.11.2 ; extra == \"all\"",
+      "target": "mypy",
+      "constraint": ">= 1.11.2",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "ty >= 0.0.37 ; extra == \"all\"",
+      "target": "ty",
+      "constraint": ">= 0.0.37",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "pytest >= 8.3.2 ; extra == \"all\"",
+      "target": "pytest",
+      "constraint": ">= 8.3.2",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "hypothesis >= 6.141.1 ; extra == \"all\"",
+      "target": "hypothesis",
+      "constraint": ">= 6.141.1",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "idna",
+      "raw_requires_dist": "coverage >= 7.10.0 ; extra == \"all\"",
+      "target": "coverage",
+      "constraint": ">= 7.10.0",
+      "marker": " extra == \"all\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "urllib3",
+      "raw_requires_dist": "brotli>=1.2.0; (platform_python_implementation == 'CPython') and extra == 'brotli'",
+      "target": "brotli",
+      "constraint": ">=1.2.0",
+      "marker": " (platform_python_implementation == 'CPython') and extra == 'brotli'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "urllib3",
+      "raw_requires_dist": "brotlicffi>=1.2.0.0; (platform_python_implementation != 'CPython') and extra == 'brotli'",
+      "target": "brotlicffi",
+      "constraint": ">=1.2.0.0",
+      "marker": " (platform_python_implementation != 'CPython') and extra == 'brotli'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "urllib3",
+      "raw_requires_dist": "h2<5,>=4; extra == 'h2'",
+      "target": "h2",
+      "constraint": "<5,>=4",
+      "marker": " extra == 'h2'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "urllib3",
+      "raw_requires_dist": "pysocks!=1.5.7,<2.0,>=1.5.6; extra == 'socks'",
+      "target": "pysocks",
+      "constraint": "!=1.5.7,<2.0,>=1.5.6",
+      "marker": " extra == 'socks'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "urllib3",
+      "raw_requires_dist": "backports-zstd>=1.0.0; (python_version < '3.14') and extra == 'zstd'",
+      "target": "backports-zstd",
+      "constraint": ">=1.0.0",
+      "marker": " (python_version < '3.14') and extra == 'zstd'",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "cffi",
+      "raw_requires_dist": "pycparser; implementation_name != \"PyPy\"",
+      "target": "pycparser",
+      "constraint": "",
+      "marker": " implementation_name != \"PyPy\"",
+      "active": true,
+      "reason": "target implementation_name cpython",
+      "selected_version": "3.12",
+      "satisfied": true
+    },
+    {
+      "from": "jinja2",
+      "raw_requires_dist": "MarkupSafe>=2.0",
+      "target": "markupsafe",
+      "constraint": ">=2.0",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.0.4",
+      "satisfied": true
+    },
+    {
+      "from": "jinja2",
+      "raw_requires_dist": "Babel>=2.7 ; extra == \"i18n\"",
+      "target": "babel",
+      "constraint": ">=2.7",
+      "marker": " extra == \"i18n\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "werkzeug",
+      "raw_requires_dist": "markupsafe>=2.1.1",
+      "target": "markupsafe",
+      "constraint": ">=2.1.1",
+      "marker": "",
+      "active": true,
+      "reason": "unconditional",
+      "selected_version": "3.0.4",
+      "satisfied": true
+    },
+    {
+      "from": "werkzeug",
+      "raw_requires_dist": "watchdog>=2.3 ; extra == \"watchdog\"",
+      "target": "watchdog",
+      "constraint": ">=2.3",
+      "marker": " extra == \"watchdog\"",
+      "active": false,
+      "reason": "optional extra not selected",
+      "selected_version": null,
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "gevent>=24.10.1; extra == \"gevent\"",
+      "target": "gevent",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "packaging; extra == \"gevent\"",
+      "target": "packaging",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "tornado>=6.5.7; extra == \"tornado\"",
+      "target": "tornado",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "setproctitle; extra == \"setproctitle\"",
+      "target": "setproctitle",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "h2>=4.4.1; extra == \"http2\"",
+      "target": "h2",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "gunicorn_h1c>=0.6.14; extra == \"fast\"",
+      "target": "gunicorn-h1c",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "gevent>=24.10.1; extra == \"testing\"",
+      "target": "gevent",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "h2>=4.4.1; extra == \"testing\"",
+      "target": "h2",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "coverage; extra == \"testing\"",
+      "target": "coverage",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "packaging; extra == \"testing\"",
+      "target": "packaging",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "pytest>=9.0.3; extra == \"testing\"",
+      "target": "pytest",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "pytest-cov; extra == \"testing\"",
+      "target": "pytest-cov",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "pytest-asyncio; extra == \"testing\"",
+      "target": "pytest-asyncio",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "uvloop>=0.19.0; platform_python_implementation != \"PyPy\" and extra == \"testing\"",
+      "target": "uvloop",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "httpx[http2]>=0.23.0; extra == \"testing\"",
+      "target": "httpx",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    },
+    {
+      "from": "gunicorn",
+      "raw_requires_dist": "inotify>=0.2.10; sys_platform == \"linux\" and extra == \"testing\"",
+      "target": "inotify",
+      "active": false,
+      "reason": "All Gunicorn27 Requires-Dist clauses explicitly require an unselected extra. gthread uses the stdlib threaded worker; no optional extra is selected.",
+      "satisfied": null
+    }
+  ],
+  "all_active_targets_selected": true,
+  "constraint_scope": "All18 retained active edges/versions exact from the reviewed predecessor marker table. New Gunicorn metadata adds only inactive-extra clauses. No general resolver or package code ran."
+}

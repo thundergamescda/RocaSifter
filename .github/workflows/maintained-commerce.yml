@@ -1,0 +1,41 @@
+name: Maintained commerce and disabled foundation acceptance
+run-name: Maintained commerce source ${{ github.sha }}
+
+'on':
+  push:
+    branches:
+      - 'stock-sleeve-maintained-commerce-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintained-commerce-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  maintained-commerce:
+    if: github.repository == 'thundergamescda/RocaSifter' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact reviewed source and its sole parent
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify the reviewed source parent
+        env:
+          SS_CI_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          expected_parent='a4934e36dfcdad5eb00e2aba197a59a12f7cf07d'
+          [[ "$(git rev-parse HEAD)" == "$SS_CI_SOURCE_SHA" ]]
+          [[ "$(git rev-list --parents -n 1 HEAD)" == "$SS_CI_SOURCE_SHA $expected_parent" ]]
+      - name: Run all maintained commerce and foundation cases
+        env:
+          SS_CI_SOURCE_SHA: ${{ github.sha }}
+          HOSTED_CI_BUILD_TIMEOUT_SECONDS: '600'
+          HOSTED_CI_TEST_TIMEOUT_SECONDS: '1800'
+        run: bash tools/run_fixed_hosted_commerce_ci.sh

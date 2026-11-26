@@ -1,0 +1,590 @@
+[
+  {
+    "distribution": "flask",
+    "wheel_path": "flask-3.1.3.dist-info/licenses/LICENSE.txt",
+    "path": "notices/flask/flask-3.1.3.dist-info__licenses__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea"
+  },
+  {
+    "distribution": "flask",
+    "wheel_path": "flask-3.1.3.dist-info/WHEEL",
+    "path": "notices/flask/flask-3.1.3.dist-info__WHEEL",
+    "bytes": 82,
+    "sha256": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db"
+  },
+  {
+    "distribution": "flask",
+    "wheel_path": "flask-3.1.3.dist-info/METADATA",
+    "path": "notices/flask/flask-3.1.3.dist-info__METADATA",
+    "bytes": 3167,
+    "sha256": "aa6760ed6f545704474d70733e4a63a7f1481e376973edc896a13d02a7224c7c"
+  },
+  {
+    "distribution": "flask",
+    "wheel_path": "flask-3.1.3.dist-info/RECORD",
+    "path": "notices/flask/flask-3.1.3.dist-info__RECORD",
+    "bytes": 2330,
+    "sha256": "56ef855c59a27daa557a65e49155468447bf0e83c91b46dc874dbed3a8a5687b"
+  },
+  {
+    "distribution": "psycopg",
+    "wheel_path": "psycopg-3.3.9.dist-info/licenses/LICENSE.txt",
+    "path": "notices/psycopg/psycopg-3.3.9.dist-info__licenses__LICENSE.txt",
+    "bytes": 7652,
+    "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+  },
+  {
+    "distribution": "psycopg",
+    "wheel_path": "psycopg-3.3.9.dist-info/METADATA",
+    "path": "notices/psycopg/psycopg-3.3.9.dist-info__METADATA",
+    "bytes": 4369,
+    "sha256": "0040aa49bcf8c2531bbc024d4aa8ad1bbd6ef5b7baff1ee9cbb82540f2086612"
+  },
+  {
+    "distribution": "psycopg",
+    "wheel_path": "psycopg-3.3.9.dist-info/WHEEL",
+    "path": "notices/psycopg/psycopg-3.3.9.dist-info__WHEEL",
+    "bytes": 91,
+    "sha256": "98e75747d0b7c0c568bfb71263c3d8f970b3a374a6996087bc642be5cb09a1aa"
+  },
+  {
+    "distribution": "psycopg",
+    "wheel_path": "psycopg-3.3.9.dist-info/RECORD",
+    "path": "notices/psycopg/psycopg-3.3.9.dist-info__RECORD",
+    "bytes": 7072,
+    "sha256": "ae661bb86157c964ed8c1e851202b32bfeddc1b803258d8538a76db8657fb9a6"
+  },
+  {
+    "distribution": "psycopg-pool",
+    "wheel_path": "psycopg_pool-3.3.3.dist-info/licenses/LICENSE.txt",
+    "path": "notices/psycopg-pool/psycopg_pool-3.3.3.dist-info__licenses__LICENSE.txt",
+    "bytes": 7652,
+    "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+  },
+  {
+    "distribution": "psycopg-pool",
+    "wheel_path": "psycopg_pool-3.3.3.dist-info/METADATA",
+    "path": "notices/psycopg-pool/psycopg_pool-3.3.3.dist-info__METADATA",
+    "bytes": 2822,
+    "sha256": "d1f362f32f0108c77c4301c1a1641d05d09d010ad64737b132dd2c4e09cb7bb0"
+  },
+  {
+    "distribution": "psycopg-pool",
+    "wheel_path": "psycopg_pool-3.3.3.dist-info/WHEEL",
+    "path": "notices/psycopg-pool/psycopg_pool-3.3.3.dist-info__WHEEL",
+    "bytes": 91,
+    "sha256": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1"
+  },
+  {
+    "distribution": "psycopg-pool",
+    "wheel_path": "psycopg_pool-3.3.3.dist-info/RECORD",
+    "path": "notices/psycopg-pool/psycopg_pool-3.3.3.dist-info__RECORD",
+    "bytes": 1707,
+    "sha256": "aff61825064b673f0f001d2cb9ce23eba95399cad08d1327d1262a32c752e747"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/METADATA",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__METADATA",
+    "bytes": 4394,
+    "sha256": "047cfc71226409de4318b360aef15c63a2adf609731e3dcf7fe932f14ea042ee"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/WHEEL",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__WHEEL",
+    "bytes": 109,
+    "sha256": "39b425ce6c898e83f8b8cdeeb65dae690d3ab9f2382ca9c3860e77bf6d34077a"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/licenses/LICENSE",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__licenses__LICENSE",
+    "bytes": 197,
+    "sha256": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/licenses/LICENSE.APACHE",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__licenses__LICENSE.APACHE",
+    "bytes": 11360,
+    "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/licenses/LICENSE.BSD",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__licenses__LICENSE.BSD",
+    "bytes": 1532,
+    "sha256": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb"
+  },
+  {
+    "distribution": "cryptography",
+    "wheel_path": "cryptography-50.0.2.dist-info/RECORD",
+    "path": "notices/cryptography/cryptography-50.0.2.dist-info__RECORD",
+    "bytes": 12212,
+    "sha256": "eb62a1e31e3c0ed491acc2497e9e8265a810a8112122852e347e3c722757f9fd"
+  },
+  {
+    "distribution": "psycopg-binary",
+    "wheel_path": "psycopg_binary-3.3.9.dist-info/METADATA",
+    "path": "notices/psycopg-binary/psycopg_binary-3.3.9.dist-info__METADATA",
+    "bytes": 2709,
+    "sha256": "5629904f63468f67eb828f3119d0436948015e96d924d18a5a800ed33b902a83"
+  },
+  {
+    "distribution": "psycopg-binary",
+    "wheel_path": "psycopg_binary-3.3.9.dist-info/WHEEL",
+    "path": "notices/psycopg-binary/psycopg_binary-3.3.9.dist-info__WHEEL",
+    "bytes": 151,
+    "sha256": "33c3ee5a9b166204e8926c441fedceab6024973fe07882e3a93f40034000f3fe"
+  },
+  {
+    "distribution": "psycopg-binary",
+    "wheel_path": "psycopg_binary-3.3.9.dist-info/licenses/LICENSE.txt",
+    "path": "notices/psycopg-binary/psycopg_binary-3.3.9.dist-info__licenses__LICENSE.txt",
+    "bytes": 7652,
+    "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+  },
+  {
+    "distribution": "psycopg-binary",
+    "wheel_path": "psycopg_binary-3.3.9.dist-info/RECORD",
+    "path": "notices/psycopg-binary/psycopg_binary-3.3.9.dist-info__RECORD",
+    "bytes": 2579,
+    "sha256": "cc30204a1faa101377de60befa59a01826f42c5ec2c8f998aaff4a487c903a92"
+  },
+  {
+    "distribution": "requests",
+    "wheel_path": "requests-2.34.2.dist-info/licenses/LICENSE",
+    "path": "notices/requests/requests-2.34.2.dist-info__licenses__LICENSE",
+    "bytes": 10142,
+    "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+  },
+  {
+    "distribution": "requests",
+    "wheel_path": "requests-2.34.2.dist-info/licenses/NOTICE",
+    "path": "notices/requests/requests-2.34.2.dist-info__licenses__NOTICE",
+    "bytes": 38,
+    "sha256": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc"
+  },
+  {
+    "distribution": "requests",
+    "wheel_path": "requests-2.34.2.dist-info/METADATA",
+    "path": "notices/requests/requests-2.34.2.dist-info__METADATA",
+    "bytes": 4806,
+    "sha256": "8c384ba3e979480faae2859d3c5e6c1276dd2c3616e322e124d52c8cfc556f27"
+  },
+  {
+    "distribution": "requests",
+    "wheel_path": "requests-2.34.2.dist-info/WHEEL",
+    "path": "notices/requests/requests-2.34.2.dist-info__WHEEL",
+    "bytes": 91,
+    "sha256": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9"
+  },
+  {
+    "distribution": "requests",
+    "wheel_path": "requests-2.34.2.dist-info/RECORD",
+    "path": "notices/requests/requests-2.34.2.dist-info__RECORD",
+    "bytes": 2027,
+    "sha256": "6c12f50645e5a7f6080e69eb18a4b7bd52329be9cb47f8bc29b62b24b303c89c"
+  },
+  {
+    "distribution": "charset-normalizer",
+    "wheel_path": "charset_normalizer-3.5.2.dist-info/METADATA",
+    "path": "notices/charset-normalizer/charset_normalizer-3.5.2.dist-info__METADATA",
+    "bytes": 46395,
+    "sha256": "89ce6362bb7be88558f4be99a98f5d1b4da93d19cd0323e5ee0bac05cf883dfb"
+  },
+  {
+    "distribution": "charset-normalizer",
+    "wheel_path": "charset_normalizer-3.5.2.dist-info/WHEEL",
+    "path": "notices/charset-normalizer/charset_normalizer-3.5.2.dist-info__WHEEL",
+    "bytes": 190,
+    "sha256": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296"
+  },
+  {
+    "distribution": "charset-normalizer",
+    "wheel_path": "charset_normalizer-3.5.2.dist-info/licenses/LICENSE",
+    "path": "notices/charset-normalizer/charset_normalizer-3.5.2.dist-info__licenses__LICENSE",
+    "bytes": 1071,
+    "sha256": "6d0d41bfe170ac6c7dc248c9a63e254d0fb45a60d50a8257d0af92c6e249b887"
+  },
+  {
+    "distribution": "charset-normalizer",
+    "wheel_path": "charset_normalizer-3.5.2.dist-info/RECORD",
+    "path": "notices/charset-normalizer/charset_normalizer-3.5.2.dist-info__RECORD",
+    "bytes": 1915,
+    "sha256": "1e056aadf07196553ba65b770c09353c02c1102a14e991ca4d2b06200373bb8c"
+  },
+  {
+    "distribution": "idna",
+    "wheel_path": "idna-3.20.dist-info/licenses/LICENSE.md",
+    "path": "notices/idna/idna-3.20.dist-info__licenses__LICENSE.md",
+    "bytes": 1541,
+    "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+  },
+  {
+    "distribution": "idna",
+    "wheel_path": "idna-3.20.dist-info/WHEEL",
+    "path": "notices/idna/idna-3.20.dist-info__WHEEL",
+    "bytes": 81,
+    "sha256": "96a37c8d7b7f425a05386731f644adbd66ebca17c45e8236176cfe614466df9d"
+  },
+  {
+    "distribution": "idna",
+    "wheel_path": "idna-3.20.dist-info/METADATA",
+    "path": "notices/idna/idna-3.20.dist-info__METADATA",
+    "bytes": 7207,
+    "sha256": "dbd8c14c1e4ca1e0c9824a6dbc7cbbf78884f38eb52d91148cd3025f671e4b85"
+  },
+  {
+    "distribution": "idna",
+    "wheel_path": "idna-3.20.dist-info/RECORD",
+    "path": "notices/idna/idna-3.20.dist-info__RECORD",
+    "bytes": 1185,
+    "sha256": "8e2670b3fc1bbf1e2cf99050b062fda50203881e43420bbc6772dad2cde2d548"
+  },
+  {
+    "distribution": "urllib3",
+    "wheel_path": "urllib3-2.8.0.dist-info/METADATA",
+    "path": "notices/urllib3/urllib3-2.8.0.dist-info__METADATA",
+    "bytes": 7389,
+    "sha256": "10898c620e8007c030e07fa5622b68358a43010025dfbd78a1cb797699de2bb4"
+  },
+  {
+    "distribution": "urllib3",
+    "wheel_path": "urllib3-2.8.0.dist-info/WHEEL",
+    "path": "notices/urllib3/urllib3-2.8.0.dist-info__WHEEL",
+    "bytes": 87,
+    "sha256": "ccec20e2307acd7da453dd7437e70c6b08e2bc3ead3bc3445af135da37b56d59"
+  },
+  {
+    "distribution": "urllib3",
+    "wheel_path": "urllib3-2.8.0.dist-info/licenses/LICENSE.txt",
+    "path": "notices/urllib3/urllib3-2.8.0.dist-info__licenses__LICENSE.txt",
+    "bytes": 1093,
+    "sha256": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
+  },
+  {
+    "distribution": "urllib3",
+    "wheel_path": "urllib3-2.8.0.dist-info/RECORD",
+    "path": "notices/urllib3/urllib3-2.8.0.dist-info__RECORD",
+    "bytes": 3451,
+    "sha256": "04e66961a9e3616bd8d221103dc1c9cdca4a23dc86c71bbfa9e8dc4022b3009e"
+  },
+  {
+    "distribution": "blinker",
+    "wheel_path": "blinker-1.9.0.dist-info/LICENSE.txt",
+    "path": "notices/blinker/blinker-1.9.0.dist-info__LICENSE.txt",
+    "bytes": 1054,
+    "sha256": "9eb73a1f38597a4aa17025d2ae1be3839624c795e985d4f0e9769ce29faca467"
+  },
+  {
+    "distribution": "blinker",
+    "wheel_path": "blinker-1.9.0.dist-info/WHEEL",
+    "path": "notices/blinker/blinker-1.9.0.dist-info__WHEEL",
+    "bytes": 82,
+    "sha256": "0a950253178741b44de54191407611268acee407fe432fdf1cc72d710f034862"
+  },
+  {
+    "distribution": "blinker",
+    "wheel_path": "blinker-1.9.0.dist-info/METADATA",
+    "path": "notices/blinker/blinker-1.9.0.dist-info__METADATA",
+    "bytes": 1633,
+    "sha256": "b8846233cc238db1e40ad6c2c93bdcb54dfb200664d2411ee64c4095dd5dbf30"
+  },
+  {
+    "distribution": "blinker",
+    "wheel_path": "blinker-1.9.0.dist-info/RECORD",
+    "path": "notices/blinker/blinker-1.9.0.dist-info__RECORD",
+    "bytes": 594,
+    "sha256": "9554866c1adaf23f56bafafff9bca46caf5917b22cee89195b1ec43f409b8137"
+  },
+  {
+    "distribution": "certifi",
+    "wheel_path": "certifi-2026.10.23.dist-info/licenses/LICENSE",
+    "path": "notices/certifi/certifi-2026.10.23.dist-info__licenses__LICENSE",
+    "bytes": 989,
+    "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
+  },
+  {
+    "distribution": "certifi",
+    "wheel_path": "certifi-2026.10.23.dist-info/METADATA",
+    "path": "notices/certifi/certifi-2026.10.23.dist-info__METADATA",
+    "bytes": 2526,
+    "sha256": "e463e38f7fe7da36a11e6d3fecc5dfa5b97be8c8022620400750d79ae7d842bc"
+  },
+  {
+    "distribution": "certifi",
+    "wheel_path": "certifi-2026.10.23.dist-info/WHEEL",
+    "path": "notices/certifi/certifi-2026.10.23.dist-info__WHEEL",
+    "bytes": 91,
+    "sha256": "98e75747d0b7c0c568bfb71263c3d8f970b3a374a6996087bc642be5cb09a1aa"
+  },
+  {
+    "distribution": "certifi",
+    "wheel_path": "certifi-2026.10.23.dist-info/RECORD",
+    "path": "notices/certifi/certifi-2026.10.23.dist-info__RECORD",
+    "bytes": 950,
+    "sha256": "cda8e9d40f94e53686674f4848813b12e6a85261f306960fdbee1c6b8587a938"
+  },
+  {
+    "distribution": "cffi",
+    "wheel_path": "cffi-2.1.1.dist-info/METADATA",
+    "path": "notices/cffi/cffi-2.1.1.dist-info__METADATA",
+    "bytes": 2527,
+    "sha256": "558bafb9093a8e790175d9ecff9688382981d744877dad86fd6770db0f4dc918"
+  },
+  {
+    "distribution": "cffi",
+    "wheel_path": "cffi-2.1.1.dist-info/WHEEL",
+    "path": "notices/cffi/cffi-2.1.1.dist-info__WHEEL",
+    "bytes": 151,
+    "sha256": "504ac80cc95190c99aea177550563d7939b8fca6b1431c01c0d435e74afbbd0e"
+  },
+  {
+    "distribution": "cffi",
+    "wheel_path": "cffi-2.1.1.dist-info/licenses/LICENSE",
+    "path": "notices/cffi/cffi-2.1.1.dist-info__licenses__LICENSE",
+    "bytes": 1123,
+    "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63"
+  },
+  {
+    "distribution": "cffi",
+    "wheel_path": "cffi-2.1.1.dist-info/RECORD",
+    "path": "notices/cffi/cffi-2.1.1.dist-info__RECORD",
+    "bytes": 2413,
+    "sha256": "44cf643c2a33f5797bb22a8b4fb5ce9024e7d7ae8281324ea948ec5fb21d8b03"
+  },
+  {
+    "distribution": "click",
+    "wheel_path": "click-8.5.1.dist-info/licenses/LICENSE.txt",
+    "path": "notices/click/click-8.5.1.dist-info__licenses__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+  },
+  {
+    "distribution": "click",
+    "wheel_path": "click-8.5.1.dist-info/WHEEL",
+    "path": "notices/click/click-8.5.1.dist-info__WHEEL",
+    "bytes": 82,
+    "sha256": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db"
+  },
+  {
+    "distribution": "click",
+    "wheel_path": "click-8.5.1.dist-info/METADATA",
+    "path": "notices/click/click-8.5.1.dist-info__METADATA",
+    "bytes": 2567,
+    "sha256": "63d23e734a4c63191d956c85a399291729141377c9af847dcd2b4b450e0b81cc"
+  },
+  {
+    "distribution": "click",
+    "wheel_path": "click-8.5.1.dist-info/RECORD",
+    "path": "notices/click/click-8.5.1.dist-info__RECORD",
+    "bytes": 1641,
+    "sha256": "4d19ce478cef1a887cf99c9beba35969d821490553d80984efe7c276e2c4490a"
+  },
+  {
+    "distribution": "itsdangerous",
+    "wheel_path": "itsdangerous-2.2.0.dist-info/LICENSE.txt",
+    "path": "notices/itsdangerous/itsdangerous-2.2.0.dist-info__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "63af09891b6be8ad1a4252ed43af0f4efba7fc948e228367bed7f3c5ae0b09d7"
+  },
+  {
+    "distribution": "itsdangerous",
+    "wheel_path": "itsdangerous-2.2.0.dist-info/WHEEL",
+    "path": "notices/itsdangerous/itsdangerous-2.2.0.dist-info__WHEEL",
+    "bytes": 81,
+    "sha256": "1196c6921ec87b83e865f450f08d19b8ff5592537f4ef719e83484e546abe33e"
+  },
+  {
+    "distribution": "itsdangerous",
+    "wheel_path": "itsdangerous-2.2.0.dist-info/METADATA",
+    "path": "notices/itsdangerous/itsdangerous-2.2.0.dist-info__METADATA",
+    "bytes": 1924,
+    "sha256": "d2b934fb56708a1b94e439f0255c0f5a8108e3258ec827b18a1dc9c991db9611"
+  },
+  {
+    "distribution": "itsdangerous",
+    "wheel_path": "itsdangerous-2.2.0.dist-info/RECORD",
+    "path": "notices/itsdangerous/itsdangerous-2.2.0.dist-info__RECORD",
+    "bytes": 1030,
+    "sha256": "0c6f1788e80eb81751477f96881d391bd3babbba9e5a18705bb9aef6bfd78d5c"
+  },
+  {
+    "distribution": "jinja2",
+    "wheel_path": "jinja2-3.1.6.dist-info/licenses/LICENSE.txt",
+    "path": "notices/jinja2/jinja2-3.1.6.dist-info__licenses__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b"
+  },
+  {
+    "distribution": "jinja2",
+    "wheel_path": "jinja2-3.1.6.dist-info/WHEEL",
+    "path": "notices/jinja2/jinja2-3.1.6.dist-info__WHEEL",
+    "bytes": 82,
+    "sha256": "ff6a3334508b59cf776cae1628708ef9e0d410d0e5a3e76073d714deaa2460ee"
+  },
+  {
+    "distribution": "jinja2",
+    "wheel_path": "jinja2-3.1.6.dist-info/METADATA",
+    "path": "notices/jinja2/jinja2-3.1.6.dist-info__METADATA",
+    "bytes": 2871,
+    "sha256": "68c5548fb67c4132a13898d9b31ec50c6bea2abdd915d921f214355c3a6499c8"
+  },
+  {
+    "distribution": "jinja2",
+    "wheel_path": "jinja2-3.1.6.dist-info/RECORD",
+    "path": "notices/jinja2/jinja2-3.1.6.dist-info__RECORD",
+    "bytes": 2340,
+    "sha256": "2e9f60b12e1a436c1ac6fdbded6090b6b791eb8d6753935c49941846e05a294d"
+  },
+  {
+    "distribution": "markupsafe",
+    "wheel_path": "markupsafe-3.0.4.dist-info/METADATA",
+    "path": "notices/markupsafe/markupsafe-3.0.4.dist-info__METADATA",
+    "bytes": 2690,
+    "sha256": "66767d76388ece15d49d50dafb655891ef5d868715e7128e7f7d737a70b353c4"
+  },
+  {
+    "distribution": "markupsafe",
+    "wheel_path": "markupsafe-3.0.4.dist-info/WHEEL",
+    "path": "notices/markupsafe/markupsafe-3.0.4.dist-info__WHEEL",
+    "bytes": 190,
+    "sha256": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296"
+  },
+  {
+    "distribution": "markupsafe",
+    "wheel_path": "markupsafe-3.0.4.dist-info/licenses/LICENSE.txt",
+    "path": "notices/markupsafe/markupsafe-3.0.4.dist-info__licenses__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea"
+  },
+  {
+    "distribution": "markupsafe",
+    "wheel_path": "markupsafe-3.0.4.dist-info/RECORD",
+    "path": "notices/markupsafe/markupsafe-3.0.4.dist-info__RECORD",
+    "bytes": 924,
+    "sha256": "18127af6c0698d8fa0421a2799e2a81ba1f49caa3577ad230a916855f9a714db"
+  },
+  {
+    "distribution": "typing-extensions",
+    "wheel_path": "typing_extensions-4.16.0.dist-info/licenses/LICENSE",
+    "path": "notices/typing-extensions/typing_extensions-4.16.0.dist-info__licenses__LICENSE",
+    "bytes": 13936,
+    "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+  },
+  {
+    "distribution": "typing-extensions",
+    "wheel_path": "typing_extensions-4.16.0.dist-info/WHEEL",
+    "path": "notices/typing-extensions/typing_extensions-4.16.0.dist-info__WHEEL",
+    "bytes": 82,
+    "sha256": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db"
+  },
+  {
+    "distribution": "typing-extensions",
+    "wheel_path": "typing_extensions-4.16.0.dist-info/METADATA",
+    "path": "notices/typing-extensions/typing_extensions-4.16.0.dist-info__METADATA",
+    "bytes": 3310,
+    "sha256": "b05084ca1d50879865178d9fff9fabeab61bdfb1f361bfbde95421ffc8f9be46"
+  },
+  {
+    "distribution": "typing-extensions",
+    "wheel_path": "typing_extensions-4.16.0.dist-info/RECORD",
+    "path": "notices/typing-extensions/typing_extensions-4.16.0.dist-info__RECORD",
+    "bytes": 427,
+    "sha256": "44dcf97810bea7b84bcd83890b6674bbcc2f4c5ef899a4887f15d524bdf6bb97"
+  },
+  {
+    "distribution": "werkzeug",
+    "wheel_path": "werkzeug/debug/shared/ICON_LICENSE.md",
+    "path": "notices/werkzeug/werkzeug__debug__shared__ICON_LICENSE.md",
+    "bytes": 222,
+    "sha256": "0e103a6358149792707e0d0d14df518f8556213b7cb54c7422f7467f4bb1f7eb"
+  },
+  {
+    "distribution": "werkzeug",
+    "wheel_path": "werkzeug-3.1.9.dist-info/licenses/LICENSE.txt",
+    "path": "notices/werkzeug/werkzeug-3.1.9.dist-info__licenses__LICENSE.txt",
+    "bytes": 1475,
+    "sha256": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b"
+  },
+  {
+    "distribution": "werkzeug",
+    "wheel_path": "werkzeug-3.1.9.dist-info/WHEEL",
+    "path": "notices/werkzeug/werkzeug-3.1.9.dist-info__WHEEL",
+    "bytes": 81,
+    "sha256": "96a37c8d7b7f425a05386731f644adbd66ebca17c45e8236176cfe614466df9d"
+  },
+  {
+    "distribution": "werkzeug",
+    "wheel_path": "werkzeug-3.1.9.dist-info/METADATA",
+    "path": "notices/werkzeug/werkzeug-3.1.9.dist-info__METADATA",
+    "bytes": 4054,
+    "sha256": "9f04352e946ecb0883fbf379994c1cacf6720a124acdd7fd59029a889f4eebba"
+  },
+  {
+    "distribution": "werkzeug",
+    "wheel_path": "werkzeug-3.1.9.dist-info/RECORD",
+    "path": "notices/werkzeug/werkzeug-3.1.9.dist-info__RECORD",
+    "bytes": 5339,
+    "sha256": "71de1a8acce3b169bde846f38761397927beee6f6c019dc4da11286c2a3a1288"
+  },
+  {
+    "distribution": "pycparser",
+    "wheel_path": "pycparser-3.12.dist-info/licenses/LICENSE",
+    "path": "notices/pycparser/pycparser-3.12.dist-info__licenses__LICENSE",
+    "bytes": 1543,
+    "sha256": "0a9e78156ae8b96caf1b4f11ac2df424b83de29736f9e757630548a6272fdf90"
+  },
+  {
+    "distribution": "pycparser",
+    "wheel_path": "pycparser-3.12.dist-info/METADATA",
+    "path": "notices/pycparser/pycparser-3.12.dist-info__METADATA",
+    "bytes": 9709,
+    "sha256": "ad8db5fe2b0e0a3b0e8419fe5041b80be92470a40b06bd9c1462a0a8bb637c92"
+  },
+  {
+    "distribution": "pycparser",
+    "wheel_path": "pycparser-3.12.dist-info/WHEEL",
+    "path": "notices/pycparser/pycparser-3.12.dist-info__WHEEL",
+    "bytes": 91,
+    "sha256": "98e75747d0b7c0c568bfb71263c3d8f970b3a374a6996087bc642be5cb09a1aa"
+  },
+  {
+    "distribution": "pycparser",
+    "wheel_path": "pycparser-3.12.dist-info/RECORD",
+    "path": "notices/pycparser/pycparser-3.12.dist-info__RECORD",
+    "bytes": 1034,
+    "sha256": "b2a227ea2913449fb429db4f6a20a8e83175759641c97913759b2b3f4417727f"
+  },
+  {
+    "distribution": "gunicorn",
+    "wheel_path": "gunicorn-27.0.1.dist-info/METADATA",
+    "path": "notices/gunicorn/gunicorn-27.0.1.dist-info__METADATA.data",
+    "bytes": 5590,
+    "sha256": "7b648748880a66d9d11ea73c94b30592a1ece04170494df34dc033df000a1bb6"
+  },
+  {
+    "distribution": "gunicorn",
+    "wheel_path": "gunicorn-27.0.1.dist-info/WHEEL",
+    "path": "notices/gunicorn/gunicorn-27.0.1.dist-info__WHEEL.data",
+    "bytes": 91,
+    "sha256": "98e75747d0b7c0c568bfb71263c3d8f970b3a374a6996087bc642be5cb09a1aa"
+  },
+  {
+    "distribution": "gunicorn",
+    "wheel_path": "gunicorn-27.0.1.dist-info/RECORD",
+    "path": "notices/gunicorn/gunicorn-27.0.1.dist-info__RECORD.data",
+    "bytes": 6174,
+    "sha256": "d2ced8f9055f7b75dee11181b52c7a589086387208df51e96a2840d24199fed8"
+  },
+  {
+    "distribution": "gunicorn",
+    "wheel_path": "gunicorn-27.0.1.dist-info/licenses/LICENSE",
+    "path": "notices/gunicorn/gunicorn-27.0.1.dist-info__licenses__LICENSE.data",
+    "bytes": 1136,
+    "sha256": "1457e30a8f71334f34f241b9f267e7f5556544937bc2c1751bc58b52250c0543"
+  }
+]
