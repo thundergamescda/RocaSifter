@@ -13,8 +13,8 @@
   "runtime_source_files": [
     {
       "name": "desktop_label_browser_platform_runtime.py",
-      "bytes": 33807,
-      "sha256": "385d72f166197dfe89ec0310bca1ef301c5c733e79de82a045f6baa77f68983f"
+      "bytes": 46545,
+      "sha256": "e0bebf899f83b1889417aa5bb1867f631f7f64cf08c95a07fc302ee467ce5ba1"
     },
     {
       "name": "desktop_label_browser_platform_sandbox.py",

@@ -36,6 +36,7 @@ RUNTIME_REPORTS = frozenset(('platform-foundation.json', 'platform-native-mappin
     'desktop-console-ledger.json', 'desktop-page-errors.json', 'desktop-download-events.json',
     'desktop-server-errors.json', 'desktop-broker-ledger.json', 'desktop-source-before.json',
     'desktop-source-after.json', 'desktop-sandbox.json', 'desktop-browser-summary.json'))
+RUNTIME_FAILURE_REPORT = 'desktop-runtime-failure.json'
 HOST_REPORTS = frozenset(('host-bootstrap.json', 'host-stage-inventory.json', 'host-process-cleanup.json',
     'host-runtime-result.json', 'host-functional-acceptance.json', 'host-tool-results.json',
     'host-stage-progress.json', 'host-summary.json'))
@@ -817,7 +818,7 @@ def main():
         # Preserve all original bounded JSON/PNG evidence and private raw logs
         # before removing source, wheels, packages, profiles and transient data.
         for path in sorted(evidence.iterdir(), key=lambda p: p.name):
-            if path.name in RUNTIME_REPORTS or path.name in {name + '.png' for name in CAPTURES}:
+            if path.name in RUNTIME_REPORTS or path.name == RUNTIME_FAILURE_REPORT or path.name in {name + '.png' for name in CAPTURES}:
                 try:
                     observed = pin(path, 4 * 1024 * 1024)
                     copy_exact(path, delivery / path.name, observed, mode=0o400)
@@ -865,6 +866,7 @@ def main():
             'custom_native_image_or_customer_readiness_claim': False})
         names = sorted(path.name for path in delivery.iterdir()
                        if path.name in HOST_REPORTS or path.name in RUNTIME_REPORTS
+                       or path.name == RUNTIME_FAILURE_REPORT
                        or path.name in {name + '.png' for name in CAPTURES})
         emit(delivery, names, successful)
     check(successful, 'OWNED_PLATFORM_SEVEN_FLOW_ACCEPTANCE_FAILED')

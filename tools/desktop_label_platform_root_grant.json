@@ -2,8 +2,8 @@
   "format": "stock-and-sleeve:trusted-platform-host-root-grant:v1",
   "execution_hold": null,
   "host_execution_admitted": true,
-  "source_manifest_sha256": "9b3a92a10e6461ba80355cd1afda8136aad796f398a4f438f0e3063701346908",
-  "source_review_sha256": "21457decc8e7d8745877c72db668843bc89ebc4e49927c4d0545da2b47cbaa5b",
+  "source_manifest_sha256": "4b638150d64a8ead70d36a16d04f6937a9a1c063a2fe24f066547f9f3b9ce8a1",
+  "source_review_sha256": "8ec27766e0dcc771ca442e70f0f4c9d40b448caac683b225d4a07b36ed09992d",
   "runtime_source_review_sha256": "5bd380aa4889b08d16797923fe83baf64e3cd4613f0c9f0fbbf69864d0d137b8",
   "node_api_scope_sha256": "5bd380aa4889b08d16797923fe83baf64e3cd4613f0c9f0fbbf69864d0d137b8",
   "foundation_scope": "fresh-github-ubuntu24-preinstalled-chrome-functional-only"

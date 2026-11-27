@@ -19,8 +19,8 @@
     },
     {
       "path": "tools/desktop_label_browser_platform_runtime.py",
-      "bytes": 33807,
-      "sha256": "385d72f166197dfe89ec0310bca1ef301c5c733e79de82a045f6baa77f68983f"
+      "bytes": 46545,
+      "sha256": "e0bebf899f83b1889417aa5bb1867f631f7f64cf08c95a07fc302ee467ce5ba1"
     },
     {
       "path": "tools/desktop_label_browser_platform_sandbox.py",
@@ -45,12 +45,12 @@
     {
       "path": "tools/desktop_label_browser_platform.json",
       "bytes": 1847,
-      "sha256": "7c111f6f869b7a2d880c8e8b8b539575137b77e77e6cf4c490d94cf12a7bf55b"
+      "sha256": "37bf4462f3591b4ab98c10ccd04c0d796faddabdd66663dea5869964e70e8512"
     },
     {
       "path": "tools/desktop_label_platform_host.py",
-      "bytes": 51498,
-      "sha256": "c5252a25eba90be117be32f30b557e7f98523fc7107def595d8ce6f0d538c509"
+      "bytes": 51655,
+      "sha256": "ac50ea9e616fc4d753326f4bae028be81c5b2f433c470a60f1fd0cd661b06951"
     },
     {
       "path": "tools/desktop_label_platform_wheels.json",
