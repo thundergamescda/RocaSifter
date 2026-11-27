@@ -78,7 +78,7 @@ def save(name, value):
 
 def source_snapshot(admission):
     rows = admission['project_sources']
-    if len(rows) != 284 or len({row['path'] for row in rows}) != 284:
+    if len(rows) != 285 or len({row['path'] for row in rows}) != 285:
         raise ValueError('PUBLIC_SOURCE_SELECTION')
     expected = {row['path'] for row in rows}
     actual = set()

@@ -4,8 +4,8 @@
   "publication_admitted": false,
   "expected_python": "3.12.16",
   "platform": "linux/amd64",
-  "project_public_basis_commit": "03569ae5f9ef42469c5b8613b84c115c9b157fdc",
-  "project_public_basis_tree": "4ec9e873e58118b1b368c5928659cc73868eaef9",
+  "project_public_basis_commit": "b80545f4790bbb063ce92a83acf2ef07e3878c36",
+  "project_public_basis_tree": "cf34c991b7316e31b45d5709c4a9d5ff8a6b73f1",
   "public_project_sources": [
     {
       "path": "browser_smoke.py",
@@ -89,8 +89,8 @@
     },
     {
       "path": "hosted/database.py",
-      "bytes": 4173,
-      "sha256": "b5dba9204f6fcd770f8097bd50442889e2ed0d768691266c36d7330d39f09073"
+      "bytes": 5533,
+      "sha256": "7066900938650877db27b49bec65d4e8c431e0285742d7edf6266c7df21230f9"
     },
     {
       "path": "hosted/intake_label_context.py",
@@ -114,13 +114,13 @@
     },
     {
       "path": "hosted/intake_label_schema.py",
-      "bytes": 76001,
-      "sha256": "ee713633a14e2ba134960d0af5a30704c01200e1f8c87aca52e1a4327d4ef457"
+      "bytes": 76237,
+      "sha256": "4a00fc88c035e019a3c4c4da32a93aa298a82678c71e8b456b9a264c213f437e"
     },
     {
       "path": "hosted/intake_label_schema.sql",
-      "bytes": 50235,
-      "sha256": "60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696"
+      "bytes": 50271,
+      "sha256": "9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462"
     },
     {
       "path": "hosted/intake.py",
@@ -214,8 +214,8 @@
     },
     {
       "path": "hosted/schema.sql",
-      "bytes": 102666,
-      "sha256": "502d3122a773b6b128c6e78ec69a79043e6351a0fe4abb0970e6e4c90010e19a"
+      "bytes": 102908,
+      "sha256": "a2ef78b5d05264b3d8339b784bc9790976f8655bee85e78390a3a7132555ef6e"
     },
     {
       "path": "hosted/security.py",
@@ -1481,8 +1481,8 @@
     },
     {
       "path": "hosted/database.py",
-      "bytes": 4173,
-      "sha256": "b5dba9204f6fcd770f8097bd50442889e2ed0d768691266c36d7330d39f09073"
+      "bytes": 5533,
+      "sha256": "7066900938650877db27b49bec65d4e8c431e0285742d7edf6266c7df21230f9"
     },
     {
       "path": "hosted/intake.py",
@@ -1516,13 +1516,13 @@
     },
     {
       "path": "hosted/intake_label_schema.py",
-      "bytes": 76001,
-      "sha256": "ee713633a14e2ba134960d0af5a30704c01200e1f8c87aca52e1a4327d4ef457"
+      "bytes": 76237,
+      "sha256": "4a00fc88c035e019a3c4c4da32a93aa298a82678c71e8b456b9a264c213f437e"
     },
     {
       "path": "hosted/intake_label_schema.sql",
-      "bytes": 50235,
-      "sha256": "60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696"
+      "bytes": 50271,
+      "sha256": "9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462"
     },
     {
       "path": "hosted/integration.py",
@@ -1611,8 +1611,8 @@
     },
     {
       "path": "hosted/schema.sql",
-      "bytes": 102666,
-      "sha256": "502d3122a773b6b128c6e78ec69a79043e6351a0fe4abb0970e6e4c90010e19a"
+      "bytes": 102908,
+      "sha256": "a2ef78b5d05264b3d8339b784bc9790976f8655bee85e78390a3a7132555ef6e"
     },
     {
       "path": "hosted/security.py",
@@ -2105,6 +2105,11 @@
       "sha256": "4524bd30ee2d79f71ff83a06fa97ddfc340e921f14528ead92c700896dcdefe8"
     },
     {
+      "path": "test_hosted_intake_label_schema.py",
+      "bytes": 32655,
+      "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3"
+    },
+    {
       "path": "test_hosted_intake_postgres.py",
       "bytes": 25601,
       "sha256": "83b8f55356b6e82ba2f31105caa6dde4c0ef90210a3911321ef095ead3f9af36"
@@ -2376,8 +2381,8 @@
     },
     {
       "path": "test_label_policy_store_postgres.py",
-      "bytes": 26481,
-      "sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b"
+      "bytes": 33582,
+      "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0"
     },
     {
       "path": "test_label_postgres_store_postgres.py",
@@ -2631,8 +2636,8 @@
     },
     {
       "path": "tools/hosted_ci_evidence.py",
-      "bytes": 31173,
-      "sha256": "4b76bad8f4e8d8def620bc667a98f964b8a45da6482b0ecbc6316c9f464486e5"
+      "bytes": 35332,
+      "sha256": "866a9b387c0c2f01886d0001d2c3b0b7e1839e05f54db34f8ae05f0d1a8b767a"
     },
     {
       "path": "tools/install_hosted_dependencies.py",
@@ -2828,18 +2833,18 @@
   "control_sources": [
     {
       "path": "fixed_hosted_ci_entry.py",
-      "bytes": 8088,
-      "sha256": "7254859126148d66da88aa8d653ed274cd20576616540437b6fcee687d85bfe3"
+      "bytes": 8149,
+      "sha256": "ff96adf09cbf35c733a9e7be035ce358f5dc6ad793665ffd0bd8ee96e80e96e4"
     },
     {
       "path": "fixed_hosted_ci_context.py",
-      "bytes": 7087,
-      "sha256": "6c3945aea640a4f845f127f7f2155ee8b2f790e533d47bbd73388068222b5f4a"
+      "bytes": 12079,
+      "sha256": "cf251505d68194c06bc0242b76734817afd24c6e13cb090ba6009dffd8e31403"
     },
     {
       "path": "tools/fixed_hosted_ci_preflight.py",
       "bytes": 14634,
-      "sha256": "cae09ee6abd7463ec4b2731a8b1ba6eae502775a804a2184225934edd9dedf5f"
+      "sha256": "07069a8c3876225fd68e9680d8dae2975829c440e7342736938d45f37138dc03"
     },
     {
       "path": "tools/fixed_hosted_native_data.py",
@@ -2868,13 +2873,13 @@
     },
     {
       "path": "runtime-overlay/hosted_ci_evidence.py",
-      "bytes": 31173,
-      "sha256": "4b76bad8f4e8d8def620bc667a98f964b8a45da6482b0ecbc6316c9f464486e5"
+      "bytes": 35332,
+      "sha256": "866a9b387c0c2f01886d0001d2c3b0b7e1839e05f54db34f8ae05f0d1a8b767a"
     },
     {
       "path": "regression-contract.json",
-      "bytes": 228377,
-      "sha256": "92ddca04df6b1f3fca2bc27a4bc601c8bf399aef59509851e37116b9a969708f"
+      "bytes": 240513,
+      "sha256": "cd4ee053a6b03bbb6b9ba13ef476991693cfa2114e89a8565555d47ce287db31"
     },
     {
       "path": "public-source-pins.json",
@@ -3058,6 +3063,7 @@
     "test_hosted_credit_authority_postgres.py",
     "test_hosted_credit_lots.py",
     "test_hosted_intake.py",
+    "test_hosted_intake_label_schema.py",
     "test_hosted_intake_postgres.py",
     "test_hosted_inventory_label_workflow_postgres.py",
     "test_hosted_labels.py",
@@ -3224,8 +3230,8 @@
   ],
   "runtime_overlay": {
     "target": "tools/hosted_ci_evidence.py",
-    "only": "Exact original three evidence changes: isolated PG child argv, PostgreSQL180007 probe and expected600 total for unchanged549 plus51 reviewed foundation cases. TLS/schema checks and all original bodies unchanged.",
-    "literal_changes": 3
+    "only": "Six exact evidence edits: original isolated PG child and PostgreSQL180007 probe,604 total,126-unit text,27 exact catalog IDs and one additional UNIT_GROUP. All549/99 old bodies and TLS/schema checks preserved.",
+    "literal_changes": 6
   },
   "wheels": [
     {
@@ -10804,8 +10810,8 @@
     "binary",
     "pool"
   ],
-  "expected_pg_cases": 600,
-  "expected_unit_cases": 99,
+  "expected_pg_cases": 604,
+  "expected_unit_cases": 126,
   "separate_provenance_guard_ids": 6,
   "postgres_image": {
     "historical18_6": "SECURITY_HOLD",
@@ -10857,13 +10863,18 @@
     },
     {
       "path": "test_label_policy_store_postgres.py",
-      "bytes": 26481,
-      "sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b"
+      "bytes": 33582,
+      "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0"
     },
     {
       "path": "test_label_postgres_store_postgres.py",
       "bytes": 39544,
       "sha256": "4011406c5c8e99daebb2b76f442bccd249ed1924777d0957a5f39084565b0b17"
+    },
+    {
+      "path": "test_hosted_intake_label_schema.py",
+      "bytes": 32655,
+      "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3"
     }
   ],
   "conditional_ci_authority": {
@@ -10871,9 +10882,9 @@
     "grant_file": "ROOT_MAINTAINED600_CONDITIONAL_CI_EXECUTION_GRANT_20261125_r1.json",
     "grant_sha256": "7ecadb74ca03c20e5e23c229763c3d5995833fb4e2873e880dc0b14e873f449e",
     "grant_status": "CONDITIONAL_SCOPE_ADMITTED_SUBJECT_TO_COMPLETE_MERGED_PAYLOAD_CANONICAL_REVIEW",
-    "scope": "One new dedicated isolated600PG/99unit/6provenance/9Gunicorn CI job only after Root canonical merged-payload review; not shipping or production approval.",
-    "expected_parent": "a4934e36dfcdad5eb00e2aba197a59a12f7cf07d",
-    "expected_parent_tree": "04637ea925840386c0d93088e039ca9c69c0c407",
+    "scope": "Conditional dedicated604PG/126unit/6integrity/9Gunicorn CI only after Root canonical merged-payload review. Original grant plus explicit count/parent/delivery addendum; not shipping or production.",
+    "expected_parent": "b80545f4790bbb063ce92a83acf2ef07e3878c36",
+    "expected_parent_tree": "cf34c991b7316e31b45d5709c4a9d5ff8a6b73f1",
     "reviews": {
       "conditional_scope": "INDEPENDENT_MAINTAINED_COMMERCE_CONDITIONAL_CI_ASSESSMENT_20261125_r1.json",
       "conditional_scope_sha256": "f1e09f293c690ae19092d55ccce92518de052bd1c0bded1b6d1c1e73133b9c51",
@@ -10931,6 +10942,59 @@
       "No browser/Node platform execution; its separate conditional source/API/host grant remains required."
     ],
     "native_shipping_production_legal_or_feature_admission": false,
-    "retained_unproven_native_metadata": "Historical UNPROVEN metadata and false publication/shipping flags are retained. This explicit grant supplies conditional isolated test-platform trust, not completed native/provider/OS/production closure."
+    "retained_unproven_native_metadata": "Historical UNPROVEN metadata and false publication/shipping flags are retained. This explicit grant supplies conditional isolated test-platform trust, not completed native/provider/OS/production closure.",
+    "addendum_file": "ROOT_MAINTAINED604_126_CONDITIONAL_CI_GRANT_ADDENDUM_20261127_r1.json",
+    "addendum_sha256": "2f2bcb0f31ad1f65f4b62850ac1dba8042ee45e5af25b0d7a810d2b38476d28a",
+    "source6_review_sha256": "4437c6e3f94ec5e8826997a3c2403785e0d111e3fba2e4e3192e114d3495e047",
+    "original_grant_parent": "a4934e36dfcdad5eb00e2aba197a59a12f7cf07d"
+  },
+  "reviewed_ledger16_source_corrections": {
+    "source_review": "ROOT_INDEPENDENT_LEDGER16_CORRECTION_SOURCE_REVIEW_20261127_r1.json",
+    "sha256": "4437c6e3f94ec5e8826997a3c2403785e0d111e3fba2e4e3192e114d3495e047",
+    "source_pins": [
+      {
+        "path": "hosted/database.py",
+        "before_bytes": 4173,
+        "before_sha256": "b5dba9204f6fcd770f8097bd50442889e2ed0d768691266c36d7330d39f09073",
+        "bytes": 5533,
+        "sha256": "7066900938650877db27b49bec65d4e8c431e0285742d7edf6266c7df21230f9"
+      },
+      {
+        "path": "hosted/schema.sql",
+        "before_bytes": 102666,
+        "before_sha256": "502d3122a773b6b128c6e78ec69a79043e6351a0fe4abb0970e6e4c90010e19a",
+        "bytes": 102908,
+        "sha256": "a2ef78b5d05264b3d8339b784bc9790976f8655bee85e78390a3a7132555ef6e"
+      },
+      {
+        "path": "hosted/intake_label_schema.py",
+        "before_bytes": 76001,
+        "before_sha256": "ee713633a14e2ba134960d0af5a30704c01200e1f8c87aca52e1a4327d4ef457",
+        "bytes": 76237,
+        "sha256": "4a00fc88c035e019a3c4c4da32a93aa298a82678c71e8b456b9a264c213f437e"
+      },
+      {
+        "path": "hosted/intake_label_schema.sql",
+        "before_bytes": 50235,
+        "before_sha256": "60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696",
+        "bytes": 50271,
+        "sha256": "9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462"
+      },
+      {
+        "path": "test_label_policy_store_postgres.py",
+        "before_bytes": 26481,
+        "before_sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b",
+        "bytes": 33582,
+        "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0"
+      },
+      {
+        "path": "test_hosted_intake_label_schema.py",
+        "before_bytes": 32651,
+        "before_sha256": "a8a1e4ba78af2e1bae3d0d3da2d2c24759dc8def4e74e387ecb325d6dc442bc5",
+        "bytes": 32655,
+        "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3"
+      }
+    ],
+    "historical_public_source_pins_file_retained_as_historical_metadata": true
   }
 }

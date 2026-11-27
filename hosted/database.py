@@ -11,6 +11,28 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 
+# Core migrations and explicit component migrations share ss_schema_versions.
+# Reserve version 16 centrally so base migration authors cannot reuse the label
+# protocol 9 install marker. Database.migrate never installs that component.
+CORE_SCHEMA_VERSION = 15
+RESERVED_COMPONENT_SCHEMA_VERSIONS = ((16, 'intake-labels-protocol-v9'),)
+
+
+def _core_migration_sql():
+    """Validate our owned literal marker grammar, not arbitrary caller SQL."""
+    statement = (Path(__file__).parent / 'schema.sql').read_text()
+    marker_lines = [line.strip() for line in statement.splitlines()
+                    if line.strip().startswith('INSERT INTO ss_schema_versions')]
+    grammar = re.compile(r'INSERT INTO ss_schema_versions\(version\) VALUES \(([1-9][0-9]{0,2})\) ON CONFLICT DO NOTHING;')
+    matches = [grammar.fullmatch(line) for line in marker_lines]
+    if any(match is None for match in matches):
+        raise RuntimeError('Invalid core schema migration source; component versions are reserved.')
+    versions = tuple(int(match.group(1)) for match in matches)
+    reserved = {version for version, _ in RESERVED_COMPONENT_SCHEMA_VERSIONS}
+    if versions != tuple(range(1, CORE_SCHEMA_VERSION + 1)) or reserved.intersection(versions):
+        raise RuntimeError('Invalid core schema migration source; component versions are reserved.')
+    return statement
+
 def _tls_mode(url):
     """Preserve explicit URL > environment TLS policy; never weaken verification.
 
@@ -75,9 +97,10 @@ class Database:
             with db.transaction():yield db
 
     def migrate(self):
+        statement = _core_migration_sql()
         with self.transaction() as db:
             db.execute('SELECT pg_advisory_xact_lock(81726001)')
-            db.execute((Path(__file__).parent/'schema.sql').read_text(),prepare=False)
+            db.execute(statement,prepare=False)
 
     def ready(self):
         with self.transaction() as db:

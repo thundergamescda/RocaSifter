@@ -1,3 +1,7 @@
+-- Global ledger allocation: core migrations 1..15; version 16 is reserved for
+-- the explicit intake-label protocol 9 installer, never a core startup migration.
+-- hosted/database.py validates the owned core marker sequence before any DDL.
+
 CREATE TABLE IF NOT EXISTS ss_schema_versions (
     version INTEGER PRIMARY KEY, installed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

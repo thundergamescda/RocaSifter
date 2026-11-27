@@ -30,7 +30,7 @@ jobs:
           SS_CI_SOURCE_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          expected_parent='a4934e36dfcdad5eb00e2aba197a59a12f7cf07d'
+          expected_parent='b80545f4790bbb063ce92a83acf2ef07e3878c36'
           [[ "$(git rev-parse HEAD)" == "$SS_CI_SOURCE_SHA" ]]
           [[ "$(git rev-list --parents -n 1 HEAD)" == "$SS_CI_SOURCE_SHA $expected_parent" ]]
       - name: Run all maintained commerce and foundation cases

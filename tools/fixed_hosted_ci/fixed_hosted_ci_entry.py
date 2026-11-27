@@ -78,7 +78,7 @@ def main():
     before = admission = None
     started_utc = datetime.now(timezone.utc).isoformat()
     started_wall, started_cpu = time.monotonic(), time.process_time()
-    result = {'scope': 'Maintained20 graph; original549PG plus51foundationPG; unchanged99unit/6provenance/9Gunicorn cases.',
+    result = {'scope': 'Maintained20 graph; original549PG plus55foundationPG; original99unit plus27catalog guards; unchanged6provenance/9Gunicorn cases.',
               'mode': 'postgres_child' if child else 'gunicorn_child' if gunicorn_child else 'parent', 'started_utc': started_utc,
               'passed': False, 'execution_exit_code': None, 'error_types': [],
               'admission': 'UNRUN_UNLESS_INDEPENDENTLY_REVIEWED'}
@@ -109,7 +109,7 @@ def main():
         if child:
             summary = preflight.load(ROOT / 'Testing/oauth-receiving/postgres-latest.json', 64 * 1024 * 1024)
             if not exact_ids(summary, contract['postgres']['expected_test_ids']):
-                raise ValueError('EXACT600_IDS_REQUIRED')
+                raise ValueError('EXACT604_IDS_REQUIRED')
             if summary.get('modules') != [row['module'] for row in contract['postgres']['modules']]:
                 raise ValueError('EXACT40_PG_MODULES_REQUIRED')
         elif gunicorn_child:
@@ -121,10 +121,10 @@ def main():
             result['gunicorn_worker_proofs'] = workers
         else:
             for group in contract['units']['groups']:
-                stem = group['historical_observation']['path'].replace('\\', '/').rsplit('/', 1)[-1]
+                stem = group.get('summary_name') or group['historical_observation']['path'].replace('\\', '/').rsplit('/', 1)[-1]
                 summary = preflight.load(EVIDENCE / stem)
                 if not exact_ids(summary, group['expected_test_ids']):
-                    raise ValueError('UNCHANGED99_IDS_REQUIRED')
+                    raise ValueError('EXACT126_UNIT_IDS_REQUIRED')
             child_result = preflight.load(EVIDENCE / 'fixed-pg-child/fixed-entry-summary.json')
             if child_result.get('passed') is not True:
                 raise ValueError('PG_CHILD_PREIMPORT_OR_IMPORT_PROOF_FAILED')

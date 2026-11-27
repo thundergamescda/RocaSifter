@@ -1,4 +1,4 @@
--- Explicit feature9 schema only; no startup migration or lifecycle permission.
+-- Explicit feature9 schema only; no startup migration or lifecycle permission. Global ledger marker: reserved 16.
 -- Fixed schema token is bound by the pinned installer to public or isolated test schema.
 -- Normal input/job/request mutation and all deletion remain denied.
 
@@ -449,5 +449,5 @@ REVOKE ALL ON FUNCTION __SS_LABEL_SCHEMA__.ss_intake_label_requests_guard_v9() F
 CREATE TRIGGER ss_intake_label_requests_guard_trg_v9 BEFORE INSERT OR UPDATE OR DELETE ON __SS_LABEL_SCHEMA__.ss_intake_label_requests
 FOR EACH ROW EXECUTE FUNCTION __SS_LABEL_SCHEMA__.ss_intake_label_requests_guard_v9();
 
-INSERT INTO __SS_LABEL_SCHEMA__.ss_schema_versions(version) VALUES (9);
+INSERT INTO __SS_LABEL_SCHEMA__.ss_schema_versions(version) VALUES (16);
 

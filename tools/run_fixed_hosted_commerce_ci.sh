@@ -444,6 +444,8 @@ required_evidence=(
   unit-staff-recovery-startup-summary.json unit-staff-recovery-startup-tests.log
   unit-capture-privacy-summary.json unit-capture-privacy-tests.log
   unit-square-sku-lookup-summary.json unit-square-sku-lookup-tests.log
+  unit-label-schema-summary.json
+  unit-label-schema-tests.log
   copied-source-before.json copied-source-after.json tls-client-probe.json
   pip-freeze.txt pip-bootstrap-report.json pip-install-report.json
   fixed-context-audit.json fixed-provenance-guards.json fixed-preimport-proof.json

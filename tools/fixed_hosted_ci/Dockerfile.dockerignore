@@ -323,3 +323,4 @@ tools/fixed_hosted_ci/tools/**
 !intake_label_policy_evidence.py
 !test_label_policy_store_postgres.py
 !test_label_postgres_store_postgres.py
+!test_hosted_intake_label_schema.py

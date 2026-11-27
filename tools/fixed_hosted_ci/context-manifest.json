@@ -79,8 +79,8 @@
     },
     {
       "path": "hosted/database.py",
-      "bytes": 4173,
-      "sha256": "b5dba9204f6fcd770f8097bd50442889e2ed0d768691266c36d7330d39f09073"
+      "bytes": 5533,
+      "sha256": "7066900938650877db27b49bec65d4e8c431e0285742d7edf6266c7df21230f9"
     },
     {
       "path": "hosted/intake.py",
@@ -114,13 +114,13 @@
     },
     {
       "path": "hosted/intake_label_schema.py",
-      "bytes": 76001,
-      "sha256": "ee713633a14e2ba134960d0af5a30704c01200e1f8c87aca52e1a4327d4ef457"
+      "bytes": 76237,
+      "sha256": "4a00fc88c035e019a3c4c4da32a93aa298a82678c71e8b456b9a264c213f437e"
     },
     {
       "path": "hosted/intake_label_schema.sql",
-      "bytes": 50235,
-      "sha256": "60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696"
+      "bytes": 50271,
+      "sha256": "9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462"
     },
     {
       "path": "hosted/integration.py",
@@ -209,8 +209,8 @@
     },
     {
       "path": "hosted/schema.sql",
-      "bytes": 102666,
-      "sha256": "502d3122a773b6b128c6e78ec69a79043e6351a0fe4abb0970e6e4c90010e19a"
+      "bytes": 102908,
+      "sha256": "a2ef78b5d05264b3d8339b784bc9790976f8655bee85e78390a3a7132555ef6e"
     },
     {
       "path": "hosted/security.py",
@@ -703,6 +703,11 @@
       "sha256": "4524bd30ee2d79f71ff83a06fa97ddfc340e921f14528ead92c700896dcdefe8"
     },
     {
+      "path": "test_hosted_intake_label_schema.py",
+      "bytes": 32655,
+      "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3"
+    },
+    {
       "path": "test_hosted_intake_postgres.py",
       "bytes": 25601,
       "sha256": "83b8f55356b6e82ba2f31105caa6dde4c0ef90210a3911321ef095ead3f9af36"
@@ -974,8 +979,8 @@
     },
     {
       "path": "test_label_policy_store_postgres.py",
-      "bytes": 26481,
-      "sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b"
+      "bytes": 33582,
+      "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0"
     },
     {
       "path": "test_label_postgres_store_postgres.py",
@@ -1184,18 +1189,18 @@
     },
     {
       "path": "tools/fixed_hosted_ci/admission.json",
-      "bytes": 475814,
-      "sha256": "6e2f890525259e844ad17808404480224a534ba67e4b5b15e5b910ddb6e71068"
+      "bytes": 478770,
+      "sha256": "29f1bb45ec8829696fcd0c8d349ad894b347b36304195c81aa170273ffd52fd7"
     },
     {
       "path": "tools/fixed_hosted_ci/fixed_hosted_ci_context.py",
-      "bytes": 7087,
-      "sha256": "6c3945aea640a4f845f127f7f2155ee8b2f790e533d47bbd73388068222b5f4a"
+      "bytes": 12079,
+      "sha256": "cf251505d68194c06bc0242b76734817afd24c6e13cb090ba6009dffd8e31403"
     },
     {
       "path": "tools/fixed_hosted_ci/fixed_hosted_ci_entry.py",
-      "bytes": 8088,
-      "sha256": "7254859126148d66da88aa8d653ed274cd20576616540437b6fcee687d85bfe3"
+      "bytes": 8149,
+      "sha256": "ff96adf09cbf35c733a9e7be035ce358f5dc6ad793665ffd0bd8ee96e80e96e4"
     },
     {
       "path": "tools/fixed_hosted_ci/fixed_hosted_requirements.txt",
@@ -1239,18 +1244,18 @@
     },
     {
       "path": "tools/fixed_hosted_ci/regression-contract.json",
-      "bytes": 228377,
-      "sha256": "92ddca04df6b1f3fca2bc27a4bc601c8bf399aef59509851e37116b9a969708f"
+      "bytes": 240513,
+      "sha256": "cd4ee053a6b03bbb6b9ba13ef476991693cfa2114e89a8565555d47ce287db31"
     },
     {
       "path": "tools/fixed_hosted_ci/runtime-overlay/hosted_ci_evidence.py",
-      "bytes": 31173,
-      "sha256": "4b76bad8f4e8d8def620bc667a98f964b8a45da6482b0ecbc6316c9f464486e5"
+      "bytes": 35332,
+      "sha256": "866a9b387c0c2f01886d0001d2c3b0b7e1839e05f54db34f8ae05f0d1a8b767a"
     },
     {
       "path": "tools/fixed_hosted_ci/tools/fixed_hosted_ci_preflight.py",
       "bytes": 14634,
-      "sha256": "cae09ee6abd7463ec4b2731a8b1ba6eae502775a804a2184225934edd9dedf5f"
+      "sha256": "07069a8c3876225fd68e9680d8dae2975829c440e7342736938d45f37138dc03"
     },
     {
       "path": "tools/fixed_hosted_ci/tools/fixed_hosted_gunicorn_smoke.py",

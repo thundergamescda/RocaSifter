@@ -1,8 +1,8 @@
 """Linux hosted API unit and SQL evidence, never Windows/provider acceptance.
 
 Invoked only inside the owned CI image/network by run_hosted_ci.sh. The unchanged
-PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Eight
-companion unit modules run all 99 approved cases, including no-database Flask
+PostgreSQL runner selects its full ALLOWED suite in a fresh child process. Nine
+companion unit modules run all 126 approved cases (the original99 plus27 label-catalog guards), including no-database Flask
 startup and fictional capture orchestration; these are not SQL, browser, printer
 or provider acceptance.
 This helper adds copied-source preservation and an actual test-client TLS probe.
@@ -26,7 +26,7 @@ import unittest
 ROOT = Path('/workspace')
 EVIDENCE = Path('/ci-evidence')
 REPORT_LIMIT = 64 * 1024 * 1024
-POSTGRES_EXPECTED_COUNT = 600
+POSTGRES_EXPECTED_COUNT = 604
 IDENTITY_UNIT_MODULE = 'test_hosted_store_identity'
 IDENTITY_UNIT_IDS = (
     IDENTITY_UNIT_MODULE + '.StoreIdentityContract.test_authenticated_me_projects_resolved_actor_not_query_or_cookie_hints',
@@ -150,6 +150,36 @@ SQUARE_SKU_LOOKUP_UNIT_IDS = (
     SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_later_malformed_conflicting_unrelated_or_deleted_rows_never_return_a_partial_match',
     SQUARE_SKU_LOOKUP_UNIT_MODULE + '.SquareSkuLookupTests.test_page_row_distinct_byte_and_total_deadline_bounds_never_return_partial_candidates',
 )
+LABEL_SCHEMA_UNIT_MODULE = 'test_hosted_intake_label_schema'
+LABEL_SCHEMA_UNIT_IDS = (
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_absent_install_uses_exact_bundled_bytes_token_binding_and_post_attestation',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_autocommit_denial_precedes_all_queries_files_or_ddl',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_changed_bundle_fails_before_savepoint_or_ddl',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_ddl_or_post_attestation_failure_rolls_back_only_attempt_and_never_returns_present',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_exact_existing_family_is_unchanged_and_never_reads_or_executes_ddl',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_partial_or_orphan_marker_denial_never_reads_sql_or_repairs',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_absent_family_is_read_only_and_never_reads_bundled_sql',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_base_schema_marker_and_required_key_facts_are_required',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_deferrable_unvalidated_parent_or_wrong_noinherit_constraints_deny',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_driver_failure_has_fixed_owned_error_without_cause_or_context',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_column_order_type_null_default_and_collation_are_attested',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_separate_pg15_16_17_catalog_layouts_attest_without_native_n_rows',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_grouped_tenant_fk_actions_reference_and_index_binding_deny_drift',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_guard_source_security_path_acl_and_trigger_bindings_are_checked',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_index_full_key_opclass_predicate_and_validity_are_checked',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_isolated_schema_qualified_guards_and_ref_oids_must_match',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_changed_date_check_and_literal_case_are_not_accepted',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_disabled_or_misbound_native_ri_trigger_denies_enforcement_claim',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_native_notnull_or_fabricated_enforcement_cannot_be_legacy_fallback',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_partial_and_marker_only_or_detached_families_never_become_absence',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_check_fk_enforcement_and_temporal_flags_are_explicit',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_native_notnull_names_columns_and_flags_deny_even_when_attnotnull_true',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_requires_exact_131_constraints_with_74_explicit_native_names',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_schema_spec_and_raw_orders_are_frozen_and_lifecycle_never_enabled',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unknown_alias_or_colliding_family_namespace_is_denied',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unsupported_schema_version_and_noncanonical_format_context_fail_closed',
+    'test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_wrong_stored_function_namespace_or_nonbuiltin_check_dependency_denies',
+)
 UNIT_GROUPS = (
     ('unit_identity', IDENTITY_UNIT_MODULE, IDENTITY_UNIT_IDS, 'unit-identity',
      'Five hosted server API projection unit cases with fictional database responses; not SQL acceptance.'),
@@ -167,6 +197,8 @@ UNIT_GROUPS = (
      'Six CaseContext capture-orchestration units using fictional page/handle objects and the real runner module; not browser, DOM, CSP, pixel or hardware acceptance.'),
     ('unit_square_sku_lookup', SQUARE_SKU_LOOKUP_UNIT_MODULE, SQUARE_SKU_LOOKUP_UNIT_IDS, 'unit-square-sku-lookup',
      'Seven exact-SKU read-adapter units with fictional provider responses; not PostgreSQL, browser, live Square or hardware acceptance.'),
+    ('unit_label_schema', LABEL_SCHEMA_UNIT_MODULE, LABEL_SCHEMA_UNIT_IDS, 'unit-label-schema',
+     'Twenty-seven exact label-schema catalog and installer guards using fictional catalog rows; no SQL, consent or feature acceptance.'),
 )
 
 

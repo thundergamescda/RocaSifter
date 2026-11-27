@@ -2,8 +2,8 @@
   "format": "stock-and-sleeve:fixed-driver-commerce-regression-contract:v1",
   "recorded_utc": "2026-11-23T19:23:35.5974813Z",
   "status": "SOURCE_DATA_PREPARATION_ONLY_NEW_EXECUTION_UNRUN",
-  "current_public_commit": "03569ae5f9ef42469c5b8613b84c115c9b157fdc",
-  "current_public_tree": "4ec9e873e58118b1b368c5928659cc73868eaef9",
+  "current_public_commit": "b80545f4790bbb063ce92a83acf2ef07e3878c36",
+  "current_public_tree": "cf34c991b7316e31b45d5709c4a9d5ff8a6b73f1",
   "public_copied_selection_count": 279,
   "public_source_pins": {
     "path": "C:\\Users\\todds\\.codex\\visualizations\\2026\\10\\27\\01a17f46-0aa0-7df2-9858-32ae278f23b5\\Planning\\fixed-driver-commerce-candidate-20261123-r1\\PUBLIC_SOURCE_PINS.json",
@@ -13,7 +13,7 @@
   "historical_backend_commit": "426c7089d4cf89d48c652c0e51612110272c3265",
   "historical_run": "44791269200",
   "postgres": {
-    "expected_count": 600,
+    "expected_count": 604,
     "modules": [
       {
         "module": "hosted.integration",
@@ -284,10 +284,11 @@
       {
         "module": "test_label_policy_store_postgres",
         "path": "test_label_policy_store_postgres.py",
-        "bytes": 26481,
-        "sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b",
+        "bytes": 33582,
+        "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0",
         "historical_byte_exact": false,
-        "frozen_component_body_exact": true
+        "frozen_component_body_exact": false,
+        "previous24_method_bodies_exact": true
       },
       {
         "module": "test_label_postgres_store_postgres",
@@ -857,8 +858,11 @@
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_existing_v9_guards_remain_exact_and_schema_injection_is_denied",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_explicit_initialization_is_unaccepted_and_uninitialized_only",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_foreign_tenant_staff_fk_and_mismatched_prepared_tenant_are_denied",
+      "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_label_physical_family_without_component16_marker_is_not_repaired",
+      "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_label_protocol9_install_preserves_full_core15_and_physical9_history",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_native_security_definer_function_drift_is_rejected",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_native_trigger_disable_is_catalog_drift_before_mutation",
+      "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_orphan_component16_in_fresh_full_core_schema_is_not_repaired",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_native_not_null_inventory_is_exact_before_initialization",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_native_not_null_no_inherit_drift_is_rejected",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_nullable_then_unvalidated_native_not_null_both_deny_persistence",
@@ -866,6 +870,7 @@
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_same_native_foreign_key_not_enforced_is_rejected",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_unsupported_unenforced_check_is_not_filtered_out",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_public_acl_drift_is_rejected_without_granting_product_authority",
+      "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_reserved16_base_source_is_denied_before_real_fixture_transaction_or_ddl",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_second_version_appends_without_replacing_original_evidence",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_stale_head_cas_cannot_overwrite_new_revision",
       "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_two_real_connections_append_one_version_and_one_head_advance",
@@ -1470,8 +1475,11 @@
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_existing_v9_guards_remain_exact_and_schema_injection_is_denied",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_explicit_initialization_is_unaccepted_and_uninitialized_only",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_foreign_tenant_staff_fk_and_mismatched_prepared_tenant_are_denied",
+        "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_label_physical_family_without_component16_marker_is_not_repaired",
+        "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_label_protocol9_install_preserves_full_core15_and_physical9_history",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_native_security_definer_function_drift_is_rejected",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_native_trigger_disable_is_catalog_drift_before_mutation",
+        "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_orphan_component16_in_fresh_full_core_schema_is_not_repaired",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_native_not_null_inventory_is_exact_before_initialization",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_native_not_null_no_inherit_drift_is_rejected",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_nullable_then_unvalidated_native_not_null_both_deny_persistence",
@@ -1479,6 +1487,7 @@
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_same_native_foreign_key_not_enforced_is_rejected",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_pg18_unsupported_unenforced_check_is_not_filtered_out",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_public_acl_drift_is_rejected_without_granting_product_authority",
+        "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_reserved16_base_source_is_denied_before_real_fixture_transaction_or_ddl",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_second_version_appends_without_replacing_original_evidence",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_stale_head_cas_cannot_overwrite_new_revision",
         "test_label_policy_store_postgres.PostgreSQLPolicyPersistenceAcceptance.test_two_real_connections_append_one_version_and_one_head_advance",
@@ -1513,19 +1522,20 @@
         "test_label_postgres_store_postgres.PostgreSQLArtifactRepositoryAcceptance.test_two_real_connections_racing_same_ref_store_one_immutable_row",
         "test_label_postgres_store_postgres.PostgreSQLArtifactRepositoryAcceptance.test_wrong_content_and_bool_version_reject_before_insert"
       ],
-      "added_count": 51,
+      "added_count": 55,
       "artifact_count": 27,
-      "policy_count": 24,
+      "policy_count": 28,
       "all_cases_UNRUN": true,
       "fixture_discovery": "SOURCE_ONLY_DIRECT_DECLARATIONS_NO_IMPORT_OR_RUNTIME_DISCOVERY",
       "no_app_activation": true,
       "native_admission": false,
-      "PG18_independent_source_review_sha256": "818f7408a0d06213296ebfcfaae7d4e73fe4767eac9b71eaf88bbac3d9f78900"
+      "PG18_independent_source_review_sha256": "818f7408a0d06213296ebfcfaae7d4e73fe4767eac9b71eaf88bbac3d9f78900",
+      "ledger16_source_review_sha256": "4437c6e3f94ec5e8826997a3c2403785e0d111e3fba2e4e3192e114d3495e047"
     }
   },
   "units": {
-    "expected_count": 99,
-    "unique_count": 99,
+    "expected_count": 126,
+    "unique_count": 126,
     "groups": [
       {
         "module": "test_hosted_browser_capture_privacy",
@@ -1761,10 +1771,82 @@
           "bytes": 2336,
           "sha256": "78723ad99a0450bc1e1df1d597fe989d7402809c8ce34c719cb392a71aeaf4bc"
         }
+      },
+      {
+        "module": "test_hosted_intake_label_schema",
+        "expected_count": 27,
+        "expected_test_ids": [
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_absent_install_uses_exact_bundled_bytes_token_binding_and_post_attestation",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_autocommit_denial_precedes_all_queries_files_or_ddl",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_changed_bundle_fails_before_savepoint_or_ddl",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_ddl_or_post_attestation_failure_rolls_back_only_attempt_and_never_returns_present",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_exact_existing_family_is_unchanged_and_never_reads_or_executes_ddl",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_partial_or_orphan_marker_denial_never_reads_sql_or_repairs",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_absent_family_is_read_only_and_never_reads_bundled_sql",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_base_schema_marker_and_required_key_facts_are_required",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_deferrable_unvalidated_parent_or_wrong_noinherit_constraints_deny",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_driver_failure_has_fixed_owned_error_without_cause_or_context",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_column_order_type_null_default_and_collation_are_attested",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_separate_pg15_16_17_catalog_layouts_attest_without_native_n_rows",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_grouped_tenant_fk_actions_reference_and_index_binding_deny_drift",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_guard_source_security_path_acl_and_trigger_bindings_are_checked",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_index_full_key_opclass_predicate_and_validity_are_checked",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_isolated_schema_qualified_guards_and_ref_oids_must_match",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_changed_date_check_and_literal_case_are_not_accepted",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_disabled_or_misbound_native_ri_trigger_denies_enforcement_claim",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_native_notnull_or_fabricated_enforcement_cannot_be_legacy_fallback",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_partial_and_marker_only_or_detached_families_never_become_absence",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_check_fk_enforcement_and_temporal_flags_are_explicit",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_native_notnull_names_columns_and_flags_deny_even_when_attnotnull_true",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_requires_exact_131_constraints_with_74_explicit_native_names",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_schema_spec_and_raw_orders_are_frozen_and_lifecycle_never_enabled",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unknown_alias_or_colliding_family_namespace_is_denied",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unsupported_schema_version_and_noncanonical_format_context_fail_closed",
+          "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_wrong_stored_function_namespace_or_nonbuiltin_check_dependency_denies"
+        ],
+        "definition": {
+          "path": "test_hosted_intake_label_schema.py",
+          "bytes": 32655,
+          "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3",
+          "historical_byte_exact": false
+        },
+        "summary_name": "unit-label-schema-summary.json",
+        "source_review_sha256": "4437c6e3f94ec5e8826997a3c2403785e0d111e3fba2e4e3192e114d3495e047",
+        "runtime_observation": "UNRUN"
       }
     ],
-    "selected_definition_bytes_unchanged": true,
-    "new_run_required": true
+    "selected_definition_bytes_unchanged": false,
+    "new_run_required": true,
+    "original99_definition_bytes_and_ids_unchanged": true,
+    "added_catalog_guard_ids": [
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_absent_install_uses_exact_bundled_bytes_token_binding_and_post_attestation",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_autocommit_denial_precedes_all_queries_files_or_ddl",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_changed_bundle_fails_before_savepoint_or_ddl",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_ddl_or_post_attestation_failure_rolls_back_only_attempt_and_never_returns_present",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_exact_existing_family_is_unchanged_and_never_reads_or_executes_ddl",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaInstallBoundaryTests.test_partial_or_orphan_marker_denial_never_reads_sql_or_repairs",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_absent_family_is_read_only_and_never_reads_bundled_sql",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_base_schema_marker_and_required_key_facts_are_required",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_deferrable_unvalidated_parent_or_wrong_noinherit_constraints_deny",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_driver_failure_has_fixed_owned_error_without_cause_or_context",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_column_order_type_null_default_and_collation_are_attested",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_exact_separate_pg15_16_17_catalog_layouts_attest_without_native_n_rows",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_grouped_tenant_fk_actions_reference_and_index_binding_deny_drift",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_guard_source_security_path_acl_and_trigger_bindings_are_checked",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_index_full_key_opclass_predicate_and_validity_are_checked",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_isolated_schema_qualified_guards_and_ref_oids_must_match",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_changed_date_check_and_literal_case_are_not_accepted",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_missing_disabled_or_misbound_native_ri_trigger_denies_enforcement_claim",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_native_notnull_or_fabricated_enforcement_cannot_be_legacy_fallback",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_partial_and_marker_only_or_detached_families_never_become_absence",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_check_fk_enforcement_and_temporal_flags_are_explicit",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_native_notnull_names_columns_and_flags_deny_even_when_attnotnull_true",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_pg18_requires_exact_131_constraints_with_74_explicit_native_names",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_schema_spec_and_raw_orders_are_frozen_and_lifecycle_never_enabled",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unknown_alias_or_colliding_family_namespace_is_denied",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_unsupported_schema_version_and_noncanonical_format_context_fail_closed",
+      "test_hosted_intake_label_schema.IntakeLabelSchemaMetadataTests.test_wrong_stored_function_namespace_or_nonbuiltin_check_dependency_denies"
+    ]
   },
   "runners": [
     {
@@ -1782,7 +1864,7 @@
   ],
   "hosted_python_sql": {
     "count": 44,
-    "all_historical_byte_exact": true
+    "all_historical_byte_exact": false
   },
   "historical_postgres_monitor": {
     "path_count": 135,
@@ -1956,5 +2038,56 @@
     "No CI dispatched, source published, live Square/Render/database/installed profile changed.",
     "No claim every copied279 file was or will be imported; exact runtime import closure is future evidence.",
     "No claim all transitive test inputs are byte-identical: station_cloud and other18 deltas remain visible."
-  ]
+  ],
+  "reviewed_ledger16_source_delta": {
+    "source_review": "ROOT_INDEPENDENT_LEDGER16_CORRECTION_SOURCE_REVIEW_20261127_r1.json",
+    "sha256": "4437c6e3f94ec5e8826997a3c2403785e0d111e3fba2e4e3192e114d3495e047",
+    "sources": [
+      {
+        "path": "hosted/database.py",
+        "before_bytes": 4173,
+        "before_sha256": "b5dba9204f6fcd770f8097bd50442889e2ed0d768691266c36d7330d39f09073",
+        "bytes": 5533,
+        "sha256": "7066900938650877db27b49bec65d4e8c431e0285742d7edf6266c7df21230f9"
+      },
+      {
+        "path": "hosted/schema.sql",
+        "before_bytes": 102666,
+        "before_sha256": "502d3122a773b6b128c6e78ec69a79043e6351a0fe4abb0970e6e4c90010e19a",
+        "bytes": 102908,
+        "sha256": "a2ef78b5d05264b3d8339b784bc9790976f8655bee85e78390a3a7132555ef6e"
+      },
+      {
+        "path": "hosted/intake_label_schema.py",
+        "before_bytes": 76001,
+        "before_sha256": "ee713633a14e2ba134960d0af5a30704c01200e1f8c87aca52e1a4327d4ef457",
+        "bytes": 76237,
+        "sha256": "4a00fc88c035e019a3c4c4da32a93aa298a82678c71e8b456b9a264c213f437e"
+      },
+      {
+        "path": "hosted/intake_label_schema.sql",
+        "before_bytes": 50235,
+        "before_sha256": "60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696",
+        "bytes": 50271,
+        "sha256": "9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462"
+      },
+      {
+        "path": "test_label_policy_store_postgres.py",
+        "before_bytes": 26481,
+        "before_sha256": "b7ca95942b0e85ee0452850b42f6c71a2e65cce7982c59d5be73e35b3548213b",
+        "bytes": 33582,
+        "sha256": "22ab2b126b961aab3584684ffe12d2ebbcc8201323bb5f4f532ea9e1db4eabe0"
+      },
+      {
+        "path": "test_hosted_intake_label_schema.py",
+        "before_bytes": 32651,
+        "before_sha256": "a8a1e4ba78af2e1bae3d0d3da2d2c24759dc8def4e74e387ecb325d6dc442bc5",
+        "bytes": 32655,
+        "sha256": "9922876301adac4cf66c48b9cdc3078e5700c746272efaf104e223ec580b58e3"
+      }
+    ],
+    "old600_ids_retained": true,
+    "old99_unit_ids_and_definitions_retained": true,
+    "actual_new_execution": "UNRUN"
+  }
 }

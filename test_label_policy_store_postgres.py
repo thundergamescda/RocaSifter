@@ -35,6 +35,9 @@ class PostgreSQLPolicyPersistenceAcceptance(pg_fixture._PostgreSQLSettlementFixt
         super().setUpClass()
         try:
             with cls.database.transaction() as db:
+                cls.core_ledger_before_label_install = db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall()
+                if [row['version'] for row in cls.core_ledger_before_label_install] != list(range(1,16)):
+                    raise AssertionError('Exact full core migration ledger 1..15 required before label installation')
                 cls.v9_before = schema_v9.install(db)
                 if cls.v9_before.state != 'present' or cls.v9_before.version != 9:
                     raise AssertionError('Exact existing v9 schema required')
@@ -426,6 +429,98 @@ class PostgreSQLPolicyPersistenceAcceptance(pg_fixture._PostgreSQLSettlementFixt
             with self.database.transaction() as db:
                 db.execute('ALTER TABLE ss_store_label_policy_heads DROP CONSTRAINT fixture_extra_unenforced')
 
+    def test_label_protocol9_install_preserves_full_core15_and_physical9_history(self):
+        with self.database.transaction() as db:
+            before = db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall()
+            self.assertEqual([row['version'] for row in before],list(range(1,17)))
+            self.assertEqual([row for row in before if row['version']<=15],self.core_ledger_before_label_install)
+            column = db.execute("SELECT pg_catalog.format_type(atttypid,atttypmod) AS kind FROM pg_catalog.pg_attribute WHERE attrelid='ss_receiving_bindings'::pg_catalog.regclass AND attname='physical_ownership' AND NOT attisdropped").fetchone()
+            self.assertEqual(column['kind'],'jsonb')
+            self.assertEqual(schema_v9.SCHEMA_VERSION,9)
+            self.assertEqual(schema_v9.MIGRATION_VERSION,16)
+            state = schema_v9.install(db)
+            self.assertEqual((state.version,state.state,state.table_count,state.operator_lifecycle_available),(9,'present',5,False))
+            after = db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall()
+            self.assertEqual(after,before)
+        self.assertTrue(self.database.ready())
+        self.assertEqual(self.counts(),(0,0))
+
+    def test_label_physical_family_without_component16_marker_is_not_repaired(self):
+        with self.database.transaction() as db:
+            db.execute('SAVEPOINT fixture_missing_label_marker')
+            try:
+                db.execute('DELETE FROM ss_schema_versions WHERE version=16')
+                self.assertEqual(db.execute('SELECT version FROM ss_schema_versions WHERE version IN (9,16) ORDER BY version').fetchall(),[{'version':9}])
+                with self.assertRaises(schema_v9.LabelSchemaError) as denied:
+                    schema_v9.install(db)
+                self.assertEqual(denied.exception.code,'INTAKE_LABEL_SCHEMA_PARTIAL')
+                self.assertIsNone(db.execute('SELECT version FROM ss_schema_versions WHERE version=16').fetchone())
+            finally:
+                db.execute('ROLLBACK TO SAVEPOINT fixture_missing_label_marker')
+                db.execute('RELEASE SAVEPOINT fixture_missing_label_marker')
+            self.assertEqual(schema_v9.inspect(db).state,'present')
+        self.assertEqual(self.counts(),(0,0))
+
+    def test_orphan_component16_in_fresh_full_core_schema_is_not_repaired(self):
+        from psycopg import sql
+        scratch = 'ss_test_'+uuid.uuid4().hex
+        self.assertRegex(scratch,r'^ss_test_[a-f0-9]{32}$')
+        self.assertNotEqual(scratch,self.schema)
+        with psycopg.connect(self.url,sslmode='require') as db:
+            db.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(scratch)))
+        isolated = pg_fixture.Database(self.url,schema=scratch)
+        try:
+            isolated.migrate()
+            with isolated.transaction() as db:
+                core = db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall()
+                self.assertEqual([row['version'] for row in core],list(range(1,16)))
+                self.assertEqual(schema_v9.inspect(db).state,'absent')
+                db.execute('INSERT INTO ss_schema_versions(version) VALUES(16)')
+                with self.assertRaises(schema_v9.LabelSchemaError) as denied:
+                    schema_v9.install(db)
+                self.assertEqual(denied.exception.code,'INTAKE_LABEL_SCHEMA_PARTIAL')
+                self.assertEqual(db.execute('SELECT count(*) AS n FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relname LIKE %s',(scratch,'ss_intake_label_%')).fetchone()['n'],0)
+                self.assertEqual(db.execute('SELECT version,installed_at FROM ss_schema_versions WHERE version<=15 ORDER BY version').fetchall(),core)
+                self.assertIsNotNone(db.execute('SELECT version FROM ss_schema_versions WHERE version=16').fetchone())
+        finally:
+            isolated.close()
+            with psycopg.connect(self.url,sslmode='require') as db:
+                db.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(scratch)))
+        self.assertEqual(self.counts(),(0,0))
+
+    def test_reserved16_base_source_is_denied_before_real_fixture_transaction_or_ddl(self):
+        from unittest.mock import patch
+        from hosted import database as database_module
+        base_source = database_module.Path(database_module.__file__).with_name('schema.sql').read_text()
+        with self.database.transaction() as db:
+            before = db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall()
+            physical_before = db.execute("SELECT attname,atttypid FROM pg_catalog.pg_attribute WHERE attrelid='ss_receiving_bindings'::pg_catalog.regclass AND attname='physical_ownership'").fetchone()
+        entered = []
+        original_transaction = self.database.transaction
+        @contextmanager
+        def witnessed_transaction():
+            entered.append(True)
+            with original_transaction() as db:
+                yield db
+        marker = 'INSERT INTO ss_schema_versions(version) VALUES (15) ON CONFLICT DO NOTHING;'
+        self.assertEqual(base_source.count(marker),1)
+        variants = {
+            'reserved_component':base_source+'\nINSERT INTO ss_schema_versions(version) VALUES (16) ON CONFLICT DO NOTHING;\n',
+            'missing_core_marker':base_source.replace(marker,''),
+            'noncanonical_marker':base_source.replace(marker,marker.replace('VALUES (15)','VALUES (015)')),
+        }
+        for name,invalid_source in variants.items():
+            with self.subTest(source=name), \
+                    patch.object(database_module.Path,'read_text',return_value=invalid_source), \
+                    patch.object(self.database,'transaction',witnessed_transaction):
+                with self.assertRaisesRegex(RuntimeError,'Invalid core schema migration source'):
+                    self.database.migrate()
+                self.assertEqual(entered,[])
+        self.assertIn((16,'intake-labels-protocol-v9'),database_module.RESERVED_COMPONENT_SCHEMA_VERSIONS)
+        with self.database.transaction() as db:
+            self.assertEqual(db.execute('SELECT version,installed_at FROM ss_schema_versions ORDER BY version LIMIT 18').fetchall(),before)
+            self.assertEqual(db.execute("SELECT attname,atttypid FROM pg_catalog.pg_attribute WHERE attrelid='ss_receiving_bindings'::pg_catalog.regclass AND attname='physical_ownership'").fetchone(),physical_before)
+            self.assertEqual(schema_v9.inspect(db).state,'present')
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

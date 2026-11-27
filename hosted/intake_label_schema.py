@@ -11,9 +11,12 @@ import re
 from types import MappingProxyType
 
 SCHEMA_VERSION = 9
+# Global ledger allocation is reserved centrally in hosted/database.py and schema.sql.
+# Protocol, function names and physical guards remain version 9.
+MIGRATION_VERSION = 16
 SQL_TOKEN = '__SS_LABEL_SCHEMA__'
 SQL_TOKEN_COUNT = 66
-SQL_SHA256 = '60b96a5777597b24112dc55d993566c03e62ebe222d4cb43b1ac6bce0f698696'
+SQL_SHA256 = '9b3dd4eaac08e3af014ea0a7ea5da4279ab30d3e76488c7b73f2e10765368462'
 SQL_MAX_BYTES = 262144
 CATALOG_ROW_LIMIT = 2048
 
@@ -688,12 +691,12 @@ def _inspect(db, *, expected_schema=None):
     columns = _rows(db, _COLUMNS_SQL, (oid,list(TABLES)))
     constraints = _rows(db, _CONSTRAINTS_SQL_18 if major == 18 else _CONSTRAINTS_SQL, (oid,list(TABLES)))
     _base_ready(objects, columns, constraints, major)
-    versions_query = '/* ss_labels:versions */ SELECT version FROM ' + _quoted_schema(schema) + '.ss_schema_versions WHERE version IN (8,9) ORDER BY version LIMIT 3'
+    versions_query = '/* ss_labels:versions */ SELECT version FROM ' + _quoted_schema(schema) + '.ss_schema_versions WHERE version IN (8,' + str(MIGRATION_VERSION) + ') ORDER BY version LIMIT 3'
     versions = _rows(db, versions_query)
     if any(set(row) != {'version'} or type(row['version']) is not int for row in versions):
         _fail()
     values = tuple(row['version'] for row in versions)
-    if values not in ((8,), (8,9)):
+    if values not in ((8,), (8,MIGRATION_VERSION)):
         _fail('BASE_REQUIRED')
     functions = _rows(db, _FUNCTIONS_SQL, (oid,))
     family_names = set(objects) - set(_BASE_NAMES)
@@ -702,7 +705,7 @@ def _inspect(db, *, expected_schema=None):
             _fail('PARTIAL')
         return SchemaState(9,'absent',0)
     expected_objects = set(TABLES) | {index.name for spec in SCHEMA_SPEC for index in spec.indexes}
-    if family_names != expected_objects or values != (8,9):
+    if family_names != expected_objects or values != (8,MIGRATION_VERSION):
         _fail('PARTIAL')
     for spec in SCHEMA_SPEC:
         obj = objects[spec.name]
