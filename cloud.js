@@ -7,13 +7,13 @@ $('navigation').append(cloudNav);cloudNav.onclick=()=>navigate('cloud');
 const cloudStyle=document.createElement('link');cloudStyle.rel='stylesheet';cloudStyle.href='/cloud.css';document.head.append(cloudStyle);
 const cloudView=document.createElement('section');cloudView.id='cloudView';cloudView.hidden=true;
 cloudView.innerHTML=`
-<div class="cloud-pilot"><strong>Private pilot</strong><p>Shared account history is available to invited stores. Shared trade credit requires an owner or manager to confirm the hosted receipt. Square checkout is not enabled. Local credit history stays on this computer.</p></div>
+<div class="cloud-pilot"><strong>Private pilot</strong><p id="cloudPilotDetails">Shared account history is available to invited stores. Shared trade credit requires an owner or manager to confirm the hosted receipt. Square checkout is not enabled.</p></div>
 <div class="cloud-toolbar"><p id="cloudConnection" role="status">Checking store connection…</p><div><button class="button secondary small" id="cloudRefresh">Refresh</button><button class="button secondary small" id="cloudSignOut">Sign out here</button></div></div>
 <p class="cloud-message" id="cloudMessage" role="status"></p>
 <section class="cloud-signin card-table-panel" id="cloudSignin"><span class="section-kicker">STORE SIGN-IN</span><h2 id="cloudSigninTitle">Open your shared workspace.</h2><p id="cloudSigninDescription">Use your invited staff account. Your password is never saved on this computer.</p>
 <form id="cloudLoginForm"><label>Store ID<input id="cloudStore" autocomplete="organization" placeholder="your-store" required maxlength="50"></label><label>Staff email<input id="cloudEmail" type="email" autocomplete="username" required maxlength="254"></label><label>Staff password<input id="cloudPassword" type="password" autocomplete="current-password" required maxlength="128"></label><button class="button primary" type="submit">Sign in to store</button><p id="cloudLoginMessage" role="status"></p></form>
 <section id="cloudMfa" class="cloud-mfa" hidden><h3>Verify it’s you.</h3><p id="cloudMfaStore"></p><form id="cloudMfaForm"><label>Use<select id="cloudMfaMethod"><option value="totp">Authenticator app</option><option value="recovery_code">An unused recovery code</option></select></label><label><span id="cloudMfaCodeLabel">Authenticator code</span><input id="cloudMfaCode" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required></label><p id="cloudMfaHelp" class="hint">Enter the current six digits from your authenticator. A code can only be used once.</p><button class="button primary" type="submit">Verify & sign in</button><p id="cloudMfaMessage" role="status"></p></form><button class="button secondary small" id="cloudMfaCancel" type="button">Cancel sign-in</button><button class="button secondary small" id="cloudMfaClearLocal" type="button" hidden>Clear this sign-in on this computer</button><p class="hint">Verification expires after five minutes. Your password and verification code are not saved by this app.</p></section>
-<p class="hint">Accounts are invitation-only during the pilot. Your store owner supplies your Store ID and invitation.</p></section>
+<p class="hint">Accounts are invitation-only during the pilot. Your store owner supplies your Store ID and invitation.</p><p class="hint">Opening an independent store? <a id="cloudOwnerSetup" href="https://stock-and-sleeve-api.onrender.com/owner-invite" target="_blank" rel="noopener noreferrer">Set up your owner account</a> with your private platform invitation. Your saved batches and current sign-in stay here.</p></section>
 <section id="cloudWorkspace" hidden><div class="cloud-store-bar"><div><span class="section-kicker">SHARED STORE ACCOUNT</span><h2 id="cloudStoreName"></h2><p id="cloudStaffRole"></p></div><a class="button secondary small" href="https://stock-and-sleeve-api.onrender.com/" target="_blank" rel="noopener noreferrer">Store connections ${icon('arrow-right')}</a></div>
 <div class="credit-layout"><section class="card-table-panel credit-customers"><div class="table-heading"><h3>Customers</h3><button id="cloudNewCustomer" class="button secondary small">Add customer</button></div><input id="cloudSearch" placeholder="Search name, contact or Square ID…" aria-label="Search shared-credit customers" maxlength="200"><div id="cloudCustomers"></div></section><section id="cloudAccount" class="card-table-panel credit-account"><p class="list-empty">Choose a customer to view their shared balance.</p></section></div></section>`;
 $('workflowContent').after(cloudView);
@@ -21,7 +21,7 @@ const cloudCustomerDialog=document.createElement('dialog');cloudCustomerDialog.c
 cloudCustomerDialog.innerHTML=`<h2>Add a shared-credit customer</h2><form id="cloudCustomerForm"><label>Customer name<input id="cloudCustomerName" maxlength="200" required></label><label>Contact <small>Optional</small><input id="cloudCustomerContact" maxlength="320"></label><label>Square customer ID <small>Optional; use the exact ID from Square</small><input id="cloudCustomerSquare" maxlength="150"></label><label class="cloud-check"><input id="cloudCustomerPermission" type="checkbox" required>I have authority to record these details for this store’s credit account.</label><div class="modal-actions"><button class="button secondary" type="button" id="cloudCancelCustomer">Cancel</button><button class="button primary" type="submit">Create shared account</button></div><p id="cloudCustomerMessage" role="status"></p></form>`;
 document.body.append(cloudCustomerDialog);
 const cloudEntryDialog=document.createElement('dialog');cloudEntryDialog.className='modal';cloudEntryDialog.id='cloudEntryDialog';
-cloudEntryDialog.innerHTML=`<h2>Opening balance / correction</h2><p id="cloudEntryCustomer"></p><form id="cloudEntryForm"><label>Entry type<select id="cloudEntryKind"><option value="opening">Opening balance</option><option value="adjust_add">Add correction</option><option value="adjust_remove">Remove correction</option></select></label><label>Amount <small>Positive USD amount</small><input id="cloudEntryAmount" type="number" inputmode="decimal" min="0.01" max="1000000" step="0.01" required></label><label>Reference<input id="cloudEntryReference" maxlength="200" required></label><label>Reason<textarea id="cloudEntryReason" minlength="3" maxlength="1000" required></textarea></label><p class="hint">Corrections are audited to your staff account. This does not record a Square sale or redeem credit.</p><div class="modal-actions"><button class="button secondary" type="button" id="cloudCancelEntry">Cancel</button><button class="button primary" type="submit">Save shared entry</button></div><p id="cloudEntryMessage" role="status"></p></form>`;
+cloudEntryDialog.innerHTML=`<h2>Opening balance / correction</h2><p id="cloudEntryCustomer"></p><form id="cloudEntryForm"><label>Entry type<select id="cloudEntryKind"><option value="opening">Opening balance</option><option value="adjust_add">Add correction</option><option value="adjust_remove">Remove correction</option></select></label><label>Amount <small>Positive USD amount</small><input id="cloudEntryAmount" type="number" inputmode="decimal" min="0.01" max="1000000" step="0.01" required></label><label>Reference<input id="cloudEntryReference" maxlength="200" required></label><label>Reason<textarea id="cloudEntryReason" minlength="3" maxlength="1000" required></textarea></label><p class="hint">Corrections are audited to your staff account. This does not record a Square sale or redeem credit.</p><p class="hint">Saving requires a two-step sign-in from the last 15 minutes. Set up an authenticator in Store connections &rarr; Sign-in security if needed. After setup, or if verification is older, sign out and sign in again here before entering a correction.</p><div class="modal-actions"><button class="button secondary" type="button" id="cloudCancelEntry">Cancel</button><button class="button primary" type="submit">Save shared entry</button></div><p id="cloudEntryMessage" role="status"></p></form>`;
 document.body.append(cloudEntryDialog);
 const cloudPending=document.createElement('section');cloudPending.id='cloudPending';cloudPending.className='cloud-pilot';cloudPending.hidden=true;
 $('cloudMessage').after(cloudPending);
@@ -31,6 +31,9 @@ let cloudCustomerKey='',cloudEntryKey='',cloudEntryVersion=0,cloudEntryCustomerI
 let cloudSearchSequence=0,cloudAccountSequence=0;
 let cloudMfa=null;
 function cloudResetView(message='Choose a customer to view their shared balance.'){
+ window.clearTradeRecoveryForAuthChange?.();
+ window.clearSharedTradeForAuthChange?.();
+ window.clearStoreSetupGuide?.('Store sign-in changed. Refresh setup to confirm the current connection.');
  cloudPendingCount=0;cloudPending.hidden=true;cloudPending.replaceChildren();
  ++cloudSearchSequence;++cloudAccountSequence;clearTimeout(cloudSearchTimer);cloudRefreshing=null;
  cloudSelected=null;cloudAccount=null;cloudEntryCustomerId=null;cloudEntryKey='';cloudCustomerKey='';
@@ -44,7 +47,7 @@ async function cloudApi(path,data){
  const headers={'X-SS-Local-Session':cloudSession.sessionId||''};if(data!==undefined){headers['Content-Type']='application/json';if(path!=='login')data={...data,sessionId:data.sessionId??cloudSession.sessionId??''}}
  let response;try{response=await fetch('/api/cloud/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:JSON.stringify(data),cache:'no-store'})}catch{const error=Error('The desktop service is not responding. Reopen the app and check saved shared actions before retrying.');error.offline=true;error.pendingRequired=['adjust','customer'].includes(path);throw error}
  let result;try{result=await response.json()}catch{throw Error('The desktop service is not responding. Reopen the app and check the shared history before retrying.')}
- if(!response.ok){const error=Error((result.errors||['The shared-credit action could not complete.']).join('\n'));error.status=response.status;error.offline=result.offline;error.pendingRequired=result.pendingRequired;error.sessionChanged=result.sessionChanged;error.mfaRestartRequired=result.mfaRestartRequired;error.code=result.code;error.physicalIntakeId=result.physicalIntakeId;error.receivingId=result.receivingId;throw error}return result;
+ if(!response.ok){const error=Error((result.errors||['The shared-credit action could not complete.']).join('\n'));error.status=response.status;error.offline=result.offline;error.pendingRequired=result.pendingRequired;error.sessionChanged=result.sessionChanged;error.mfaRestartRequired=result.mfaRestartRequired;error.code=result.code;error.physicalIntakeId=result.physicalIntakeId;error.receivingId=result.receivingId;error.tradeId=result.tradeId;throw error}return result;
 }
 function cloudMfaMethod(){
  const recovery=$('cloudMfaMethod').value==='recovery_code';$('cloudMfaCode').value='';$('cloudMfaCode').type=recovery?'password':'text';
@@ -65,12 +68,15 @@ function cloudRenderMfa(){
   if(!next.methods.includes($('cloudMfaMethod').value)){$('cloudMfaMethod').value=next.methods[0];cloudMfaMethod()}
  }
 }
-function cloudRenderSession(){
+function cloudRenderSession(refreshSetup=true){
  cloudRenderMfa();
+ $('cloudPilotDetails').textContent=hostedProfile()?'Balances and saved shared actions are confirmed with your store account. An owner or manager confirms each hosted trade. Square checkout is not enabled.':'Shared account history is available to invited stores. Shared trade credit requires an owner or manager to confirm the hosted receipt. Square checkout is not enabled. Local credit history stays on this computer.';
  $('cloudSignin').hidden=cloudSession.signedIn;$('cloudWorkspace').hidden=!cloudSession.signedIn;
  $('cloudConnection').textContent=cloudSession.signedIn?`Signed in · ${cloudSession.store}`:'Sign in to your store to use shared credit.';
  $('cloudStoreName').textContent=cloudSession.store||'';$('cloudStaffRole').textContent=cloudSession.signedIn?'Staff role: '+cloudSession.role:'';
  $('cloudNewCustomer').disabled=!cloudHealthy||cloudPendingCount>0;
+ window.renderTradeRecovery?.();
+ if(refreshSetup)window.refreshStoreSetupGuide?.();
 }
 async function cloudLoadPending(){
  const revision=cloudRevision;if(!cloudSession.signedIn){cloudPending.hidden=true;return}
@@ -103,7 +109,7 @@ async function cloudLoadCustomers(){
 }
 function cloudRenderAccount(){
  if(!cloudAccount)return;const c=cloudAccount.customer;const manager=['owner','manager'].includes(cloudSession.role);
- $('cloudAccount').innerHTML=`<div class="credit-balance-header"><div><span class="section-kicker">AVAILABLE SHARED CREDIT</span><h2>${escapeHTML(c.display_name)}</h2><p>${escapeHTML(c.contact)}</p></div><strong>${usd(c.available_cents/100)}</strong></div><div class="cloud-balance-facts"><span>Total balance <b>${usd(c.balance_cents/100)}</b></span><span>Held for checkout <b>${usd(c.reserved_cents/100)}</b></span></div><div class="credit-account-actions">${manager?'<button class="button secondary" id="cloudOpenEntry">Opening balance / correction</button>':'<p class="hint">An owner or manager can correct balances.</p>'}<span class="cloud-checkout-gate">Checkout is not enabled in this pilot.</span></div><div class="table-scroll"><table><thead><tr><th>Date / entry</th><th>Change</th><th>Balance</th><th>Reference / reason</th></tr></thead><tbody>${cloudAccount.entries.map(e=>`<tr><td>${escapeHTML(new Date(e.at).toLocaleString())}<small class="intake-value">${escapeHTML({opening:'Opening balance',adjust_add:'Correction added',adjust_remove:'Correction removed',trade_credit:'Trade credit',discount_redeem:'Square credit used',refund:'Credit restored'}[e.kind]||e.kind)}</small></td><td class="${e.amount_cents<0?'credit-debit':'credit-add'}">${e.amount_cents>0?'+':''}${usd(e.amount_cents/100)}</td><td>${usd(e.balance_after_cents/100)}</td><td>${escapeHTML(e.reference)}<small class="intake-value">${escapeHTML(e.reason)}</small></td></tr>`).join('')||'<tr><td colspan="4">No shared credit entries yet.</td></tr>'}</tbody></table></div><p class="credit-history-note">100 most recent entries · Confirmed with your store at ${escapeHTML(new Date().toLocaleTimeString())}.</p>`;
+ $('cloudAccount').innerHTML=`<div class="credit-balance-header"><div><span class="section-kicker">AVAILABLE SHARED CREDIT</span><h2>${escapeHTML(c.display_name)}</h2><p>${escapeHTML(c.contact)}</p></div><strong>${usd(c.available_cents/100)}</strong></div><div class="cloud-balance-facts"><span>Total balance <b>${usd(c.balance_cents/100)}</b></span><span>Held for checkout <b>${usd(c.reserved_cents/100)}</b></span></div><div class="credit-account-actions">${manager?'<button class="button secondary" id="cloudOpenEntry">Opening balance / correction</button>':'<p class="hint">An owner or manager can correct balances.</p>'}<span class="cloud-checkout-gate">Credit recorded here is not a funded Square gift-card balance. Square checkout is disabled.</span></div><div class="table-scroll"><table><thead><tr><th>Date / entry</th><th>Change</th><th>Balance</th><th>Reference / reason</th></tr></thead><tbody>${cloudAccount.entries.map(e=>`<tr><td>${escapeHTML(new Date(e.at).toLocaleString())}<small class="intake-value">${escapeHTML({opening:'Opening balance',adjust_add:'Correction added',adjust_remove:'Correction removed',trade_credit:'Trade credit',discount_redeem:'Square credit used',refund:'Credit restored'}[e.kind]||e.kind)}</small></td><td class="${e.amount_cents<0?'credit-debit':'credit-add'}">${e.amount_cents>0?'+':''}${usd(e.amount_cents/100)}</td><td>${usd(e.balance_after_cents/100)}</td><td>${escapeHTML(e.reference)}<small class="intake-value">${escapeHTML(e.reason)}</small></td></tr>`).join('')||'<tr><td colspan="4">No shared credit entries yet.</td></tr>'}</tbody></table></div><p class="credit-history-note">100 most recent entries · Confirmed with your store at ${escapeHTML(new Date().toLocaleTimeString())}.</p>`;
  if($('cloudOpenEntry')){$('cloudOpenEntry').disabled=cloudPendingCount>0;$('cloudOpenEntry').onclick=()=>{if(!cloudHealthy||cloudPendingCount||cloudAccount?.customer.id!==c.id)return;cloudEntryKey=crypto.randomUUID();cloudEntryCustomerId=c.id;cloudEntryVersion=c.version;$('cloudEntryForm').reset();$('cloudEntryKind').value=cloudAccount.entries.length?'adjust_add':'opening';$('cloudEntryCustomer').textContent=c.display_name;$('cloudEntryMessage').textContent='';cloudEntryDialog.showModal()}};
 }
 async function cloudLoadAccount(id){
@@ -123,13 +129,28 @@ async function cloudRefresh(){
   if(cloudSession.signedIn&&session.signedIn&&(cloudSession.store!==session.store||cloudSession.role!==session.role||cloudSession.sessionId!==session.sessionId)){
    revision=++cloudRevision;cloudResetView();cloudRefreshing=revision;$('cloudRefresh').disabled=true;
   }
-  cloudSession=session;cloudHealthy=session.signedIn;cloudRenderSession();$('cloudMessage').textContent=session.message||'';
-  if(!session.signedIn){++cloudRevision;cloudResetView();return}
+  cloudSession=session;cloudHealthy=session.signedIn;cloudRenderSession(false);$('cloudMessage').textContent=session.message||'';
+  if(!session.signedIn){++cloudRevision;cloudResetView();window.refreshStoreSetupGuide?.();return}
+  window.refreshStoreSetupGuide?.();
   await cloudLoadPending();if(revision!==cloudRevision)return;
   await cloudLoadCustomers();if(revision!==cloudRevision)return;if(cloudSelected)await cloudLoadAccount(cloudSelected);
  }catch(error){if(revision===cloudRevision)cloudUnavailable(error)}finally{if(cloudRefreshing===revision){cloudRefreshing=null;$('cloudRefresh').disabled=false}}
 }
 window.enterCloudWorkspace=cloudRefresh;
+// Bootstrap only session status for the guide; do not preload customer records.
+window.refreshCloudSetupSession=async()=>{
+ if(!hostedProfile()||window.stationStopping)return false;
+ let revision=cloudRevision;
+ try{
+  const session=await cloudApi('session');if(revision!==cloudRevision)return false;
+  if(cloudSession.signedIn&&(!session.signedIn||cloudSession.store!==session.store||cloudSession.role!==session.role||cloudSession.sessionId!==session.sessionId)){
+   revision=++cloudRevision;cloudResetView();
+  }
+  cloudSession=session;cloudHealthy=session.signedIn;cloudRenderSession(false);
+  if(!session.signedIn)cloudResetView();
+  return await window.refreshStoreSetupGuide?.();
+ }catch(error){if(revision===cloudRevision)cloudUnavailable(error);return false}
+};
 $('cloudRefresh').onclick=cloudRefresh;
 $('cloudLoginForm').onsubmit=async event=>{
  event.preventDefault();const form=event.target,operation=cloudFormStart(form),revision=++cloudRevision;

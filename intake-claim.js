@@ -25,7 +25,8 @@ window.renderIntakeClaim=(receipt,claim=null)=>{
  const ready=intent?.state==='confirmed',pending=!!intent&&!ready,valid=supported&&!!receipt.source_manifest&&!receipt.source_manifest_error,manager=['owner','manager'].includes(context.role);
  const creditRecorded=receipt.shared_trade?.state==='confirmed'&&receipt.purchase?.scope==='hosted';
  const consumptionProved=creditRecorded&&intent?.server_state==='consumed'&&intent.bound_trade_id===receipt.shared_trade.trade_id;
- const shownState=creditRecorded?(consumptionProved?'Credit recorded · intake consumed':'Credit recorded · refresh intake consumption'):(claim?.state||intent?.server_state);
+ const recordedKind=receipt.purchase?.scope==='hosted'&&receipt.purchase.type==='cash'?'Cash agreement recorded':'Credit recorded';
+ const shownState=creditRecorded?(consumptionProved?recordedKind+' · intake consumed':recordedKind+' · refresh intake consumption'):(claim?.state||intent?.server_state);
  $('intakeClaimFacts').textContent=!supported?'The hosted service must be upgraded for central physical intake before a new trade can be accepted.':!valid?(receipt.source_manifest_error||'This older batch has no original intake manifest. Reimport its verified original CSV or have the owner review a new manual intake. Current edited cards cannot become an original source.'):ready?`Central tag ${claim?.physical_reference||intent.physical_reference} · ${intent.physical_intake_id} · ${shownState}. ${intakeClaimCounts(receipt)}`:pending?`Saved tag ${intent.requested_reference||intent.selected_id} needs confirmation. ${intakeClaimCounts(receipt)}`:intakeClaimCounts(receipt);
  $('intakeClaimInputs').hidden=ready||!valid;
  $('intakePhysicalReference').disabled=pending||!manager;
@@ -37,6 +38,8 @@ window.renderIntakeClaim=(receipt,claim=null)=>{
  $('intakeAdditionalSection').hidden=!ready||!!receipt.purchase||!!(receipt.shared_trade&&!['cancelled'].includes(receipt.shared_trade.state));
  $('sharedTradeCustomerPicker').hidden=!ready||!!context.data?.trade;
  context.claimReady=ready;
+ const originalTradeId=claim?.bound_trade_id||intent?.bound_trade_id||(intent?.physical_intake_id&&context.originalRecovery?.physicalIntakeId===intent.physical_intake_id?context.originalRecovery.tradeId:null),consumed=(claim?.state||intent?.server_state)==='consumed';
+ if(consumed&&originalTradeId&&!receipt.shared_trade&&window.offerOriginalTradeRecovery?.({code:'ORIGINAL_TRADE_RECOVERY_REQUIRED',tradeId:originalTradeId},context)){context.originalRecovery={physicalIntakeId:intent.physical_intake_id,tradeId:originalTradeId};context.claimReady=false;$('sharedTradeCustomerPicker').hidden=true;$('intakeAdditionalSection').hidden=true;}
 };
 window.openIntakeClaim=async context=>{
  $('intakeMfaHelp').hidden=$('intakeMfaSetup').hidden=true;

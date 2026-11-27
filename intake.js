@@ -1,12 +1,13 @@
 'use strict';
 // Per-card identity survives mixed-game exports and manual slab entry.
 const intakeGames={pokemon:'Pokémon',magic:'Magic: The Gathering',riftbound:'Riftbound',onepiece:'One Piece',unionarena:'Union Arena',gundam:'Gundam',sports:'Sports'};
-const intakeMetadata={grader:'Grading company',grade:'Grade',grade_qualifier:'Grade qualifier',cert_number:'Certification number',serial_number:'Serial number',year:'Year',manufacturer:'Manufacturer / brand',team:'Team',player:'Player'};
+const intakeMetadata={grader:'Grading company',grade:'Grade',grade_qualifier:'Grade qualifier',cert_number:'Certification number',serial_number:'Serial number',year:'Year',sport:'Sport',league:'League',manufacturer:'Manufacturer / brand',team:'Team',player:'Player'};
 const intakeEditMap={editGame:'game'};
+let intakeEditGameBaseline=null;
 function intakeFieldId(prefix,key){return prefix+key.split('_').map(word=>word[0].toUpperCase()+word.slice(1)).join('')}
 function intakeAddFields(prefix,container){
  const group=document.createElement('details');group.className='wide intake-identity';
- group.innerHTML='<summary>Slab, serial and sports details</summary><p class="hint">Keep certification and serial numbers exactly as printed, including leading zeros. These identify a specific item.</p><div class="form-grid">'+Object.entries(intakeMetadata).map(([key,label])=>`<label>${label}<input id="${intakeFieldId(prefix,key)}" maxlength="500"></label>`).join('')+'</div>';
+ group.innerHTML='<summary>Slab, serial and sports details</summary><p class="hint">Keep certification and serial numbers exactly as printed, including leading zeros. These identify a specific item.</p><div class="form-grid">'+Object.entries(intakeMetadata).map(([key,label])=>`<label>${label}<input id="${intakeFieldId(prefix,key)}" maxlength="${key==='sport'||key==='league'?100:500}"></label>`).join('')+'</div>';
  container.append(group);
  if(prefix==='edit')for(const key of Object.keys(intakeMetadata))intakeEditMap[intakeFieldId(prefix,key)]=key;
 }
@@ -38,7 +39,10 @@ function intakeSetGame(select,value,label=''){
 function intakeSelectedGame(id){return $(id).value==='other'?$(id+'Label').value.trim():$(id).value}
 function intakeExtraFields(prefix){
  const result=Object.fromEntries(Object.keys(intakeMetadata).map(key=>[key,$(intakeFieldId(prefix,key)).value.trim()]));
- result.game=intakeSelectedGame(prefix==='manual'?'manualGame':'editGame');
+ const selected=intakeSelectedGame(prefix==='manual'?'manualGame':'editGame');
+ const baseline=prefix==='edit'&&intakeEditGameBaseline?.rowId===state.editing?intakeEditGameBaseline:null;
+ if(baseline?.game&&selected===baseline.selection){result.game=baseline.game;result.game_label=baseline.label}
+ else{result.game=selected;result.game_label=intakeGames[selected]||selected;}
  if(result.grader&&result.grade)result.condition=[result.grader,result.grade,result.grade_qualifier].filter(Boolean).join(' ');
  if(prefix==='edit')result.price_confirmed=$('editPriceConfirmed').checked||Number($('editPrice').value)>0;
  return result;
@@ -52,15 +56,16 @@ function intakePriceState(){
  $('editZeroConfirmation').hidden=!zero;
  const c=state.receipt?.cards.find(card=>card.row_id===state.editing);
  const missing=!!c?.price_missing&&(!value||(zero&&!$('editPriceConfirmed').checked));
- $('editReviewed').disabled=priceLocked()||missing;if(missing)$('editReviewed').checked=false;
+ $('editReviewed').disabled=true;if(missing)$('editReviewed').checked=false;
 }
 function intakeOpenCard(card){
  intakeSetGame($('editGame'),card.game||state.receipt.pricing_game||'pokemon',card.game_label||'');
+ intakeEditGameBaseline={rowId:card.row_id,game:card.game,label:card.game_label||intakeGames[card.game]||intakeSelectedGame('editGame'),selection:intakeSelectedGame('editGame')};
  if(card.price_missing)$('editPrice').value='';$('editPriceConfirmed').checked=card.price_confirmed===true;
  $('editPriceConfirmed').disabled=priceLocked();intakePriceState();
 }
 $('editPrice').addEventListener('input',intakePriceState);$('editPriceConfirmed').addEventListener('change',intakePriceState);
-for(const id of ['editGame','editGameLabel',...Object.keys(intakeEditMap).filter(id=>id!=='editGame')])$(id).addEventListener('input',()=>{$('editReviewed').checked=false;$('editSku').value='';$('priceReminder').textContent='Identity changed. Verify the exact game, variant, grade and price before marking checked.'});
+for(const id of ['editGame','editGameLabel',...Object.keys(intakeEditMap).filter(id=>id!=='editGame')])$(id).addEventListener('input',()=>{$('editReviewed').checked=false;$('priceReminder').textContent='Identity changed. Save the changes, then choose Review saved card.'});
 const intakeSummary=document.createElement('section');intakeSummary.id='intakeSummary';intakeSummary.className='credit-intro';intakeSummary.hidden=true;
 $('receiptWorkspace').prepend(intakeSummary);
 function renderIntakeSummary(){

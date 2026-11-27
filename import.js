@@ -24,7 +24,24 @@ document.body.append(importDialog);
 const importPrimaryFields=new Set(['card_name','game','card_set','card_num','condition','printing','language','quantity','price','market_price','square_sku']);
 const importFieldLabels={card_name:'Card name',card_num:'Collector number',card_set:'Set / collection',game:'Game / product line',quantity:'Copies to import',price:'Selling price',market_price:'Market reference',square_sku:'Existing Square SKU'};
 const importFormatLabels={roca:'Roca-style CSV',tcgplayer_app:'TCGplayer app CSV',tcgplayer_inventory:'TCGplayer inventory CSV',canonical:'Standard / mapped columns'};
-let importContext=null;
+let importContext=null,importOpening=null;
+function importWorkspace(){return {receiptId:state.receipt?.id??null,revision:state.receipt?.revision??null,mode:state.mode,editing:state.editing??null,editRevision:localEditRevision,drawer:drawerDraft,session:JSON.stringify([cloudRevision,cloudSession.sessionId,cloudSession.signedIn,cloudSession.store,cloudSession.role,state.admin,state.settings.profile])}}
+function importWorkspaceCurrent(anchor,{allowRevision=false}={}){
+ const current=importWorkspace();return current.receiptId===anchor.receiptId&&(allowRevision||current.revision===anchor.revision)&&current.mode===anchor.mode&&current.editing===anchor.editing&&current.editRevision===anchor.editRevision&&current.drawer===anchor.drawer&&current.session===anchor.session;
+}
+function importSavedWorkspace(anchor,saved){
+ if(!importWorkspaceCurrent(anchor,{allowRevision:true})||state.dirty)return false;
+ if(anchor.receiptId===null){if(saved!==null&&saved!==undefined||state.receipt)return false}
+ else if(saved?.id!==anchor.receiptId||saved.revision!==state.receipt?.revision)return false;
+ anchor.revision=state.receipt?.revision??null;return true;
+}
+function importOwned(context,revision=context.revision){return importContext===context&&context.revision===revision&&importDialog.open}
+function importCurrent(context,revision=context.revision){return importOwned(context,revision)&&!context.invalid&&importWorkspaceCurrent(context.workspace)&&!drawerDraft}
+function importRecoveryMessage(context,error){
+ const saved=context.savedReceiptId?' Saved batch: '+context.savedReceiptId+'. Open that batch from history before importing again.':context.sent?' An import request was sent; its outcome is unconfirmed. Check batch history before importing again.':'';
+ return error+saved;
+}
+function importInvalidate(context,message){if(importContext!==context)return;context.invalid=true;$('importMessage').textContent=importRecoveryMessage(context,message);importButtons()}
 function importOptions(){
  const mapping={};importDialog.querySelectorAll('[data-import-field]').forEach(select=>{if(select.value)mapping[select.dataset.importField]=select.value});
  const options={adapter:$('importAdapter').value,column_mapping:mapping};
@@ -37,13 +54,13 @@ function importOptions(){
 }
 function importButtons(){
  const context=importContext,preview=context?.preview;
- const ready=!!(context&&!context.loading&&!context.committing&&!context.dirty&&preview?.can_import&&(!preview.requires_quantity_confirmation||$('importSnapshotAck').checked));
+ const ready=!!(context&&importCurrent(context)&&!context.loading&&!context.committing&&!context.dirty&&preview?.can_import&&(!preview.requires_quantity_confirmation||$('importSnapshotAck').checked));
  $('importCommit').disabled=!ready;$('importUpdatePreview').disabled=!context||context.loading||context.committing;
  for(const id of ['importClose','importCancel'])$(id).disabled=!!context?.committing;
  $('importActionHint').textContent=context?.committing?'Saving an unchecked draft…':context?.loading?'Checking the file…':context?.dirty?'Update the preview to apply these choices.':preview?.error_count?'Correct the mapping or source errors before importing.':preview?.requires_quantity_confirmation&&!$('importSnapshotAck').checked?'Confirm the snapshot quantities before importing.':ready?'Importing creates a draft for card review. No inventory changes.':'Review the file before importing.';
 }
 function importChanged(){
- if(!importContext||importContext.committing)return;
+ if(!importContext||importContext.committing||importContext.invalid)return;
  ++importContext.revision;importContext.loading=false;importContext.dirty=true;$('importSnapshotAck').checked=false;
  $('importOtherGameLabel').hidden=$('importDefaultGame').value!=='other';
  $('importMessage').textContent='Your choices changed. Update the preview before importing.';importButtons();
@@ -76,47 +93,67 @@ function importRender(data){
 }
 async function importPreview(){
  const context=importContext;if(!context||context.committing)return;
+ if(!importCurrent(context)){importInvalidate(context,'The batch, card edit or store context changed. Cancel this preview, finish your current work and choose the file again.');return}
  const revision=++context.revision;context.loading=true;context.dirty=true;importButtons();$('importMessage').textContent='Checking the export…';
- try{const options=importOptions();const data=await api('/api/import/preview',{csv:context.csv,intakeOptions:options});if(importContext!==context||context.revision!==revision)return;context.options=options;importRender(data)}
- catch(error){if(importContext===context&&context.revision===revision){context.preview=null;$('importMessage').textContent=error.message}}
- finally{if(importContext===context&&context.revision===revision){context.loading=false;importButtons()}}
+ try{const options=importOptions();const data=await api('/api/import/preview',{csv:context.csv,intakeOptions:options});if(!importCurrent(context,revision)){if(importOwned(context,revision))importInvalidate(context,'The batch, card edit or store context changed. Cancel and choose the file again.');return}context.options=options;importRender(data)}
+ catch(error){if(importOwned(context,revision)){context.preview=null;if(!importWorkspaceCurrent(context.workspace)||drawerDraft)importInvalidate(context,'The batch, card edit or store context changed while checking the file. Cancel this preview and choose the file again.');else $('importMessage').textContent=error.message}}
+ finally{if(importOwned(context,revision)){context.loading=false;importButtons()}}
 }
 function importClose(){if(importContext?.committing)return;importContext=null;importDialog.close();$('csvFile').value=''}
 $('importClose').onclick=$('importCancel').onclick=importClose;
-$('importOpenExisting').onclick=async()=>{const context=importContext;if(!context?.existing||context.committing)return;const id=context.existing.id;importClose();try{await openReceipt(id)}catch(error){toast(error.message,true)}};
+$('importOpenExisting').onclick=async()=>{const context=importContext;if(!context?.existing||context.committing)return;if(!importCurrent(context)){importInvalidate(context,'The batch or store changed. Cancel this preview and open saved work in the original store.');return}const id=context.existing.id;importClose();try{await openReceipt(id)}catch(error){toast(error.message,true)}};
 importDialog.addEventListener('cancel',event=>{event.preventDefault();importClose()});
 $('importUpdatePreview').onclick=importPreview;$('importSnapshotAck').onchange=importButtons;
 $('importAdapter').onchange=$('importDefaultGame').onchange=$('importOtherGame').oninput=importChanged;
 $('csvFile').accept='.csv,.tsv,text/csv,text/tab-separated-values';
 $('importCommit').onclick=async()=>{
- const context=importContext;if(!context||$('importCommit').disabled)return;context.committing=true;importButtons();
+ const context=importContext;if(!context||$('importCommit').disabled)return;
+ if(!importCurrent(context)){importInvalidate(context,'The batch, card edit or store context changed. Cancel and choose the file again.');return}
+ const revision=context.revision;context.committing=true;importButtons();
  importDialog.querySelectorAll('select,input').forEach(input=>input.disabled=true);
  try{
   await busyWork(async()=>{
    try{
-    await saveReceipt();const payload={csv:context.csv,fileName:context.name,mode:context.mode,intakeOptions:{...context.options,confirm_snapshot:context.preview.requires_quantity_confirmation&&$('importSnapshotAck').checked}};
-    let data=await api('/api/import',payload);
-    importContext=null;importDialog.close();
-    if(data.receipt.deleted_at){const restored=await restoreIfDeleted(data.receipt);if(!restored)return;data.receipt=restored}
-    else if(data.duplicate){adoptReceipt(data.receipt);const additional=await confirmAction('This batch is already saved.','The saved batch has been opened. Only start another batch if these are a separate physical delivery of additional cards.','These are additional copies');if(additional)data=await api('/api/import',{...payload,newDelivery:true})}
-    data.receipt=await acknowledgePickup(data.receipt);adoptReceipt(data.receipt);await refreshReceipts();toast(data.duplicate?'Opened the saved batch. No stock changed.':'Unchecked draft imported. Check the cards before continuing.');
-   }catch(error){if(importContext===context)$('importMessage').textContent=error.message;throw error}
+    const saved=await saveReceipt();
+    if(!importOwned(context,revision)||!importSavedWorkspace(context.workspace,saved)||drawerDraft)throw Error('The batch, card edit or store context changed before import. No new import was requested.');
+    const payload={csv:context.csv,fileName:context.name,mode:context.mode,intakeOptions:{...context.options,confirm_snapshot:context.preview.requires_quantity_confirmation&&$('importSnapshotAck').checked}};
+    context.sent=true;let data=await api('/api/import',payload);context.savedReceiptId=data.receipt?.id||null;
+    if(!importCurrent(context,revision))throw Error('The workspace changed while importing. The saved result has not been opened.');
+    if(data.receipt.deleted_at){const restored=await restoreIfDeleted(data.receipt);if(!importCurrent(context,revision))throw Error('The workspace changed while restoring the saved batch.');if(!restored){importInvalidate(context,'Opening the saved batch was cancelled. No additional import was requested.');return}data.receipt=restored;context.savedReceiptId=restored.id}
+    else if(data.duplicate){
+     adoptReceipt(data.receipt);context.workspace=importWorkspace();
+     const additional=await confirmAction('This batch is already saved.','The saved batch has been opened. Only start another batch if these are a separate physical delivery of additional cards.','These are additional copies');
+     if(!importCurrent(context,revision))throw Error('The workspace changed while reviewing the saved batch.');
+     if(additional){context.savedReceiptId=null;data=await api('/api/import',{...payload,newDelivery:true});context.savedReceiptId=data.receipt?.id||null;if(!importCurrent(context,revision))throw Error('The workspace changed while importing additional copies. The saved result has not been opened.')}
+    }
+    const received=await acknowledgePickup(data.receipt);if(!importCurrent(context,revision))throw Error('The workspace changed while opening the saved batch.');
+    data.receipt=received;adoptReceipt(data.receipt);context.workspace=importWorkspace();
+    await refreshReceipts();if(!importCurrent(context,revision))throw Error('The workspace changed after the batch was saved.');
+    importContext=null;importDialog.close();toast(data.duplicate?'Opened the saved batch. No stock changed.':'Unchecked draft imported. Check the cards before continuing.');
+   }catch(error){if(importOwned(context,revision)){if(!importWorkspaceCurrent(context.workspace)||context.sent)importInvalidate(context,error.message);else $('importMessage').textContent=error.message}}
   });
- }catch(error){if(importContext===context)$('importMessage').textContent=error.message;else toast(error.message,true)}
- finally{context.committing=false;importDialog.querySelectorAll('select,input').forEach(input=>input.disabled=false);importButtons();$('csvFile').value=''}
+ }catch(error){if(importOwned(context,revision))importInvalidate(context,error.message)}
+ finally{context.committing=false;if(importContext===context||importContext===null){importDialog.querySelectorAll('select,input').forEach(input=>input.disabled=false);importButtons();$('csvFile').value=''}}
 };
 window.reviewCsvImport=async file=>{
  if(!file||state.busy)return;
- if(importContext){$('importMessage').textContent='Finish or cancel this preview before choosing another export.';return}
+ if(importContext||importOpening){if(importContext)$('importMessage').textContent='Finish or cancel this preview before choosing another export.';else toast('An export is being read. Finish that import before choosing another file.');return}
  if(!/\.(csv|tsv)$/i.test(file.name))return toast('Choose a CSV or TSV scanner export.',true);
  if(file.size>20000000)return toast('The export exceeds 20 MB. Split the batch before importing.',true);
+ const opening={start:importWorkspace()};importOpening=opening;
  try{
-  await saveReceipt();const csv=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());
-  importContext={csv,name:file.name,mode:modes[state.mode]?state.mode:'labels',revision:0,preview:null,loading:false,committing:false,dirty:true,columnsKey:null};
+  if(!await closeCard()||importOpening!==opening)return;
+  const workspace=importWorkspace();if(workspace.receiptId!==opening.start.receiptId||workspace.mode!==opening.start.mode||workspace.session!==opening.start.session)throw Error('The batch or store changed. Choose the export again after finishing your current work.');
+  const saved=await saveReceipt();if(importOpening!==opening||!importSavedWorkspace(workspace,saved)||drawerDraft)throw Error('The batch, card edit or store changed. Choose the export again after finishing your current work.');
+  const buffer=await file.arrayBuffer();if(importOpening!==opening||!importWorkspaceCurrent(workspace)||drawerDraft)throw Error('The batch, card edit or store changed while reading the file. Your current work is kept. Choose the export again when ready.');
+  if(!await closeCard()||importOpening!==opening||!importWorkspaceCurrent(workspace))return;
+  const csv=new TextDecoder('utf-8',{fatal:true}).decode(buffer);
+  importContext={csv,name:file.name,mode:modes[state.mode]?state.mode:'labels',workspace,revision:0,preview:null,loading:false,committing:false,dirty:true,columnsKey:null,invalid:false,sent:false,savedReceiptId:null};
   $('importFileName').textContent=file.name;$('importAdapter').value='auto';$('importDefaultGame').value='';$('importOtherGame').value='';$('importOtherGameLabel').hidden=true;
   $('importMapping').open=false;$('importAdvanced').open=false;$('importSource').open=false;
   for(const id of ['importOverview','importSnapshot','importIssues','importNormalized','importExisting'])$(id).hidden=true;
-  $('importColumns').replaceChildren();$('importExtraColumns').replaceChildren();$('importMessage').textContent='';importDialog.showModal();await importPreview();
- }catch(error){toast(error instanceof TypeError?'The export is not valid UTF-8 text. Save it as UTF-8 CSV and try again.':error.message,true)}
- finally{$('csvFile').value=''}
+  $('importColumns').replaceChildren();$('importExtraColumns').replaceChildren();$('importMessage').textContent='';importDialog.showModal();
+  importOpening=null;$('csvFile').value='';await importPreview();
+ }catch(error){if(importOpening===opening)toast(error instanceof TypeError?'The export is not valid UTF-8 text. Save it as UTF-8 CSV and try again.':error.message,true)}
+ finally{if(importOpening===opening){importOpening=null;$('csvFile').value=''}}
 };

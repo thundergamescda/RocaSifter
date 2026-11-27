@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "execution_hold": "AWAITING_INDEPENDENT_TRUSTED_PLATFORM_SOURCE_NODE_API_SCOPE_OWNED_LAUNCHER_AND_ROOT_FUNCTIONAL_CI_ADMISSION",
+  "source_inputs_sha256": "4384e298b78fc5aec7fdd8ca02cf85889873391c6590dfd6c6c4951b86714914",
+  "source_count": 107,
+  "expected_ids": [
+    "DUI01",
+    "DUI02",
+    "DUI03",
+    "DUI04",
+    "DUI05",
+    "DUI06",
+    "DUI07"
+  ],
+  "expected_capture_names": [
+    "DUI01_done",
+    "DUI02_denied",
+    "DUI02_recovered",
+    "DUI03_denied",
+    "DUI03_recovered",
+    "DUI04_admin_context",
+    "DUI04_rejected",
+    "DUI04_recovered",
+    "DUI05_signed_out",
+    "DUI05_reopened",
+    "DUI06_rejected",
+    "DUI06_recovered",
+    "DUI07_rejected",
+    "DUI07_recovered"
+  ],
+  "required_linux_launcher": true
+}

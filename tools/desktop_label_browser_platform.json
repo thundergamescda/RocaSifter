@@ -1,0 +1,45 @@
+{
+  "format": "stock-and-sleeve:trusted-platform-desktop-ui:v1",
+  "execution_hold": "AWAITING_INDEPENDENT_PLATFORM_SOURCE_REVIEW_NEW_CONDITIONAL_NODE_API_SCOPE_OWNED_STAGE_LAUNCH_TRANSPORT_CLEANUP_AND_ROOT_ADMISSION",
+  "trusted_platform_execution_admitted": false,
+  "foundation_scope": "fresh-github-ubuntu24-preinstalled-chrome-functional-only",
+  "independent_source_go_sha256": null,
+  "conditional_node_api_scope_sha256": null,
+  "native_image_flags_inherited": false,
+  "browser_path": "/opt/google/chrome/chrome",
+  "browser_version_pattern": "(?:157\\.[0-9]+\\.[0-9]+\\.[0-9]+|158\\.0\\.8127\\.36)",
+  "source_inputs_sha256": "4384e298b78fc5aec7fdd8ca02cf85889873391c6590dfd6c6c4951b86714914",
+  "installed_files_sha256": "4cf1ea2652049a7d5e6ff30141c1413813c076093ce30a7b4f38de5e85249d96",
+  "runtime_source_files": [
+    {
+      "name": "desktop_label_browser_platform_runtime.py",
+      "bytes": 33807,
+      "sha256": "385d72f166197dfe89ec0310bca1ef301c5c733e79de82a045f6baa77f68983f"
+    },
+    {
+      "name": "desktop_label_browser_platform_sandbox.py",
+      "bytes": 9822,
+      "sha256": "563fde92d59ed0a7202205982d7fe31a3a9ca8b2f6bc0bf4ed58553db6060dfe"
+    },
+    {
+      "name": "desktop_label_browser_installed_files.json",
+      "bytes": 358622,
+      "sha256": "4cf1ea2652049a7d5e6ff30141c1413813c076093ce30a7b4f38de5e85249d96"
+    },
+    {
+      "name": "desktop_label_browser_admission.json",
+      "bytes": 794,
+      "sha256": "f1579b5260ff59c02846843ceeaf61f752e2d004185f7a4371f8145c7cc57eea"
+    }
+  ],
+  "observations_are_not_immutable_shipping_graph": true,
+  "expected_counts": {
+    "source_inputs": 107,
+    "distributions": 18,
+    "regular_package_files": 1202,
+    "flows": 7,
+    "captures": 14,
+    "verified_downloads": 8,
+    "actual_download_events": 8
+  }
+}

@@ -1,0 +1,44 @@
+name: Stock & Sleeve desktop UI functional acceptance
+run-name: Desktop UI seven source ${{ github.sha }}
+
+'on':
+  push:
+    branches:
+      - 'stock-sleeve-platform-ui-*'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: desktop-platform-ui-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  desktop_ui_seven:
+    name: 'Stock & Sleeve desktop UI seven'
+    # Source-only preview. Root must review the actual grant and enable this
+    # one initial job; the checked grant also independently remains disabled.
+    if: github.repository == 'thundergamescda/RocaSifter' && github.event_name == 'push' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out the exact reviewed source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Bind actual current run and numeric job through read-only GitHub API
+        id: platform_metadata
+        env:
+          SS_PLATFORM_METADATA_SOURCE_SHA256: a06ce961d0113c475566eca9ff74e3f47adac0232482efb0f17c210cfa00af1a
+          SS_PLATFORM_ROOT_GRANT_SHA256: 4d47e2abdc116085d19d5b6b3bc7ce898f60b992a1ec83be0f0c5cc1783a3653
+          SS_PLATFORM_API_TOKEN: ${{ github.token }}
+        run: /opt/hostedtoolcache/Python/3.12.16/x64/bin/python3.12 -I -S -B tools/prepare_desktop_label_platform_metadata.py
+      - name: Run all seven owned UI flows and preserve original failure evidence
+        env:
+          SS_PLATFORM_HOST_METADATA: ${{ steps.platform_metadata.outputs.metadata_path }}
+          SS_PLATFORM_HOST_METADATA_SHA256: ${{ steps.platform_metadata.outputs.metadata_sha256 }}
+          SS_PLATFORM_ROOT_GRANT_SHA256: ${{ steps.platform_metadata.outputs.root_grant_sha256 }}
+        run: /opt/hostedtoolcache/Python/3.12.16/x64/bin/python3.12 -I -S -B tools/desktop_label_platform_host.py
